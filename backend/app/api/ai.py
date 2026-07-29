@@ -5,6 +5,7 @@ import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi import status as http_status
 
+from app.auth.dependencies import AdminUserDep, CurrentUserDep
 from app.db import get_pool
 from app.schemas.ai import AIAnalyzeResponse, AIBatchRunRead, AIHealthResponse
 from app.schemas.ai_providers import (
@@ -14,6 +15,7 @@ from app.schemas.ai_providers import (
     AIProviderModelsRequest,
     AIProviderModelsResponse,
     AIProviderRead,
+    AIProviderTestResponse,
     AIProviderUpdate,
 )
 from app.services import ai_batch_service, ai_providers_service
@@ -31,8 +33,11 @@ async def ai_health(pool: PoolDep) -> AIHealthResponse:
 
 
 @router.post("/cases/{case_id}/analyze", response_model=AIAnalyzeResponse)
-async def analyze_case(case_id: int, pool: PoolDep) -> AIAnalyzeResponse:
-    result = await gateway.analyze_case(pool, case_id)
+async def analyze_case(case_id: int, pool: PoolDep, user: CurrentUserDep) -> AIAnalyzeResponse:
+    try:
+        result = await gateway.analyze_case(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    except gateway.CaseAccessDeniedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return result
@@ -59,12 +64,12 @@ async def get_batch_analyze(batch_run_id: UUID, pool: PoolDep) -> AIBatchRunRead
 
 
 @router.get("/providers", response_model=list[AIProviderRead])
-async def list_providers(pool: PoolDep) -> list[AIProviderRead]:
+async def list_providers(pool: PoolDep, _admin: AdminUserDep) -> list[AIProviderRead]:
     return await ai_providers_service.list_providers(pool)
 
 
 @router.post("/providers", response_model=AIProviderRead, status_code=http_status.HTTP_201_CREATED)
-async def create_provider(payload: AIProviderCreate, pool: PoolDep) -> AIProviderRead:
+async def create_provider(payload: AIProviderCreate, pool: PoolDep, _admin: AdminUserDep) -> AIProviderRead:
     try:
         return await ai_providers_service.create_provider(pool, payload)
     except ai_providers_service.InvalidProviderConfigError as exc:
@@ -72,7 +77,9 @@ async def create_provider(payload: AIProviderCreate, pool: PoolDep) -> AIProvide
 
 
 @router.post("/providers/models", response_model=AIProviderModelsResponse)
-async def list_provider_models(payload: AIProviderModelsRequest, pool: PoolDep) -> AIProviderModelsResponse:
+async def list_provider_models(
+    payload: AIProviderModelsRequest, pool: PoolDep, _admin: AdminUserDep
+) -> AIProviderModelsResponse:
     try:
         models = await ai_providers_service.list_available_models(
             pool,
@@ -87,7 +94,9 @@ async def list_provider_models(payload: AIProviderModelsRequest, pool: PoolDep) 
 
 
 @router.put("/providers/{provider_id}", response_model=AIProviderRead)
-async def update_provider(provider_id: int, payload: AIProviderUpdate, pool: PoolDep) -> AIProviderRead:
+async def update_provider(
+    provider_id: int, payload: AIProviderUpdate, pool: PoolDep, _admin: AdminUserDep
+) -> AIProviderRead:
     try:
         provider = await ai_providers_service.update_provider(pool, provider_id, payload)
     except ai_providers_service.InvalidProviderConfigError as exc:
@@ -98,25 +107,38 @@ async def update_provider(provider_id: int, payload: AIProviderUpdate, pool: Poo
 
 
 @router.delete("/providers/{provider_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-async def delete_provider(provider_id: int, pool: PoolDep) -> None:
+async def delete_provider(provider_id: int, pool: PoolDep, _admin: AdminUserDep) -> None:
     deleted = await ai_providers_service.delete_provider(pool, provider_id)
     if not deleted:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
 
 
+@router.post("/providers/{provider_id}/test", response_model=AIProviderTestResponse)
+async def test_provider(provider_id: int, pool: PoolDep, _admin: AdminUserDep) -> AIProviderTestResponse:
+    """Prueba este proveedor puntual (este activo o no) -- a diferencia de
+    /api/ai/health, que solo prueba el que esta activo."""
+    healthy = await ai_providers_service.test_provider(pool, provider_id)
+    if healthy is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
+    return AIProviderTestResponse(healthy=healthy)
+
+
 @router.post("/providers/{provider_id}/activate", response_model=AIProviderRead)
-async def activate_provider(provider_id: int, pool: PoolDep) -> AIProviderRead:
-    provider = await ai_providers_service.set_active_provider(pool, provider_id)
+async def activate_provider(provider_id: int, pool: PoolDep, _admin: AdminUserDep) -> AIProviderRead:
+    try:
+        provider = await ai_providers_service.set_active_provider(pool, provider_id)
+    except ai_providers_service.PolicyBlocksProviderError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if provider is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
     return provider
 
 
 @router.get("/policy", response_model=AIPolicyRead)
-async def get_policy(pool: PoolDep) -> AIPolicyRead:
+async def get_policy(pool: PoolDep, _admin: AdminUserDep) -> AIPolicyRead:
     return AIPolicyRead(policy=await ai_providers_service.get_policy(pool))
 
 
 @router.put("/policy", response_model=AIPolicyRead)
-async def update_policy(payload: AIPolicyUpdate, pool: PoolDep) -> AIPolicyRead:
+async def update_policy(payload: AIPolicyUpdate, pool: PoolDep, _admin: AdminUserDep) -> AIPolicyRead:
     return AIPolicyRead(policy=await ai_providers_service.set_policy(pool, payload.policy))

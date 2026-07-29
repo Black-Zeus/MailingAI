@@ -13,7 +13,16 @@ from app import ms_oauth, repository
 from app.config import get_settings
 from app.db import connect, disconnect, get_pool
 from app.ms_oauth import MicrosoftOAuthError
-from app.schemas import MailboxAccountRead, MailboxAccountUpdate, MailboxTestResponse, TokenResponse
+from app.schemas import (
+    MailboxAccountRead,
+    MailboxAccountUpdate,
+    MailboxOwnerClaim,
+    MailboxShareCreate,
+    MailboxShareRead,
+    MailboxTestResponse,
+    NotificationSenderUpdate,
+    TokenResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +145,79 @@ async def delete_mailbox(mailbox_account_id: int) -> None:
     deleted = await repository.delete_mailbox(pool, mailbox_account_id)
     if not deleted:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+
+
+@app.patch("/internal/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
+async def claim_mailbox_owner(mailbox_account_id: int, payload: MailboxOwnerClaim) -> MailboxAccountRead:
+    pool = get_pool()
+    try:
+        record = await repository.claim_mailbox_owner(
+            pool, mailbox_account_id, owner_user_id=payload.owner_user_id, force=payload.force
+        )
+    except repository.MailboxAlreadyOwnedError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="Esta cuenta ya fue reclamada por otro usuario."
+        ) from exc
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    return MailboxAccountRead(**dict(record))
+
+
+@app.delete("/internal/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
+async def clear_mailbox_owner(mailbox_account_id: int) -> MailboxAccountRead:
+    pool = get_pool()
+    record = await repository.clear_mailbox_owner(pool, mailbox_account_id)
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    return MailboxAccountRead(**dict(record))
+
+
+@app.get("/internal/notification-sender", response_model=MailboxAccountRead | None)
+async def get_notification_sender() -> MailboxAccountRead | None:
+    pool = get_pool()
+    record = await repository.get_notification_sender(pool)
+    return MailboxAccountRead(**dict(record)) if record is not None else None
+
+
+@app.put("/internal/notification-sender", response_model=MailboxAccountRead | None)
+async def set_notification_sender(payload: NotificationSenderUpdate) -> MailboxAccountRead | None:
+    pool = get_pool()
+    if payload.mailbox_account_id is not None:
+        existing = await repository.get_mailbox_public(pool, payload.mailbox_account_id)
+        if existing is None:
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    record = await repository.set_notification_sender(pool, payload.mailbox_account_id)
+    return MailboxAccountRead(**dict(record)) if record is not None else None
+
+
+@app.get("/internal/mailboxes/{mailbox_account_id}/shares", response_model=list[MailboxShareRead])
+async def list_mailbox_shares(mailbox_account_id: int) -> list[MailboxShareRead]:
+    pool = get_pool()
+    records = await repository.list_mailbox_shares(pool, mailbox_account_id)
+    return [MailboxShareRead(**dict(r)) for r in records]
+
+
+@app.post("/internal/mailboxes/{mailbox_account_id}/shares", response_model=MailboxShareRead)
+async def share_mailbox(
+    mailbox_account_id: int, payload: MailboxShareCreate, shared_by_user_id: int = Query(...)
+) -> MailboxShareRead:
+    pool = get_pool()
+    record = await repository.upsert_mailbox_share(
+        pool,
+        mailbox_account_id=mailbox_account_id,
+        user_id=payload.user_id,
+        permission=payload.permission,
+        shared_by_user_id=shared_by_user_id,
+    )
+    return MailboxShareRead(**dict(record))
+
+
+@app.delete("/internal/mailboxes/{mailbox_account_id}/shares/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def revoke_mailbox_share(mailbox_account_id: int, user_id: int) -> None:
+    pool = get_pool()
+    deleted = await repository.delete_mailbox_share(pool, mailbox_account_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Comparticion no encontrada")
 
 
 async def _get_valid_token(mailbox_account_id: int) -> TokenResponse:

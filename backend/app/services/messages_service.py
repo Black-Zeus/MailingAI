@@ -89,6 +89,7 @@ async def list_messages(
     has_attachments: bool | None,
     attachment_pattern: str | None,
     mailbox_account_id: int | None,
+    accessible_mailbox_ids: list[int] | None,
     limit: int,
     offset: int,
 ) -> list[MessageListItem]:
@@ -106,6 +107,7 @@ async def list_messages(
         has_attachments=has_attachments,
         attachment_pattern=attachment_pattern,
         mailbox_account_id=mailbox_account_id,
+        accessible_mailbox_ids=accessible_mailbox_ids,
         limit=limit,
         offset=offset,
     )
@@ -127,6 +129,7 @@ async def count_messages(
     has_attachments: bool | None,
     attachment_pattern: str | None,
     mailbox_account_id: int | None,
+    accessible_mailbox_ids: list[int] | None,
 ) -> int:
     return await messages_repository.count_messages(
         pool,
@@ -142,11 +145,14 @@ async def count_messages(
         has_attachments=has_attachments,
         attachment_pattern=attachment_pattern,
         mailbox_account_id=mailbox_account_id,
+        accessible_mailbox_ids=accessible_mailbox_ids,
     )
 
 
-async def get_message(pool: asyncpg.Pool, message_id: str) -> MessageDetail | None:
-    record = await messages_repository.get_message(pool, message_id)
+async def get_message(
+    pool: asyncpg.Pool, message_id: str, *, accessible_mailbox_ids: list[int] | None
+) -> MessageDetail | None:
+    record = await messages_repository.get_message(pool, message_id, accessible_mailbox_ids=accessible_mailbox_ids)
     if record is None:
         return None
     attachment_records = await messages_repository.list_attachments_for_message(pool, message_id)
@@ -178,12 +184,14 @@ async def get_message(pool: asyncpg.Pool, message_id: str) -> MessageDetail | No
     )
 
 
-async def get_conversation(pool: asyncpg.Pool, conversation_id: str) -> ConversationRead | None:
+async def get_conversation(
+    pool: asyncpg.Pool, conversation_id: str, *, accessible_mailbox_ids: list[int] | None
+) -> ConversationRead | None:
     summary = await messages_repository.get_conversation_summary(pool, conversation_id)
     if summary is None:
         return None
     message_records = await messages_repository.list_messages_in_conversation(
-        pool, conversation_id
+        pool, conversation_id, accessible_mailbox_ids=accessible_mailbox_ids
     )
     return ConversationRead(
         conversation_id=summary["conversation_id"],
@@ -195,8 +203,10 @@ async def get_conversation(pool: asyncpg.Pool, conversation_id: str) -> Conversa
     )
 
 
-async def list_messages_by_run(pool: asyncpg.Pool, run_id: int) -> list[MessageListItem]:
-    records = await messages_repository.list_messages_by_run(pool, run_id)
+async def list_messages_by_run(
+    pool: asyncpg.Pool, run_id: int, *, accessible_mailbox_ids: list[int] | None
+) -> list[MessageListItem]:
+    records = await messages_repository.list_messages_by_run(pool, run_id, accessible_mailbox_ids=accessible_mailbox_ids)
     items = [_to_list_item(record) for record in records]
     ids_with_attachments = [item.message_id for item in items if item.has_attachments]
     attachment_records = await messages_repository.list_attachments_for_messages(
@@ -252,6 +262,7 @@ async def list_all_attachments(
     date_to: datetime | None,
     only_hashed: bool | None,
     only_linked_to_case: bool | None,
+    accessible_mailbox_ids: list[int] | None,
     limit: int,
     offset: int,
 ) -> list[AttachmentListItem]:
@@ -263,14 +274,17 @@ async def list_all_attachments(
         date_to=date_to,
         only_hashed=only_hashed,
         only_linked_to_case=only_linked_to_case,
+        accessible_mailbox_ids=accessible_mailbox_ids,
         limit=limit,
         offset=offset,
     )
     return [_to_attachment_list_item(record) for record in records]
 
 
-async def list_mail_folders_tree(pool: asyncpg.Pool) -> list[MailFolderNode]:
-    records = await messages_repository.list_mail_folders(pool)
+async def list_mail_folders_tree(
+    pool: asyncpg.Pool, *, accessible_mailbox_ids: list[int] | None
+) -> list[MailFolderNode]:
+    records = await messages_repository.list_mail_folders(pool, accessible_mailbox_ids=accessible_mailbox_ids)
     nodes: dict[str, MailFolderNode] = {
         record["folder_id"]: MailFolderNode(
             folder_id=record["folder_id"],

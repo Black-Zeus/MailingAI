@@ -34,6 +34,7 @@ def _build_message_conditions(
     has_attachments: bool | None,
     attachment_pattern: str | None,
     mailbox_account_id: int | None,
+    accessible_mailbox_ids: list[int] | None,
 ) -> tuple[list[str], list[object], int | None]:
     conditions: list[str] = []
     params: list[object] = []
@@ -42,6 +43,12 @@ def _build_message_conditions(
     def add(condition_template: str, value: object) -> None:
         params.append(value)
         conditions.append(condition_template.format(len(params)))
+
+    # accessible_mailbox_ids es None solo para admin (sin restriccion). Para
+    # el resto es una lista real -- incluso vacia, que entonces no matchea
+    # ningun mensaje (ANY sobre lista vacia = false), en vez de devolver todo.
+    if accessible_mailbox_ids is not None:
+        add("m.mailbox_account_id = ANY(${}::bigint[])", accessible_mailbox_ids)
 
     if folder_id is not None:
         add("m.folder_id = ${}", folder_id)
@@ -98,6 +105,7 @@ async def list_messages(
     has_attachments: bool | None,
     attachment_pattern: str | None,
     mailbox_account_id: int | None,
+    accessible_mailbox_ids: list[int] | None,
     limit: int,
     offset: int,
 ) -> list[asyncpg.Record]:
@@ -114,6 +122,7 @@ async def list_messages(
         has_attachments=has_attachments,
         attachment_pattern=attachment_pattern,
         mailbox_account_id=mailbox_account_id,
+        accessible_mailbox_ids=accessible_mailbox_ids,
     )
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -160,6 +169,7 @@ async def count_messages(
     has_attachments: bool | None,
     attachment_pattern: str | None,
     mailbox_account_id: int | None,
+    accessible_mailbox_ids: list[int] | None,
 ) -> int:
     conditions, params, _ = _build_message_conditions(
         folder_id=folder_id,
@@ -174,6 +184,7 @@ async def count_messages(
         has_attachments=has_attachments,
         attachment_pattern=attachment_pattern,
         mailbox_account_id=mailbox_account_id,
+        accessible_mailbox_ids=accessible_mailbox_ids,
     )
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT count(*) FROM mailing.messages m {where_clause};"
@@ -184,16 +195,20 @@ async def count_messages(
             raise InvalidAttachmentPatternError(str(exc)) from exc
 
 
-async def get_message(pool: asyncpg.Pool, message_id: str) -> asyncpg.Record | None:
+async def get_message(
+    pool: asyncpg.Pool, message_id: str, *, accessible_mailbox_ids: list[int] | None
+) -> asyncpg.Record | None:
+    access_clause = "AND m.mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
     query = f"""
         SELECT {_DETAIL_FIELDS}
         FROM mailing.messages m
         LEFT JOIN mailing.mail_folders f ON f.folder_id = m.folder_id
         {_MAILBOX_JOIN}
-        WHERE m.message_id = $1;
+        WHERE m.message_id = $1 {access_clause};
     """
+    params = [message_id] if accessible_mailbox_ids is None else [message_id, accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, message_id)
+        return await conn.fetchrow(query, *params)
 
 
 async def list_attachments_for_message(
@@ -249,6 +264,7 @@ async def list_all_attachments(
     date_to: datetime | None,
     only_hashed: bool | None,
     only_linked_to_case: bool | None,
+    accessible_mailbox_ids: list[int] | None,
     limit: int,
     offset: int,
 ) -> list[asyncpg.Record]:
@@ -259,6 +275,8 @@ async def list_all_attachments(
         params.append(value)
         conditions.append(condition_template.format(len(params)))
 
+    if accessible_mailbox_ids is not None:
+        add("m.mailbox_account_id = ANY(${}::bigint[])", accessible_mailbox_ids)
     if file_name_contains is not None:
         add("a.file_name ILIKE ${}", f"%{file_name_contains}%")
     if extension is not None:
@@ -318,31 +336,37 @@ async def get_conversation_summary(
 
 
 async def list_messages_in_conversation(
-    pool: asyncpg.Pool, conversation_id: str
+    pool: asyncpg.Pool, conversation_id: str, *, accessible_mailbox_ids: list[int] | None
 ) -> list[asyncpg.Record]:
+    access_clause = "AND m.mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
     query = f"""
         SELECT {_LIST_FIELDS}
         FROM mailing.messages m
         LEFT JOIN mailing.mail_folders f ON f.folder_id = m.folder_id
         {_MAILBOX_JOIN}
-        WHERE m.conversation_id = $1
+        WHERE m.conversation_id = $1 {access_clause}
         ORDER BY m.sent_datetime ASC NULLS LAST;
     """
+    params = [conversation_id] if accessible_mailbox_ids is None else [conversation_id, accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetch(query, conversation_id)
+        return await conn.fetch(query, *params)
 
 
-async def list_messages_by_run(pool: asyncpg.Pool, run_id: int) -> list[asyncpg.Record]:
+async def list_messages_by_run(
+    pool: asyncpg.Pool, run_id: int, *, accessible_mailbox_ids: list[int] | None
+) -> list[asyncpg.Record]:
+    access_clause = "AND m.mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
     query = f"""
         SELECT {_LIST_FIELDS}
         FROM mailing.messages m
         LEFT JOIN mailing.mail_folders f ON f.folder_id = m.folder_id
         {_MAILBOX_JOIN}
-        WHERE m.run_id = $1
+        WHERE m.run_id = $1 {access_clause}
         ORDER BY m.sent_datetime DESC NULLS LAST;
     """
+    params = [run_id] if accessible_mailbox_ids is None else [run_id, accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetch(query, run_id)
+        return await conn.fetch(query, *params)
 
 
 async def delete_all_messages(pool: asyncpg.Pool) -> int:
@@ -385,12 +409,15 @@ async def delete_unlinked_messages(pool: asyncpg.Pool) -> int:
     return len(rows)
 
 
-async def list_mail_folders(pool: asyncpg.Pool) -> list[asyncpg.Record]:
-    query = """
+async def list_mail_folders(pool: asyncpg.Pool, *, accessible_mailbox_ids: list[int] | None) -> list[asyncpg.Record]:
+    where_clause = "WHERE mailbox_account_id = ANY($1::bigint[])" if accessible_mailbox_ids is not None else ""
+    query = f"""
         SELECT folder_id, parent_folder_id, display_name, folder_path,
                child_folder_count, total_item_count, last_sync_at
         FROM mailing.mail_folders
+        {where_clause}
         ORDER BY folder_path NULLS LAST, display_name;
     """
+    params = [] if accessible_mailbox_ids is None else [accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetch(query)
+        return await conn.fetch(query, *params)

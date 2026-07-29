@@ -9,8 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from fastapi.responses import Response
 
+from app.auth.dependencies import AdminUserDep, CurrentUserDep
 from app.db import get_pool
-from app.repositories import cases_repository
+from app.repositories import access_repository, cases_repository
 from app.repositories.messages_repository import InvalidAttachmentPatternError
 from app.schemas.messages import (
     AttachmentListItem,
@@ -32,6 +33,7 @@ DeleteMessagesScope = Literal["all", "date_range", "folder", "unlinked"]
 @router.get("/messages", response_model=list[MessageListItem])
 async def list_messages(
     pool: PoolDep,
+    user: CurrentUserDep,
     response: Response,
     folder_id: str | None = Query(default=None),
     date_from: datetime | None = Query(default=None),
@@ -48,6 +50,7 @@ async def list_messages(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[MessageListItem]:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
     filters = dict(
         folder_id=folder_id,
         date_from=date_from,
@@ -61,6 +64,7 @@ async def list_messages(
         has_attachments=has_attachments,
         attachment_pattern=attachment_pattern,
         mailbox_account_id=mailbox_account_id,
+        accessible_mailbox_ids=accessible_mailbox_ids,
     )
     try:
         total = await messages_service.count_messages(pool, **filters)
@@ -76,6 +80,7 @@ async def list_messages(
 @router.delete("/messages", status_code=http_status.HTTP_200_OK)
 async def delete_messages(
     pool: PoolDep,
+    _admin: AdminUserDep,
     scope: DeleteMessagesScope = Query(...),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
@@ -91,15 +96,20 @@ async def delete_messages(
 
 
 @router.get("/messages/{message_id}", response_model=MessageDetail)
-async def get_message(message_id: str, pool: PoolDep) -> MessageDetail:
-    message = await messages_service.get_message(pool, message_id)
+async def get_message(message_id: str, pool: PoolDep, user: CurrentUserDep) -> MessageDetail:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    message = await messages_service.get_message(pool, message_id, accessible_mailbox_ids=accessible_mailbox_ids)
     if message is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Mensaje no encontrado")
     return message
 
 
 @router.get("/messages/{message_id}/attachments/{attachment_id}/download")
-async def download_attachment(message_id: str, attachment_id: str, pool: PoolDep) -> Response:
+async def download_attachment(message_id: str, attachment_id: str, pool: PoolDep, user: CurrentUserDep) -> Response:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    message = await messages_service.get_message(pool, message_id, accessible_mailbox_ids=accessible_mailbox_ids)
+    if message is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Mensaje no encontrado")
     try:
         data = await n8n_client.download_attachment(message_id, attachment_id)
     except n8n_client.AttachmentDownloadError as exc:
@@ -133,8 +143,9 @@ async def download_attachment(message_id: str, attachment_id: str, pool: PoolDep
 
 
 @router.post("/messages/{message_id}/retrace-attachments", response_model=RetraceAttachmentsResponse)
-async def retrace_attachments(message_id: str, pool: PoolDep) -> RetraceAttachmentsResponse:
-    message = await messages_service.get_message(pool, message_id)
+async def retrace_attachments(message_id: str, pool: PoolDep, user: CurrentUserDep) -> RetraceAttachmentsResponse:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    message = await messages_service.get_message(pool, message_id, accessible_mailbox_ids=accessible_mailbox_ids)
     if message is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Mensaje no encontrado")
     try:
@@ -147,15 +158,20 @@ async def retrace_attachments(message_id: str, pool: PoolDep) -> RetraceAttachme
         # se completa aca (idempotente, no duplica si se repite el retrace).
         affected_case_ids = await cases_repository.backfill_attachment_timeline_events(pool, message_id)
         for case_id in affected_case_ids:
-            case_core = await cases_repository.get_case_core(pool, case_id)
+            case_core = await cases_repository.get_case_core(
+                pool, case_id, user_id=user.user_id, is_admin=user.is_admin
+            )
             if case_core is not None and case_core["status"] == "open":
                 await cases_repository.update_case(pool, case_id, fields={"ai_stale": True})
     return RetraceAttachmentsResponse(traced_count=traced_count)
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationRead)
-async def get_conversation(conversation_id: str, pool: PoolDep) -> ConversationRead:
-    conversation = await messages_service.get_conversation(pool, conversation_id)
+async def get_conversation(conversation_id: str, pool: PoolDep, user: CurrentUserDep) -> ConversationRead:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    conversation = await messages_service.get_conversation(
+        pool, conversation_id, accessible_mailbox_ids=accessible_mailbox_ids
+    )
     if conversation is None:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="Conversacion no encontrada"
@@ -166,6 +182,7 @@ async def get_conversation(conversation_id: str, pool: PoolDep) -> ConversationR
 @router.get("/attachments", response_model=list[AttachmentListItem])
 async def list_attachments(
     pool: PoolDep,
+    user: CurrentUserDep,
     file_name_contains: str | None = Query(default=None),
     extension: str | None = Query(default=None),
     date_from: datetime | None = Query(default=None),
@@ -175,6 +192,7 @@ async def list_attachments(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[AttachmentListItem]:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
     return await messages_service.list_all_attachments(
         pool,
         file_name_contains=file_name_contains,
@@ -183,11 +201,13 @@ async def list_attachments(
         date_to=date_to,
         only_hashed=only_hashed,
         only_linked_to_case=only_linked_to_case,
+        accessible_mailbox_ids=accessible_mailbox_ids,
         limit=limit,
         offset=offset,
     )
 
 
 @router.get("/mail-folders", response_model=list[MailFolderNode])
-async def list_mail_folders(pool: PoolDep) -> list[MailFolderNode]:
-    return await messages_service.list_mail_folders_tree(pool)
+async def list_mail_folders(pool: PoolDep, user: CurrentUserDep) -> list[MailFolderNode]:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    return await messages_service.list_mail_folders_tree(pool, accessible_mailbox_ids=accessible_mailbox_ids)

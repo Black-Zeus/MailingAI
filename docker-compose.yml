@@ -46,6 +46,12 @@ services:
       WEBHOOK_SHARED_SECRET_HEADER: ${WEBHOOK_SHARED_SECRET_HEADER:-X-MailingAI-Secret}
       IDENTITY_BROKER_URL: ${IDENTITY_BROKER_URL:-http://identity-broker:8000}
       IDENTITY_BROKER_PUBLIC_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost:8002}
+      MS_TENANT_ID: ${MS_TENANT_ID:?la variable MS_TENANT_ID es obligatoria, ver .env}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:?la variable MS_CLIENT_ID es obligatoria, ver .env}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:?la variable MS_CLIENT_SECRET es obligatoria, ver .env}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8001}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       - "${BACKEND_PORT:-8001}:8000"
     volumes:

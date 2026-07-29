@@ -7,7 +7,7 @@ _RUN_FIELDS = """
     batch_run_id, status, case_type, total_keywords, processed_keywords,
     error_message, requested_at, started_at, finished_at,
     search_mailbox, mailbox_account_id, date_from, date_to,
-    created_count, correlated_count, searched_count
+    created_count, correlated_count, searched_count, requested_by_user_id
 """
 
 _ITEM_FIELDS = "item_id, position, keyword, status, detail, case_id"
@@ -22,14 +22,15 @@ async def create_batch_run(
     mailbox_account_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    requested_by_user_id: int,
 ) -> asyncpg.Record:
     async with pool.acquire() as conn:
         async with conn.transaction():
             run = await conn.fetchrow(
                 f"""
                 INSERT INTO mailing.case_batch_runs
-                  (case_type, total_keywords, search_mailbox, mailbox_account_id, date_from, date_to)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                  (case_type, total_keywords, search_mailbox, mailbox_account_id, date_from, date_to, requested_by_user_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING {_RUN_FIELDS};
                 """,
                 case_type,
@@ -38,6 +39,7 @@ async def create_batch_run(
                 mailbox_account_id,
                 date_from,
                 date_to,
+                requested_by_user_id,
             )
             for position, keyword in enumerate(keywords):
                 await conn.execute(
@@ -52,16 +54,33 @@ async def create_batch_run(
     return run
 
 
-async def get_batch_run(pool: asyncpg.Pool, batch_run_id: UUID) -> asyncpg.Record | None:
+async def get_batch_run(
+    pool: asyncpg.Pool, batch_run_id: UUID, *, user_id: int, is_admin: bool
+) -> asyncpg.Record | None:
+    query = f"""
+        SELECT {_RUN_FIELDS} FROM mailing.case_batch_runs
+        WHERE batch_run_id = $1 AND ($3 OR requested_by_user_id = $2);
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(query, batch_run_id, user_id, is_admin)
+
+
+async def get_batch_run_unscoped(pool: asyncpg.Pool, batch_run_id: UUID) -> asyncpg.Record | None:
+    """Sin filtro de dueño -- solo para uso interno de run_batch (background
+    task, ya corre con los privilegios de todo el sistema)."""
     query = f"SELECT {_RUN_FIELDS} FROM mailing.case_batch_runs WHERE batch_run_id = $1;"
     async with pool.acquire() as conn:
         return await conn.fetchrow(query, batch_run_id)
 
 
-async def get_latest_batch_run(pool: asyncpg.Pool) -> asyncpg.Record | None:
-    query = f"SELECT {_RUN_FIELDS} FROM mailing.case_batch_runs ORDER BY requested_at DESC LIMIT 1;"
+async def get_latest_batch_run(pool: asyncpg.Pool, *, user_id: int, is_admin: bool) -> asyncpg.Record | None:
+    query = f"""
+        SELECT {_RUN_FIELDS} FROM mailing.case_batch_runs
+        WHERE $2 OR requested_by_user_id = $1
+        ORDER BY requested_at DESC LIMIT 1;
+    """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query)
+        return await conn.fetchrow(query, user_id, is_admin)
 
 
 async def list_batch_items(pool: asyncpg.Pool, batch_run_id: UUID) -> list[asyncpg.Record]:

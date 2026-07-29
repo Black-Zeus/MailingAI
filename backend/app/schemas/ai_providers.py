@@ -52,3 +52,7 @@ class AIProviderModelsRequest(BaseModel):
 
 class AIProviderModelsResponse(BaseModel):
     models: list[str]
+
+
+class AIProviderTestResponse(BaseModel):
+    healthy: bool

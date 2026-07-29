@@ -89,3 +89,121 @@ async def delete_mailbox(mailbox_account_id: int) -> bool:
         logger.exception("No se pudo eliminar la cuenta de buzon %s en el identity-broker", mailbox_account_id)
         raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
     return True
+
+
+class MailboxAlreadyClaimedError(Exception):
+    """La cuenta ya tiene dueño y no se pidio forzar el cambio."""
+
+
+async def claim_mailbox_owner(mailbox_account_id: int, *, owner_user_id: int) -> dict[str, Any] | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.patch(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/owner",
+                json={"owner_user_id": owner_user_id, "force": False},
+            )
+        if response.status_code == 404:
+            return None
+        if response.status_code == 409:
+            raise MailboxAlreadyClaimedError(mailbox_account_id)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo reclamar la cuenta de buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def clear_mailbox_owner(mailbox_account_id: int) -> dict[str, Any] | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/owner"
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo liberar el dueño del buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def get_notification_sender() -> dict[str, Any] | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{settings.identity_broker_url}/internal/notification-sender")
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo consultar el buzon remitente de notificaciones")
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    data = response.json()
+    return data if data else None
+
+
+async def set_notification_sender(mailbox_account_id: int | None) -> dict[str, Any] | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.put(
+                f"{settings.identity_broker_url}/internal/notification-sender",
+                json={"mailbox_account_id": mailbox_account_id},
+            )
+        if response.status_code == 404:
+            raise IdentityBrokerError("Esa cuenta no existe.")
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo actualizar el buzon remitente de notificaciones")
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    data = response.json()
+    return data if data else None
+
+
+async def list_mailbox_shares(mailbox_account_id: int) -> list[dict[str, Any]]:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares"
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo listar comparticiones del buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def share_mailbox(
+    mailbox_account_id: int, *, user_id: int, permission: str, shared_by_user_id: int
+) -> dict[str, Any]:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares",
+                params={"shared_by_user_id": shared_by_user_id},
+                json={"user_id": user_id, "permission": permission},
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo compartir el buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def revoke_mailbox_share(mailbox_account_id: int, user_id: int) -> bool:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares/{user_id}"
+            )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo revocar comparticion del buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return True

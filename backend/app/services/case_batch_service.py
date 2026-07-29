@@ -6,7 +6,8 @@ from uuid import UUID
 import asyncpg
 from dateutil.relativedelta import relativedelta
 
-from app.repositories import case_batch_repository
+from app.auth.dependencies import CurrentUser
+from app.repositories import access_repository, case_batch_repository, users_repository
 from app.schemas.cases import CaseBatchItemRead, CaseBatchRunRead, CaseDetail
 from app.services import cases_service, jobs_service
 
@@ -19,6 +20,10 @@ _DEFAULT_MONTHS_BACK = 6
 
 class MailboxRequiredForSearchError(Exception):
     """search_mailbox=True pero no se indico mailbox_account_id -- no hay como saber en que buzon buscar."""
+
+
+class MailboxNotAccessibleError(Exception):
+    """El usuario no tiene acceso (dueño/compartido/admin) al buzon indicado para buscar."""
 
 
 def _to_item(record: asyncpg.Record) -> CaseBatchItemRead:
@@ -68,11 +73,16 @@ async def start_batch(
     mailbox_account_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    user: CurrentUser,
 ) -> CaseBatchRunRead:
     if search_mailbox and mailbox_account_id is None:
         raise MailboxRequiredForSearchError(
             "Para buscar en el buzón real hay que indicar en cuál (mailbox_account_id)."
         )
+    if search_mailbox and mailbox_account_id is not None and not user.is_admin:
+        accessible_mailbox_ids = await access_repository.get_accessible_mailbox_ids(pool, user.user_id)
+        if mailbox_account_id not in accessible_mailbox_ids:
+            raise MailboxNotAccessibleError("No tiene acceso a ese buzón.")
     if search_mailbox and (date_from is None or date_to is None):
         default_from, default_to = _default_date_range()
         date_from = date_from or default_from
@@ -86,21 +96,22 @@ async def start_batch(
         mailbox_account_id=mailbox_account_id,
         date_from=date_from,
         date_to=date_to,
+        requested_by_user_id=user.user_id,
     )
     items = await case_batch_repository.list_batch_items(pool, run["batch_run_id"])
     return _to_run(run, items)
 
 
-async def get_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> CaseBatchRunRead | None:
-    run = await case_batch_repository.get_batch_run(pool, batch_run_id)
+async def get_batch(pool: asyncpg.Pool, batch_run_id: UUID, *, user: CurrentUser) -> CaseBatchRunRead | None:
+    run = await case_batch_repository.get_batch_run(pool, batch_run_id, user_id=user.user_id, is_admin=user.is_admin)
     if run is None:
         return None
     items = await case_batch_repository.list_batch_items(pool, batch_run_id)
     return _to_run(run, items)
 
 
-async def get_latest_batch(pool: asyncpg.Pool) -> CaseBatchRunRead | None:
-    run = await case_batch_repository.get_latest_batch_run(pool)
+async def get_latest_batch(pool: asyncpg.Pool, *, user: CurrentUser) -> CaseBatchRunRead | None:
+    run = await case_batch_repository.get_latest_batch_run(pool, user_id=user.user_id, is_admin=user.is_admin)
     if run is None:
         return None
     items = await case_batch_repository.list_batch_items(pool, run["batch_run_id"])
@@ -203,9 +214,22 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
       3. Si search_mailbox esta activo, buscar cada palabra clave en el
          buzon real (Graph) y refrescar la correlacion con lo que aparezca.
     """
-    run = await case_batch_repository.get_batch_run(pool, batch_run_id)
+    run = await case_batch_repository.get_batch_run_unscoped(pool, batch_run_id)
     if run is None:
         return
+    requester = await users_repository.get_user_by_id(pool, run["requested_by_user_id"])
+    if requester is None:
+        logger.error("El usuario que pidio el batch %s ya no existe -- se aborta.", batch_run_id)
+        await case_batch_repository.mark_batch_finished(
+            pool, batch_run_id, status="failed", error_message="El usuario que pidio esta corrida ya no existe."
+        )
+        return
+    user = CurrentUser(
+        user_id=requester["user_id"],
+        email_address=requester["email_address"],
+        display_name=requester["display_name"],
+        role=requester["role"],
+    )
     items = await case_batch_repository.list_batch_items(pool, batch_run_id)
     case_type = run["case_type"]
     search_mailbox = run["search_mailbox"]
@@ -226,6 +250,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 title=item["keyword"],
                 seed_value=item["keyword"],
                 case_type=case_type,
+                user=user,
             )
             created_by_item[item["item_id"]] = case_detail
             await case_batch_repository.update_item_status(
@@ -252,8 +277,8 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
         if case_detail is None:
             continue  # fallo en la fase 1, no hay expediente que correlacionar
         try:
-            refreshed = await cases_service.refresh_case_correlation(pool, case_detail.case_id)
-        except cases_service.CaseClosedError:
+            refreshed = await cases_service.refresh_case_correlation(pool, case_detail.case_id, user=user)
+        except (cases_service.CaseClosedError, cases_service.CaseAccessDeniedError):
             refreshed = None
         if refreshed is not None:
             case_detail, _new_count = refreshed

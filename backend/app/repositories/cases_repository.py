@@ -5,8 +5,22 @@ import asyncpg
 _SUMMARY_FIELDS = """
     case_id, case_type, external_code, title, status, confidence,
     message_count, first_message_at, last_message_at, outcome, has_successful_ai_run, ai_stale,
-    has_own_reply
+    has_own_reply, owner_user_id
 """
+
+# Un usuario ve un expediente si es admin, si es el dueño, o si tiene una
+# fila en case_shares (cualquier permiso). Reusado en cada query que resuelve
+# un case_id puntual o lista expedientes -- asi es imposible que una nueva
+# funcion se olvide del filtro (queda en un solo lugar, no copiado a mano).
+def _access_clause(*, table_alias: str, case_id_param: str, is_admin_param: str, user_id_param: str) -> str:
+    return f"""(
+        {is_admin_param}
+        OR {table_alias}.owner_user_id = {user_id_param}
+        OR EXISTS (
+            SELECT 1 FROM mailing.case_shares cs
+            WHERE cs.case_id = {case_id_param} AND cs.user_id = {user_id_param}
+        )
+    )"""
 
 
 async def find_case_by_external_code(pool: asyncpg.Pool, external_code: str) -> asyncpg.Record | None:
@@ -22,24 +36,40 @@ async def insert_case(
     case_type: str,
     external_code: str | None,
     primary_message_id: str | None,
+    owner_user_id: int | None,
 ) -> asyncpg.Record:
     query = """
-        INSERT INTO mailing.cases (title, case_type, external_code, primary_message_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO mailing.cases (title, case_type, external_code, primary_message_id, owner_user_id)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING case_id;
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, title, case_type, external_code, primary_message_id)
+        return await conn.fetchrow(query, title, case_type, external_code, primary_message_id, owner_user_id)
 
 
-async def get_case_core(pool: asyncpg.Pool, case_id: int) -> asyncpg.Record | None:
-    query = """
-        SELECT case_id, case_type, external_code, primary_message_id, status, outcome, title
-        FROM mailing.cases
-        WHERE case_id = $1;
+async def get_case_core(
+    pool: asyncpg.Pool, case_id: int, *, user_id: int, is_admin: bool
+) -> asyncpg.Record | None:
+    """Devuelve la fila solo si el usuario tiene acceso de lectura (dueño,
+    compartido, o admin) -- si no, None, indistinguible de "no existe" para
+    quien llama (evita confirmar la existencia de expedientes ajenos)."""
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$3", user_id_param="$2")
+    edit_access = """(
+        $3
+        OR c.owner_user_id = $2
+        OR EXISTS (
+            SELECT 1 FROM mailing.case_shares cs
+            WHERE cs.case_id = c.case_id AND cs.user_id = $2 AND cs.permission = 'edit'
+        )
+    )"""
+    query = f"""
+        SELECT c.case_id, c.case_type, c.external_code, c.primary_message_id, c.status, c.outcome, c.title,
+               c.owner_user_id, {edit_access} AS can_edit
+        FROM mailing.cases c
+        WHERE c.case_id = $1 AND {access};
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, case_id)
+        return await conn.fetchrow(query, case_id, user_id, is_admin)
 
 
 async def get_case_ai_summary_override(pool: asyncpg.Pool, case_id: int) -> str | None:
@@ -51,7 +81,8 @@ async def get_case_ai_summary_override(pool: asyncpg.Pool, case_id: int) -> str 
 
 async def get_message_core(pool: asyncpg.Pool, message_id: str) -> asyncpg.Record | None:
     query = """
-        SELECT message_id, conversation_id, subject, from_address, to_addresses, cc_addresses, sent_datetime
+        SELECT message_id, conversation_id, subject, from_address, to_addresses, cc_addresses,
+               sent_datetime, mailbox_account_id
         FROM mailing.messages
         WHERE message_id = $1;
     """
@@ -60,28 +91,34 @@ async def get_message_core(pool: asyncpg.Pool, message_id: str) -> asyncpg.Recor
 
 
 async def find_messages_by_conversation(
-    pool: asyncpg.Pool, conversation_id: str
+    pool: asyncpg.Pool, conversation_id: str, *, accessible_mailbox_ids: list[int] | None
 ) -> list[asyncpg.Record]:
-    query = """
+    access_clause = "AND mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
+    query = f"""
         SELECT message_id, subject, from_address, sent_datetime
         FROM mailing.messages
-        WHERE conversation_id = $1
+        WHERE conversation_id = $1 {access_clause}
         ORDER BY sent_datetime ASC NULLS LAST;
     """
+    params = [conversation_id] if accessible_mailbox_ids is None else [conversation_id, accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetch(query, conversation_id)
+        return await conn.fetch(query, *params)
 
 
-async def find_messages_by_cr_keyword(pool: asyncpg.Pool, keyword: str) -> list[asyncpg.Record]:
-    query = """
+async def find_messages_by_cr_keyword(
+    pool: asyncpg.Pool, keyword: str, *, accessible_mailbox_ids: list[int] | None
+) -> list[asyncpg.Record]:
+    access_clause = "AND m.mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
+    query = f"""
         SELECT DISTINCT m.message_id, m.subject, m.from_address, m.sent_datetime
         FROM mailing.messages m
         LEFT JOIN mailing.message_attachments a ON a.message_id = m.message_id
-        WHERE m.subject ILIKE $1 OR m.body_content ILIKE $1 OR a.file_name ILIKE $1
+        WHERE (m.subject ILIKE $1 OR m.body_content ILIKE $1 OR a.file_name ILIKE $1) {access_clause}
         ORDER BY m.sent_datetime ASC NULLS LAST;
     """
+    params = [f"%{keyword}%"] if accessible_mailbox_ids is None else [f"%{keyword}%", accessible_mailbox_ids]
     async with pool.acquire() as conn:
-        return await conn.fetch(query, f"%{keyword}%")
+        return await conn.fetch(query, *params)
 
 
 async def find_heuristic_related(
@@ -92,10 +129,12 @@ async def find_heuristic_related(
     participants: list[str],
     date_from: datetime | None,
     date_to: datetime | None,
+    accessible_mailbox_ids: list[int] | None,
 ) -> list[asyncpg.Record]:
     if not normalized_subject or not participants:
         return []
-    query = """
+    access_clause = "AND mailbox_account_id = ANY($6::bigint[])" if accessible_mailbox_ids is not None else ""
+    query = f"""
         SELECT message_id, subject, from_address, sent_datetime
         FROM mailing.messages
         WHERE message_id != $1
@@ -107,17 +146,14 @@ async def find_heuristic_related(
               )
           AND ($4::timestamptz IS NULL OR sent_datetime >= $4)
           AND ($5::timestamptz IS NULL OR sent_datetime <= $5)
+          {access_clause}
         ORDER BY sent_datetime ASC NULLS LAST;
     """
+    params = [exclude_message_id, f"%{normalized_subject}%", participants, date_from, date_to]
+    if accessible_mailbox_ids is not None:
+        params.append(accessible_mailbox_ids)
     async with pool.acquire() as conn:
-        return await conn.fetch(
-            query,
-            exclude_message_id,
-            f"%{normalized_subject}%",
-            participants,
-            date_from,
-            date_to,
-        )
+        return await conn.fetch(query, *params)
 
 
 async def insert_case_message(
@@ -284,18 +320,24 @@ _DELETE_SCOPE_CLAUSES = {
 }
 
 
-async def list_open_case_ids(pool: asyncpg.Pool) -> list[int]:
-    query = "SELECT case_id FROM mailing.cases WHERE status = 'open' ORDER BY case_id ASC;"
+async def list_open_case_ids(pool: asyncpg.Pool, *, user_id: int, is_admin: bool) -> list[int]:
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$2", user_id_param="$1")
+    query = f"""
+        SELECT c.case_id FROM mailing.cases c
+        WHERE c.status = 'open' AND {access}
+        ORDER BY c.case_id ASC;
+    """
     async with pool.acquire() as conn:
-        rows = await conn.fetch(query)
+        rows = await conn.fetch(query, user_id, is_admin)
     return [r["case_id"] for r in rows]
 
 
-async def delete_cases(pool: asyncpg.Pool, scope: str) -> int:
-    clause = _DELETE_SCOPE_CLAUSES[scope]
-    query = f"DELETE FROM mailing.cases WHERE {clause} RETURNING case_id;"
+async def delete_cases(pool: asyncpg.Pool, scope: str, *, user_id: int, is_admin: bool) -> int:
+    scope_clause = _DELETE_SCOPE_CLAUSES[scope]
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$2", user_id_param="$1")
+    query = f"DELETE FROM mailing.cases c WHERE {scope_clause.replace('status', 'c.status')} AND {access} RETURNING c.case_id;"
     async with pool.acquire() as conn:
-        rows = await conn.fetch(query)
+        rows = await conn.fetch(query, user_id, is_admin)
     return len(rows)
 
 
@@ -411,32 +453,40 @@ async def get_case_evidence_content(pool: asyncpg.Pool, case_id: int, evidence_i
         return await conn.fetchrow(query, case_id, evidence_id)
 
 
-async def delete_case(pool: asyncpg.Pool, case_id: int) -> bool:
-    query = "DELETE FROM mailing.cases WHERE case_id = $1 RETURNING case_id;"
+async def delete_case(pool: asyncpg.Pool, case_id: int, *, user_id: int, is_admin: bool) -> bool:
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$3", user_id_param="$2")
+    query = f"DELETE FROM mailing.cases c WHERE c.case_id = $1 AND {access} RETURNING c.case_id;"
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(query, case_id)
+        row = await conn.fetchrow(query, case_id, user_id, is_admin)
     return row is not None
 
 
-async def list_cases(pool: asyncpg.Pool, limit: int) -> list[asyncpg.Record]:
+async def list_cases(pool: asyncpg.Pool, limit: int, *, user_id: int, is_admin: bool) -> list[asyncpg.Record]:
+    access = _access_clause(
+        table_alias="vs", case_id_param="vs.case_id", is_admin_param="$2", user_id_param="$3"
+    )
     query = f"""
         SELECT {_SUMMARY_FIELDS}
-        FROM mailing.v_case_summary
+        FROM mailing.v_case_summary vs
+        WHERE {access}
         ORDER BY case_id DESC
         LIMIT $1;
     """
     async with pool.acquire() as conn:
-        return await conn.fetch(query, limit)
+        return await conn.fetch(query, limit, is_admin, user_id)
 
 
-async def get_case_summary(pool: asyncpg.Pool, case_id: int) -> asyncpg.Record | None:
+async def get_case_summary(pool: asyncpg.Pool, case_id: int, *, user_id: int, is_admin: bool) -> asyncpg.Record | None:
+    access = _access_clause(
+        table_alias="vs", case_id_param="vs.case_id", is_admin_param="$3", user_id_param="$2"
+    )
     query = f"""
         SELECT {_SUMMARY_FIELDS}
-        FROM mailing.v_case_summary
-        WHERE case_id = $1;
+        FROM mailing.v_case_summary vs
+        WHERE vs.case_id = $1 AND {access};
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, case_id)
+        return await conn.fetchrow(query, case_id, user_id, is_admin)
 
 
 async def list_case_messages(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
@@ -468,15 +518,20 @@ async def list_timeline_events(pool: asyncpg.Pool, case_id: int) -> list[asyncpg
         return await conn.fetch(query, case_id)
 
 
-async def get_timeline_event_case_status(pool: asyncpg.Pool, event_id: int) -> asyncpg.Record | None:
-    query = """
+async def get_timeline_event_case_status(
+    pool: asyncpg.Pool, event_id: int, *, user_id: int, is_admin: bool
+) -> asyncpg.Record | None:
+    """Entra por event_id, no por case_id -- necesita su propio chequeo de
+    acceso (no pasa por get_case_core en el camino)."""
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$3", user_id_param="$2")
+    query = f"""
         SELECT te.event_id, c.status
         FROM mailing.timeline_events te
         JOIN mailing.cases c ON c.case_id = te.case_id
-        WHERE te.event_id = $1;
+        WHERE te.event_id = $1 AND {access};
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, event_id)
+        return await conn.fetchrow(query, event_id, user_id, is_admin)
 
 
 async def update_timeline_event_determination(
@@ -490,3 +545,92 @@ async def update_timeline_event_determination(
     """
     async with pool.acquire() as conn:
         return await conn.fetchrow(query, determination_type, event_id)
+
+
+async def list_case_shares(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
+    query = """
+        SELECT cs.case_id, cs.user_id, cs.permission, cs.shared_by_user_id, cs.created_at,
+               u.email_address, u.display_name
+        FROM mailing.case_shares cs
+        JOIN identity.users u ON u.user_id = cs.user_id
+        WHERE cs.case_id = $1
+        ORDER BY cs.created_at ASC;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(query, case_id)
+
+
+async def upsert_case_share(
+    pool: asyncpg.Pool, *, case_id: int, user_id: int, permission: str, shared_by_user_id: int
+) -> asyncpg.Record:
+    query = """
+        WITH upserted AS (
+            INSERT INTO mailing.case_shares (case_id, user_id, permission, shared_by_user_id)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (case_id, user_id) DO UPDATE SET
+                permission = EXCLUDED.permission,
+                shared_by_user_id = EXCLUDED.shared_by_user_id
+            RETURNING case_id, user_id, permission, shared_by_user_id, created_at
+        )
+        SELECT upserted.*, u.email_address, u.display_name
+        FROM upserted JOIN identity.users u ON u.user_id = upserted.user_id;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(query, case_id, user_id, permission, shared_by_user_id)
+
+
+async def delete_case_share(pool: asyncpg.Pool, case_id: int, user_id: int) -> bool:
+    query = "DELETE FROM mailing.case_shares WHERE case_id = $1 AND user_id = $2 RETURNING user_id;"
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(query, case_id, user_id)
+    return row is not None
+
+
+async def cascade_revoke_user_mailbox_access(
+    pool: asyncpg.Pool, *, user_id: int, mailbox_account_id: int
+) -> dict[str, int]:
+    """Se llama cuando a un usuario se le quita el acceso a un buzon (share
+    revocado o dueño removido): le quita tambien el acceso a cualquier
+    expediente que tenga al menos un mensaje de ese buzon.
+
+    - Si era dueño del expediente, el expediente queda sin dueño
+      (owner_user_id = NULL, igual que un expediente preexistente sin migrar
+      -- nunca se borra, solo pasa a ser visible unicamente para un admin).
+    - Si el expediente le habia sido compartido, se borra esa fila de
+      case_shares.
+
+    Devuelve cuantos expedientes se vieron afectados de cada forma, para que
+    el llamador pueda avisarle al usuario que disparo la accion.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            owner_rows = await conn.fetch(
+                """
+                UPDATE mailing.cases c
+                SET owner_user_id = NULL, updated_at = now()
+                WHERE c.owner_user_id = $1
+                  AND EXISTS (
+                    SELECT 1 FROM mailing.case_messages cm
+                    JOIN mailing.messages m ON m.message_id = cm.message_id
+                    WHERE cm.case_id = c.case_id AND m.mailbox_account_id = $2
+                  )
+                RETURNING c.case_id;
+                """,
+                user_id,
+                mailbox_account_id,
+            )
+            share_rows = await conn.fetch(
+                """
+                DELETE FROM mailing.case_shares cs
+                WHERE cs.user_id = $1
+                  AND EXISTS (
+                    SELECT 1 FROM mailing.case_messages cm
+                    JOIN mailing.messages m ON m.message_id = cm.message_id
+                    WHERE cm.case_id = cs.case_id AND m.mailbox_account_id = $2
+                  )
+                RETURNING cs.case_id;
+                """,
+                user_id,
+                mailbox_account_id,
+            )
+    return {"ownership_cleared": len(owner_rows), "shares_removed": len(share_rows)}

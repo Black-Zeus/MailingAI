@@ -100,6 +100,7 @@ class CaseSummary(BaseModel):
     has_successful_ai_run: bool = False
     ai_stale: bool = False
     has_own_reply: bool = False
+    owner_user_id: int | None = None
 
 
 class CaseDetail(CaseSummary):
@@ -138,6 +139,22 @@ class TimelineEventUpdate(BaseModel):
 class CaseUpdate(BaseModel):
     outcome: CaseOutcome | None = None
     status: CaseStatus | None = None
+
+
+CaseSharePermission = Literal["read", "edit"]
+
+
+class CaseShareRead(BaseModel):
+    user_id: int
+    email_address: str
+    display_name: str | None
+    permission: CaseSharePermission
+    created_at: datetime
+
+
+class CaseShareCreate(BaseModel):
+    user_id: int
+    permission: CaseSharePermission = "read"
 
 
 CaseBatchItemStatus = Literal["pendiente", "creando", "listo", "error"]

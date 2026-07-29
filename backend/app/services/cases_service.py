@@ -5,7 +5,9 @@ from datetime import timedelta
 
 import asyncpg
 
-from app.repositories import ai_runs_repository, cases_repository
+from app.auth.dependencies import CurrentUser
+from app.repositories import access_repository, ai_runs_repository, cases_repository, notifications_repository
+from app.services import notification_email_service
 from app.schemas.ai import AIAnalyzeResponse, AICaseSummary
 from app.schemas.cases import (
     CaseAttachmentRead,
@@ -13,6 +15,7 @@ from app.schemas.cases import (
     CaseEvidenceRead,
     CaseMessageRead,
     CaseNoteRead,
+    CaseShareRead,
     CaseSummary,
     TimelineEventRead,
 )
@@ -64,6 +67,26 @@ class CaseNotEligibleForAIError(Exception):
     """El expediente esta marcado 'sin_hallazgos' -- no admite analisis de IA ni cierre manual."""
 
 
+class CaseAccessDeniedError(Exception):
+    """El usuario tiene acceso de lectura al expediente (comparticion 'read')
+    pero intento una operacion que requiere ser dueño, admin, o tener
+    permiso 'edit'."""
+
+
+def _require_edit(case_core: asyncpg.Record) -> None:
+    if not case_core["can_edit"]:
+        raise CaseAccessDeniedError("No tiene permiso de edición sobre este expediente.")
+
+
+def _mailbox_accessible(mailbox_account_id: int | None, accessible_mailbox_ids: list[int] | None) -> bool:
+    """accessible_mailbox_ids None = admin, sin restriccion. mailbox_account_id
+    None = mensaje sin buzon asociado (dato historico) -- se deja pasar, no
+    hay nada que restringir ahi."""
+    if accessible_mailbox_ids is None or mailbox_account_id is None:
+        return True
+    return mailbox_account_id in accessible_mailbox_ids
+
+
 def _ensure_open(case_core: asyncpg.Record) -> None:
     if case_core["status"] == "closed":
         raise CaseClosedError(
@@ -81,6 +104,7 @@ async def create_empty_case(
     title: str,
     seed_value: str,
     case_type: str,
+    user: CurrentUser,
 ) -> CaseDetail:
     """Crea el expediente sin correlacionar todavia (siempre seed_type
     "cr_keyword" -- conversation_id y message_id necesitan el mensaje semilla
@@ -93,7 +117,7 @@ async def create_empty_case(
     """
     existing = await cases_repository.find_case_by_external_code(pool, seed_value)
     if existing is not None:
-        detail = await get_case_detail(pool, existing["case_id"])
+        detail = await get_case_detail(pool, existing["case_id"], user=user)
         if detail is not None:
             return detail
     case_record = await cases_repository.insert_case(
@@ -102,8 +126,9 @@ async def create_empty_case(
         case_type=case_type,
         external_code=seed_value,
         primary_message_id=None,
+        owner_user_id=user.user_id,
     )
-    detail = await get_case_detail(pool, case_record["case_id"])
+    detail = await get_case_detail(pool, case_record["case_id"], user=user)
     assert detail is not None
     return detail
 
@@ -115,6 +140,7 @@ async def create_case(
     seed_type: str,
     seed_value: str,
     case_type: str,
+    user: CurrentUser,
 ) -> CaseDetail:
     if seed_type == "cr_keyword":
         existing = await cases_repository.find_case_by_external_code(pool, seed_value)
@@ -125,14 +151,16 @@ async def create_case(
             # toca (mismo criterio de inmutabilidad de siempre) y se devuelve
             # tal cual esta.
             try:
-                refreshed = await refresh_case_correlation(pool, existing["case_id"])
-            except CaseClosedError:
+                refreshed = await refresh_case_correlation(pool, existing["case_id"], user=user)
+            except (CaseClosedError, CaseAccessDeniedError):
                 refreshed = None
             if refreshed is not None:
                 return refreshed[0]
-            detail = await get_case_detail(pool, existing["case_id"])
+            detail = await get_case_detail(pool, existing["case_id"], user=user)
             if detail is not None:
                 return detail
+
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
 
     primary_message_id: str | None = None
     external_code: str | None = None
@@ -140,19 +168,23 @@ async def create_case(
     correlation_source_for_seed = "manual"
 
     if seed_type == "conversation_id":
-        seed_messages = await cases_repository.find_messages_by_conversation(pool, seed_value)
+        seed_messages = await cases_repository.find_messages_by_conversation(
+            pool, seed_value, accessible_mailbox_ids=accessible_mailbox_ids
+        )
         correlation_source_for_seed = "conversation_id"
         if seed_messages:
             primary_message_id = seed_messages[0]["message_id"]
     elif seed_type == "cr_keyword":
-        seed_messages = await cases_repository.find_messages_by_cr_keyword(pool, seed_value)
+        seed_messages = await cases_repository.find_messages_by_cr_keyword(
+            pool, seed_value, accessible_mailbox_ids=accessible_mailbox_ids
+        )
         external_code = seed_value
         correlation_source_for_seed = "cr_keyword"
         if seed_messages:
             primary_message_id = seed_messages[0]["message_id"]
     elif seed_type == "message_id":
         message = await cases_repository.get_message_core(pool, seed_value)
-        if message is not None:
+        if message is not None and _mailbox_accessible(message["mailbox_account_id"], accessible_mailbox_ids):
             primary_message_id = message["message_id"]
             seed_messages = [message]
         correlation_source_for_seed = "manual"
@@ -163,6 +195,7 @@ async def create_case(
         case_type=case_type,
         external_code=external_code,
         primary_message_id=primary_message_id,
+        owner_user_id=user.user_id,
     )
     case_id = case_record["case_id"]
 
@@ -208,6 +241,7 @@ async def create_case(
                 participants=participants,
                 date_from=date_from,
                 date_to=date_to,
+                accessible_mailbox_ids=accessible_mailbox_ids,
             )
             for message in heuristic_matches:
                 if message["message_id"] in matched_ids:
@@ -253,10 +287,12 @@ async def create_case(
             confidence=1.0,
         )
 
-    return await get_case_detail(pool, case_id)  # type: ignore[return-value]
+    return await get_case_detail(pool, case_id, user=user)  # type: ignore[return-value]
 
 
-async def refresh_case_correlation(pool: asyncpg.Pool, case_id: int) -> tuple[CaseDetail, int] | None:
+async def refresh_case_correlation(
+    pool: asyncpg.Pool, case_id: int, *, user: CurrentUser
+) -> tuple[CaseDetail, int] | None:
     """Vuelve a buscar correos relacionados para un expediente ya creado.
 
     A diferencia de create_case (que corre una sola vez, al crear el caso),
@@ -264,10 +300,13 @@ async def refresh_case_correlation(pool: asyncpg.Pool, case_id: int) -> tuple[Ca
     armo a partir de una busqueda acotada (una carpeta, un rango de fechas)
     y despues se indexaron mas correos que podrian estar relacionados.
     """
-    case_core = await cases_repository.get_case_core(pool, case_id)
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case_core is None:
         return None
     _ensure_open(case_core)
+    _require_edit(case_core)
+
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
 
     existing_messages = await cases_repository.list_case_messages(pool, case_id)
     matched_ids = {m["message_id"] for m in existing_messages}
@@ -282,14 +321,16 @@ async def refresh_case_correlation(pool: asyncpg.Pool, case_id: int) -> tuple[Ca
 
     if primary_core is not None and primary_core["conversation_id"]:
         conversation_matches = await cases_repository.find_messages_by_conversation(
-            pool, primary_core["conversation_id"]
+            pool, primary_core["conversation_id"], accessible_mailbox_ids=accessible_mailbox_ids
         )
         for message in conversation_matches:
             if message["message_id"] not in matched_ids:
                 new_matches[message["message_id"]] = ("conversation_id", CONFIDENCE_CONVERSATION)
 
     if case_core["external_code"]:
-        cr_matches = await cases_repository.find_messages_by_cr_keyword(pool, case_core["external_code"])
+        cr_matches = await cases_repository.find_messages_by_cr_keyword(
+            pool, case_core["external_code"], accessible_mailbox_ids=accessible_mailbox_ids
+        )
         for message in cr_matches:
             if message["message_id"] not in matched_ids and message["message_id"] not in new_matches:
                 new_matches[message["message_id"]] = ("cr_keyword", CONFIDENCE_CR_KEYWORD)
@@ -313,6 +354,7 @@ async def refresh_case_correlation(pool: asyncpg.Pool, case_id: int) -> tuple[Ca
             participants=participants,
             date_from=date_from,
             date_to=date_to,
+            accessible_mailbox_ids=accessible_mailbox_ids,
         )
         for message in heuristic_matches:
             if message["message_id"] not in matched_ids and message["message_id"] not in new_matches:
@@ -362,19 +404,20 @@ async def refresh_case_correlation(pool: asyncpg.Pool, case_id: int) -> tuple[Ca
     if new_matches:
         await _mark_ai_stale(pool, case_id)
 
-    detail = await get_case_detail(pool, case_id)
+    detail = await get_case_detail(pool, case_id, user=user)
     return detail, len(new_matches)  # type: ignore[return-value]
 
 
-async def refresh_all_open_cases(pool: asyncpg.Pool) -> dict[str, int]:
-    """Re-correlaciona TODOS los expedientes abiertos contra lo que hay
-    indexado ahora mismo -- pensado para cuando otro trabajo (corrido aparte,
-    sin pasar por un expediente puntual) trajo correos nuevos que podrian
-    corresponder a expedientes ya existentes. Solo mira lo ya indexado (no
-    llama a Graph), asi que corre sincronico -- es rapido incluso con muchos
-    expedientes abiertos.
+async def refresh_all_open_cases(pool: asyncpg.Pool, *, user: CurrentUser) -> dict[str, int]:
+    """Re-correlaciona TODOS los expedientes abiertos (a los que el usuario
+    tiene acceso -- todos, si es admin) contra lo que hay indexado ahora
+    mismo -- pensado para cuando otro trabajo (corrido aparte, sin pasar por
+    un expediente puntual) trajo correos nuevos que podrian corresponder a
+    expedientes ya existentes. Solo mira lo ya indexado (no llama a Graph),
+    asi que corre sincronico -- es rapido incluso con muchos expedientes
+    abiertos.
     """
-    case_ids = await cases_repository.list_open_case_ids(pool)
+    case_ids = await cases_repository.list_open_case_ids(pool, user_id=user.user_id, is_admin=user.is_admin)
     cases_checked = 0
     cases_with_new_messages = 0
     new_messages_found = 0
@@ -382,8 +425,8 @@ async def refresh_all_open_cases(pool: asyncpg.Pool) -> dict[str, int]:
     for case_id in case_ids:
         cases_checked += 1
         try:
-            result = await refresh_case_correlation(pool, case_id)
-        except CaseClosedError:
+            result = await refresh_case_correlation(pool, case_id, user=user)
+        except (CaseClosedError, CaseAccessDeniedError):
             continue
         except Exception:
             logger.exception("Fallo al re-correlacionar el expediente %s en el refresco global", case_id)
@@ -407,7 +450,9 @@ class MessageNotFoundError(Exception):
     """El message_id que se quiere vincular a mano no existe entre los mensajes indexados."""
 
 
-async def add_message_to_case(pool: asyncpg.Pool, case_id: int, message_id: str) -> CaseDetail | None:
+async def add_message_to_case(
+    pool: asyncpg.Pool, case_id: int, message_id: str, *, user: CurrentUser
+) -> CaseDetail | None:
     """Vincula manualmente un correo real (ya indexado) a un expediente.
 
     Siempre a partir de un message_id real -- nunca datos escritos a mano --
@@ -416,13 +461,17 @@ async def add_message_to_case(pool: asyncpg.Pool, case_id: int, message_id: str)
     (ej. "en este correo se autorizo el requerimiento") aunque la
     correlacion automatica no lo haya encontrado.
     """
-    case_core = await cases_repository.get_case_core(pool, case_id)
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case_core is None:
         return None
     _ensure_open(case_core)
+    _require_edit(case_core)
 
     message_core = await cases_repository.get_message_core(pool, message_id)
     if message_core is None:
+        raise MessageNotFoundError(message_id)
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    if not _mailbox_accessible(message_core["mailbox_account_id"], accessible_mailbox_ids):
         raise MessageNotFoundError(message_id)
 
     existing_messages = await cases_repository.list_case_messages(pool, case_id)
@@ -467,10 +516,12 @@ async def add_message_to_case(pool: asyncpg.Pool, case_id: int, message_id: str)
             )
         await _mark_ai_stale(pool, case_id)
 
-    return await get_case_detail(pool, case_id)
+    return await get_case_detail(pool, case_id, user=user)
 
 
-async def remove_message_from_case(pool: asyncpg.Pool, case_id: int, message_id: str) -> CaseDetail | None:
+async def remove_message_from_case(
+    pool: asyncpg.Pool, case_id: int, message_id: str, *, user: CurrentUser
+) -> CaseDetail | None:
     """Desvincula un correo de un expediente (contrario de add_message_to_case).
 
     Util para sacar correlaciones que matchean el criterio de busqueda (ej.
@@ -478,14 +529,15 @@ async def remove_message_from_case(pool: asyncpg.Pool, case_id: int, message_id:
     un digest periodico que re-lista tickets abiertos sin aportar avance real
     al caso puntual. No borra el mensaje del indice, solo el vinculo.
     """
-    case_core = await cases_repository.get_case_core(pool, case_id)
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case_core is None:
         return None
     _ensure_open(case_core)
+    _require_edit(case_core)
     removed = await cases_repository.remove_case_message(pool, case_id, message_id)
     if removed:
         await _mark_ai_stale(pool, case_id)
-    return await get_case_detail(pool, case_id)
+    return await get_case_detail(pool, case_id, user=user)
 
 
 def _to_summary(record: asyncpg.Record) -> CaseSummary:
@@ -503,11 +555,12 @@ def _to_summary(record: asyncpg.Record) -> CaseSummary:
         has_successful_ai_run=record["has_successful_ai_run"],
         ai_stale=record["ai_stale"],
         has_own_reply=record["has_own_reply"],
+        owner_user_id=record["owner_user_id"],
     )
 
 
-async def list_cases(pool: asyncpg.Pool, limit: int) -> list[CaseSummary]:
-    records = await cases_repository.list_cases(pool, limit)
+async def list_cases(pool: asyncpg.Pool, limit: int, *, user: CurrentUser) -> list[CaseSummary]:
+    records = await cases_repository.list_cases(pool, limit, user_id=user.user_id, is_admin=user.is_admin)
     return [_to_summary(r) for r in records]
 
 
@@ -528,8 +581,8 @@ def _to_ai_run(record: asyncpg.Record) -> AIAnalyzeResponse:
     )
 
 
-async def get_case_detail(pool: asyncpg.Pool, case_id: int) -> CaseDetail | None:
-    summary = await cases_repository.get_case_summary(pool, case_id)
+async def get_case_detail(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser) -> CaseDetail | None:
+    summary = await cases_repository.get_case_summary(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if summary is None:
         return None
     message_records = await cases_repository.list_case_messages(pool, case_id)
@@ -622,30 +675,34 @@ async def get_case_detail(pool: asyncpg.Pool, case_id: int) -> CaseDetail | None
     )
 
 
-async def update_ai_summary(pool: asyncpg.Pool, case_id: int, summary: str) -> CaseDetail | None:
+async def update_ai_summary(pool: asyncpg.Pool, case_id: int, summary: str, *, user: CurrentUser) -> CaseDetail | None:
     """Guarda la version corregida a mano del resumen de IA -- no toca
     mailing.ai_runs (el registro original de auditoria queda intacto), solo
     la que se muestra en la UI/PDF/linea de tiempo. No requiere el expediente
     abierto: es un ajuste de redaccion, no una reapertura de la revision."""
-    case = await cases_repository.get_case_core(pool, case_id)
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case is None:
         return None
+    _require_edit(case)
     await cases_repository.update_case(pool, case_id, fields={"ai_summary_override": summary})
-    return await get_case_detail(pool, case_id)
+    return await get_case_detail(pool, case_id, user=user)
 
 
-async def delete_cases(pool: asyncpg.Pool, scope: str) -> int:
-    return await cases_repository.delete_cases(pool, scope)
+async def delete_cases(pool: asyncpg.Pool, scope: str, *, user: CurrentUser) -> int:
+    return await cases_repository.delete_cases(pool, scope, user_id=user.user_id, is_admin=user.is_admin)
 
 
-async def delete_case(pool: asyncpg.Pool, case_id: int) -> bool:
-    return await cases_repository.delete_case(pool, case_id)
+async def delete_case(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser) -> bool:
+    return await cases_repository.delete_case(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
 
 
-async def update_case(pool: asyncpg.Pool, case_id: int, *, fields: dict[str, object]) -> CaseDetail | None:
-    case_core = await cases_repository.get_case_core(pool, case_id)
+async def update_case(
+    pool: asyncpg.Pool, case_id: int, *, fields: dict[str, object], user: CurrentUser
+) -> CaseDetail | None:
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case_core is None:
         return None
+    _require_edit(case_core)
 
     current_status = case_core["status"]
     next_status = fields.get("status", current_status)
@@ -662,13 +719,14 @@ async def update_case(pool: asyncpg.Pool, case_id: int, *, fields: dict[str, obj
     updated = await cases_repository.update_case(pool, case_id, fields=fields)
     if not updated:
         return None
-    return await get_case_detail(pool, case_id)
+    return await get_case_detail(pool, case_id, user=user)
 
 
-async def add_case_note(pool: asyncpg.Pool, case_id: int, body: str) -> CaseNoteRead | None:
-    case = await cases_repository.get_case_core(pool, case_id)
+async def add_case_note(pool: asyncpg.Pool, case_id: int, body: str, *, user: CurrentUser) -> CaseNoteRead | None:
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case is None:
         return None
+    _require_edit(case)
     _ensure_open(case)
     record = await cases_repository.insert_case_note(pool, case_id, body)
     await _mark_ai_stale(pool, case_id)
@@ -700,10 +758,12 @@ async def add_case_evidence(
     file_name: str,
     content_type: str,
     content: bytes,
+    user: CurrentUser,
 ) -> CaseEvidenceRead | None:
-    case = await cases_repository.get_case_core(pool, case_id)
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case is None:
         return None
+    _require_edit(case)
     _ensure_open(case)
     if content_type not in _ALLOWED_EVIDENCE_CONTENT_TYPES:
         raise UnsupportedEvidenceTypeError(content_type)
@@ -729,14 +789,21 @@ async def add_case_evidence(
     )
 
 
-async def get_case_evidence_content(pool: asyncpg.Pool, case_id: int, evidence_id: int) -> asyncpg.Record | None:
+async def get_case_evidence_content(
+    pool: asyncpg.Pool, case_id: int, evidence_id: int, *, user: CurrentUser
+) -> asyncpg.Record | None:
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    if case is None:
+        return None
     return await cases_repository.get_case_evidence_content(pool, case_id, evidence_id)
 
 
 async def update_timeline_event(
-    pool: asyncpg.Pool, event_id: int, determination_type: str
+    pool: asyncpg.Pool, event_id: int, determination_type: str, *, user: CurrentUser
 ) -> bool:
-    info = await cases_repository.get_timeline_event_case_status(pool, event_id)
+    info = await cases_repository.get_timeline_event_case_status(
+        pool, event_id, user_id=user.user_id, is_admin=user.is_admin
+    )
     if info is None:
         return False
     if info["status"] == "closed":
@@ -745,3 +812,74 @@ async def update_timeline_event(
         pool, event_id, determination_type
     )
     return record is not None
+
+
+async def list_case_shares(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser) -> list[CaseShareRead] | None:
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    if case is None:
+        return None
+    records = await cases_repository.list_case_shares(pool, case_id)
+    return [
+        CaseShareRead(
+            user_id=r["user_id"],
+            email_address=r["email_address"],
+            display_name=r["display_name"],
+            permission=r["permission"],
+            created_at=r["created_at"],
+        )
+        for r in records
+    ]
+
+
+async def share_case(
+    pool: asyncpg.Pool, case_id: int, *, target_user_id: int, permission: str, user: CurrentUser
+) -> CaseShareRead | None:
+    """Solo el dueño o un admin puede compartir -- un usuario con acceso
+    'edit' via case_shares no puede, a su vez, re-compartir el expediente con
+    otros (evita que la compartición se propague sin control del dueño)."""
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    if case is None:
+        return None
+    if not user.is_admin and case["owner_user_id"] != user.user_id:
+        raise CaseAccessDeniedError("Solo el dueño del expediente (o un admin) puede compartirlo.")
+    record = await cases_repository.upsert_case_share(
+        pool, case_id=case_id, user_id=target_user_id, permission=permission, shared_by_user_id=user.user_id
+    )
+    sharer_name = user.display_name or user.email_address
+    permission_label = "edición" if permission == "edit" else "solo lectura"
+    notification_message = f'{sharer_name} te compartió el expediente "{case["title"]}" ({permission_label}).'
+    await notifications_repository.insert_notification(
+        pool,
+        user_id=target_user_id,
+        kind="case_shared",
+        message=notification_message,
+        case_id=case_id,
+        created_by_user_id=user.user_id,
+    )
+    await notification_email_service.try_send_email(
+        to_email=record["email_address"],
+        subject=f'MailingAI — te compartieron el expediente "{case["title"]}"',
+        body=notification_message,
+    )
+    return CaseShareRead(
+        user_id=record["user_id"],
+        email_address=record["email_address"],
+        display_name=record["display_name"],
+        permission=record["permission"],
+        created_at=record["created_at"],
+    )
+
+
+async def cascade_revoke_mailbox_access(pool: asyncpg.Pool, *, user_id: int, mailbox_account_id: int) -> dict[str, int]:
+    return await cases_repository.cascade_revoke_user_mailbox_access(
+        pool, user_id=user_id, mailbox_account_id=mailbox_account_id
+    )
+
+
+async def revoke_case_share(pool: asyncpg.Pool, case_id: int, target_user_id: int, *, user: CurrentUser) -> bool:
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    if case is None:
+        return False
+    if not user.is_admin and case["owner_user_id"] != user.user_id:
+        raise CaseAccessDeniedError("Solo el dueño del expediente (o un admin) puede revocar el acceso.")
+    return await cases_repository.delete_case_share(pool, case_id, target_user_id)

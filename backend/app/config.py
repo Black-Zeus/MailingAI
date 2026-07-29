@@ -26,6 +26,30 @@ class Settings(BaseSettings):
     identity_broker_url: str = "http://identity-broker:8000"
     identity_broker_public_url: str = "http://localhost:8002"
 
+    # Login de USUARIOS via SSO Microsoft/Entra ID (distinto del OAuth2 de
+    # buzones de arriba: aca no se guarda ningun token de Microsoft a largo
+    # plazo, solo se usa una vez para identificar quien es la persona). Mismo
+    # app registration que identity-broker, con un segundo Redirect URI (ver
+    # README.md, seccion "Seguridad y acceso multiusuario").
+    ms_tenant_id: str = ""
+    ms_client_id: str = ""
+    ms_client_secret: str = ""
+    ms_login_scope: str = "openid profile email User.Read"
+
+    # URL publica (alcanzable desde el navegador) de este backend, usada como
+    # redirect_uri del login SSO. URL publica del frontend, adonde se
+    # redirige tras completar (o fallar) el login.
+    backend_public_url: str = "http://localhost:8001"
+    frontend_url: str = "http://localhost:5173"
+
+    # Cookie de sesion (server-side, token opaco -- ver app/auth/sessions.py).
+    # httponly va siempre hardcodeado en set_cookie, no es configurable.
+    session_cookie_name: str = "mailingai_session"
+    session_cookie_secure: bool = False
+    session_cookie_samesite: str = "lax"
+    session_ttl_seconds: int = 43200
+    session_absolute_ttl_seconds: int = 604800
+
     # La configuracion de proveedores de IA (Ollama/OpenAI/Anthropic) y la
     # politica ya no viven en variables de entorno -- se administran desde
     # Configuracion y quedan en mailing.ai_providers / mailing.ai_settings

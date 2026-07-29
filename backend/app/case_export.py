@@ -27,6 +27,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from app.auth.dependencies import CurrentUserDep
 from app.db import get_pool
 from app.repositories import cases_repository
 from app.schemas.cases import CaseDetail, CaseSendEmailResponse, TimelineEventRead
@@ -321,8 +322,8 @@ def build_case_pdf(detail: CaseDetail, evidence_records: list[asyncpg.Record]) -
 
 
 @router.get("/{case_id}/export.pdf")
-async def export_case_pdf(case_id: int, pool: PoolDep) -> Response:
-    detail = await cases_service.get_case_detail(pool, case_id)
+async def export_case_pdf(case_id: int, pool: PoolDep, user: CurrentUserDep) -> Response:
+    detail = await cases_service.get_case_detail(pool, case_id, user=user)
     if detail is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     evidence_records = await cases_repository.list_case_evidence_with_content(pool, case_id)
@@ -342,6 +343,7 @@ def _split_addresses(raw: str) -> list[str]:
 async def send_case_email(
     case_id: int,
     pool: PoolDep,
+    user: CurrentUserDep,
     to: Annotated[str, Form(min_length=1)],
     subject: Annotated[str, Form(min_length=1)],
     body: Annotated[str, Form(min_length=1)],
@@ -354,7 +356,7 @@ async def send_case_email(
     real) -- todo lo demas es solo lectura. Adjunta automaticamente el PDF
     del expediente si attach_case_pdf, mas cualquier adjunto adicional que
     haya subido el auditor."""
-    detail = await cases_service.get_case_detail(pool, case_id)
+    detail = await cases_service.get_case_detail(pool, case_id, user=user)
     if detail is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
 

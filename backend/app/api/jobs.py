@@ -7,7 +7,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi import status as http_status
 from fastapi.responses import Response
 
+from app.auth.dependencies import CurrentUserDep
 from app.db import get_pool
+from app.repositories import access_repository
 from app.schemas.jobs import JobCreate, JobCreatedResponse, JobRead
 from app.schemas.messages import MessageListItem
 from app.services import jobs_service, messages_service
@@ -79,13 +81,16 @@ async def cancel_job(job_id: UUID, pool: PoolDep) -> JobRead:
 
 
 @router.get("/{job_id}/messages", response_model=list[MessageListItem])
-async def get_job_messages(job_id: UUID, pool: PoolDep) -> list[MessageListItem]:
+async def get_job_messages(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> list[MessageListItem]:
     job = await jobs_service.get_job(pool, job_id)
     if job is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
     if job.fetch_run_id is None:
         return []
-    return await messages_service.list_messages_by_run(pool, job.fetch_run_id)
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    return await messages_service.list_messages_by_run(
+        pool, job.fetch_run_id, accessible_mailbox_ids=accessible_mailbox_ids
+    )
 
 
 @router.get("/{job_id}/chart")

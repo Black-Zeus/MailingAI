@@ -15,6 +15,8 @@ class MailboxAccountRead(BaseModel):
     token_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    owner_user_id: int | None = None
+    is_notification_sender: bool = False
 
 
 class MailboxAccountUpdate(BaseModel):
@@ -33,3 +35,34 @@ class MailboxConnectUrlRequest(BaseModel):
 class MailboxTestResponse(BaseModel):
     email_address: str | None
     display_name: str | None
+
+
+MailboxSharePermission = Literal["read"]
+
+
+class MailboxShareCreate(BaseModel):
+    user_id: int
+    permission: MailboxSharePermission = "read"
+
+
+class MailboxAccessRevokeResponse(BaseModel):
+    revoked: bool
+    cases_affected: int
+
+
+class NotificationSenderUpdate(BaseModel):
+    mailbox_account_id: int | None
+
+
+class MailboxSendTestResponse(BaseModel):
+    sent: bool
+
+
+class MailboxShareRead(BaseModel):
+    mailbox_account_id: int
+    user_id: int
+    email_address: str
+    display_name: str | None
+    permission: MailboxSharePermission
+    shared_by_user_id: int | None
+    created_at: datetime

@@ -9,14 +9,15 @@ from app.repositories import ai_providers_repository, ai_runs_repository, cases_
 from app.schemas.ai import AIAnalyzeResponse, AICaseSummary, AIHealthResponse
 from app.services.ai.base import ProviderUnavailableError
 from app.services.ai.factory import get_provider_instance
-from app.services.ai_providers_service import to_provider_read
+from app.services.ai_providers_service import is_local_provider_type, to_provider_read
+from app.services.cases_service import CaseAccessDeniedError
+
+__all__ = ["health", "analyze_case", "CaseAccessDeniedError"]
 
 PROMPT_VERSION = "case-summary-v5"
 
-# Proveedores que corren en la red local del stack (no salen a internet).
-# Cualquier proveedor que no este en este set se considera "externo" y la
-# politica local_only lo bloquea sin siquiera intentar el llamado de red.
-_LOCAL_PROVIDERS = {"ollama"}
+# La distincion local/externo vive en ai_providers_service (single source of
+# truth, tambien usada al activar un proveedor) -- aca solo se importa.
 
 _SYSTEM_PROMPT = """Eres un asistente que resume expedientes de correo corporativo para un analista humano que ya conoce el contexto general -- no le expliques que es un "expediente" ni repitas el asunto del correo, ve directo al contenido especifico.
 
@@ -80,10 +81,13 @@ async def health(pool: asyncpg.Pool) -> AIHealthResponse:
     return AIHealthResponse(policy=policy, active_provider=to_provider_read(record), healthy=healthy)
 
 
-async def analyze_case(pool: asyncpg.Pool, case_id: int) -> AIAnalyzeResponse | None:
-    case_summary = await cases_repository.get_case_summary(pool, case_id)
+async def analyze_case(pool: asyncpg.Pool, case_id: int, *, user_id: int, is_admin: bool) -> AIAnalyzeResponse | None:
+    case_summary = await cases_repository.get_case_summary(pool, case_id, user_id=user_id, is_admin=is_admin)
     if case_summary is None:
         return None
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=user_id, is_admin=is_admin)
+    if case_core is not None and not case_core["can_edit"]:
+        raise CaseAccessDeniedError("No tiene permiso de edición sobre este expediente.")
 
     policy = await ai_providers_repository.get_policy(pool)
 
@@ -167,7 +171,7 @@ async def analyze_case(pool: asyncpg.Pool, case_id: int) -> AIAnalyzeResponse | 
     provider_type = record["provider_type"]
     model_name = record["model"]
 
-    if policy == "local_only" and provider_type not in _LOCAL_PROVIDERS:
+    if policy == "local_only" and not is_local_provider_type(provider_type):
         run = await ai_runs_repository.insert_ai_run(
             pool,
             case_id=case_id,
