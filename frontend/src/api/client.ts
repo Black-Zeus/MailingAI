@@ -26,7 +26,22 @@ import type {
   AIProviderType,
 } from '../types/ai'
 import type { StatsResponse, SystemStatus } from '../types/system'
-import type { MailboxAccountRead } from '../types/mailboxes'
+import type {
+  MailboxAccountRead,
+  MailboxAccessRevokeResponse,
+  MailboxShareRead,
+  MailboxSharePermission,
+} from '../types/mailboxes'
+import type { CurrentUser } from '../types/auth'
+import type {
+  UserRead,
+  UserCreatePayload,
+  UserUpdatePayload,
+  UserDirectoryEntry,
+  UserMailboxAccessEntry,
+} from '../types/users'
+import type { CaseShareRead, CaseSharePermission } from '../types/cases'
+import type { NotificationRead } from '../types/notifications'
 
 declare global {
   interface Window {
@@ -60,6 +75,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${API_URL}${path}`, {
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       ...init,
     })
   } catch {
@@ -90,6 +106,7 @@ export async function downloadAttachmentBlob(messageId: string, attachmentId: st
   try {
     response = await fetch(
       `${API_URL}/api/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
+      { credentials: 'include' },
     )
   } catch {
     throw new ApiError(0, 'No se pudo contactar al backend. Verifica que el stack esté levantado.')
@@ -117,7 +134,7 @@ export function retraceMessageAttachments(messageId: string): Promise<{ traced_c
 export async function exportCasePdfBlob(caseId: number): Promise<Blob> {
   let response: Response
   try {
-    response = await fetch(`${API_URL}/api/cases/${caseId}/export.pdf`)
+    response = await fetch(`${API_URL}/api/cases/${caseId}/export.pdf`, { credentials: 'include' })
   } catch {
     throw new ApiError(0, 'No se pudo contactar al backend. Verifica que el stack esté levantado.')
   }
@@ -203,7 +220,9 @@ export async function listMessagesWithTotal(
 ): Promise<{ items: MessageListItem[]; total: number }> {
   let response: Response
   try {
-    response = await fetch(`${API_URL}/api/messages?${buildMessageFilterParams(filters).toString()}`)
+    response = await fetch(`${API_URL}/api/messages?${buildMessageFilterParams(filters).toString()}`, {
+      credentials: 'include',
+    })
   } catch {
     throw new ApiError(0, 'No se pudo contactar al backend. Verifica que el stack esté levantado.')
   }
@@ -367,7 +386,11 @@ export async function addCaseEvidence(caseId: number, glosa: string, file: File)
     // Sin header Content-Type a mano: el navegador arma el boundary del
     // multipart solo si no se lo pisamos (a diferencia de request(), que
     // siempre manda application/json).
-    response = await fetch(`${API_URL}/api/cases/${caseId}/evidence`, { method: 'POST', body: formData })
+    response = await fetch(`${API_URL}/api/cases/${caseId}/evidence`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    })
   } catch {
     throw new ApiError(0, 'No se pudo contactar al backend. Verifica que el stack esté levantado.')
   }
@@ -448,7 +471,11 @@ export async function sendCaseEmail(caseId: number, params: SendCaseEmailParams)
   }
   let response: Response
   try {
-    response = await fetch(`${API_URL}/api/cases/${caseId}/send-email`, { method: 'POST', body: formData })
+    response = await fetch(`${API_URL}/api/cases/${caseId}/send-email`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    })
   } catch {
     throw new ApiError(0, 'No se pudo contactar al backend. Verifica que el stack esté levantado.')
   }
@@ -497,6 +524,10 @@ export function deleteAIProvider(providerId: number): Promise<void> {
 
 export function activateAIProvider(providerId: number): Promise<AIProviderRead> {
   return request<AIProviderRead>(`/api/ai/providers/${providerId}/activate`, { method: 'POST' })
+}
+
+export function testAIProvider(providerId: number): Promise<{ healthy: boolean }> {
+  return request<{ healthy: boolean }>(`/api/ai/providers/${providerId}/test`, { method: 'POST' })
 }
 
 export interface AIProviderModelsQuery {
@@ -566,4 +597,123 @@ export function deleteMailbox(mailboxAccountId: number): Promise<void> {
 
 export function testMailbox(mailboxAccountId: number): Promise<{ email_address: string | null; display_name: string | null }> {
   return request(`/api/mailboxes/${mailboxAccountId}/test`, { method: 'POST' })
+}
+
+export function getNotificationSender(): Promise<MailboxAccountRead | null> {
+  return request<MailboxAccountRead | null>('/api/mailboxes/notification-sender')
+}
+
+export function setNotificationSender(mailboxAccountId: number | null): Promise<MailboxAccountRead | null> {
+  return request<MailboxAccountRead | null>('/api/mailboxes/notification-sender', {
+    method: 'PATCH',
+    body: JSON.stringify({ mailbox_account_id: mailboxAccountId }),
+  })
+}
+
+export function testNotificationSender(): Promise<{ sent: boolean }> {
+  return request<{ sent: boolean }>('/api/mailboxes/notification-sender/test', { method: 'POST' })
+}
+
+export function claimMailbox(mailboxAccountId: number): Promise<MailboxAccountRead> {
+  return request<MailboxAccountRead>(`/api/mailboxes/${mailboxAccountId}/claim`, { method: 'POST' })
+}
+
+export function listMailboxShares(mailboxAccountId: number): Promise<MailboxShareRead[]> {
+  return request<MailboxShareRead[]>(`/api/mailboxes/${mailboxAccountId}/shares`)
+}
+
+export function shareMailbox(
+  mailboxAccountId: number,
+  userId: number,
+  permission: MailboxSharePermission = 'read',
+): Promise<MailboxShareRead> {
+  return request<MailboxShareRead>(`/api/mailboxes/${mailboxAccountId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, permission }),
+  })
+}
+
+export function revokeMailboxShare(mailboxAccountId: number, userId: number): Promise<MailboxAccessRevokeResponse> {
+  return request<MailboxAccessRevokeResponse>(`/api/mailboxes/${mailboxAccountId}/shares/${userId}`, {
+    method: 'DELETE',
+  })
+}
+
+export function clearMailboxOwner(mailboxAccountId: number): Promise<MailboxAccessRevokeResponse> {
+  return request<MailboxAccessRevokeResponse>(`/api/mailboxes/${mailboxAccountId}/owner`, { method: 'DELETE' })
+}
+
+// --- Autenticacion / sesion ---
+
+export function login(): void {
+  window.location.href = `${API_URL}/api/auth/login`
+}
+
+export function logout(): Promise<void> {
+  return request<void>('/api/auth/logout', { method: 'POST' })
+}
+
+export function getCurrentUser(): Promise<CurrentUser> {
+  return request<CurrentUser>('/api/auth/me')
+}
+
+export function listUserDirectory(): Promise<UserDirectoryEntry[]> {
+  return request<UserDirectoryEntry[]>('/api/users')
+}
+
+// --- Administracion de usuarios (solo admin) ---
+
+export function listUsers(): Promise<UserRead[]> {
+  return request<UserRead[]>('/api/admin/users')
+}
+
+export function createUser(payload: UserCreatePayload): Promise<UserRead> {
+  return request<UserRead>('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateUser(userId: number, payload: UserUpdatePayload): Promise<UserRead> {
+  return request<UserRead>(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export function listUserMailboxes(userId: number): Promise<UserMailboxAccessEntry[]> {
+  return request<UserMailboxAccessEntry[]>(`/api/admin/users/${userId}/mailboxes`)
+}
+
+// --- Notificaciones ---
+
+export function listNotifications(): Promise<NotificationRead[]> {
+  return request<NotificationRead[]>('/api/notifications')
+}
+
+export function getUnreadNotificationCount(): Promise<{ unread: number }> {
+  return request<{ unread: number }>('/api/notifications/unread-count')
+}
+
+export function markNotificationRead(notificationId: number): Promise<void> {
+  return request<void>(`/api/notifications/${notificationId}/read`, { method: 'POST' })
+}
+
+export function markAllNotificationsRead(): Promise<void> {
+  return request<void>('/api/notifications/read-all', { method: 'POST' })
+}
+
+// --- Comparticion de expedientes ---
+
+export function listCaseShares(caseId: number): Promise<CaseShareRead[]> {
+  return request<CaseShareRead[]>(`/api/cases/${caseId}/shares`)
+}
+
+export function shareCase(
+  caseId: number,
+  userId: number,
+  permission: CaseSharePermission = 'read',
+): Promise<CaseShareRead> {
+  return request<CaseShareRead>(`/api/cases/${caseId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, permission }),
+  })
+}
+
+export function revokeCaseShare(caseId: number, userId: number): Promise<void> {
+  return request<void>(`/api/cases/${caseId}/shares/${userId}`, { method: 'DELETE' })
 }

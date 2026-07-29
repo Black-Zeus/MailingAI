@@ -19,6 +19,17 @@ export interface CaseSummary {
   has_successful_ai_run: boolean
   ai_stale: boolean
   has_own_reply: boolean
+  owner_user_id: number | null
+}
+
+export type CaseSharePermission = 'read' | 'edit'
+
+export interface CaseShareRead {
+  user_id: number
+  email_address: string
+  display_name: string | null
+  permission: CaseSharePermission
+  created_at: string
 }
 
 export interface CaseNoteRead {

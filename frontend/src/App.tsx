@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Sidebar, type ViewName } from './components/Sidebar'
 import { ToastProvider } from './context/ToastContext'
+import { AuthProvider, useAuth } from './context/AuthContext'
+import { LoginView } from './views/LoginView'
 import { NewJobView } from './views/NewJobView'
 import { JobsView } from './views/JobsView'
 import { CasesView } from './views/CasesView'
@@ -75,10 +77,24 @@ function AppShell() {
   )
 }
 
+function AuthGate() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return <div className="login-screen">Cargando…</div>
+  }
+  if (!user) {
+    return <LoginView />
+  }
+  return <AppShell />
+}
+
 export default function App() {
   return (
-    <ToastProvider>
-      <AppShell />
-    </ToastProvider>
+    <AuthProvider>
+      <ToastProvider>
+        <AuthGate />
+      </ToastProvider>
+    </AuthProvider>
   )
 }
