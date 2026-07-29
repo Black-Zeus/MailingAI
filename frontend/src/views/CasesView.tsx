@@ -22,16 +22,19 @@ import {
   listMessages,
   refreshCase,
   refreshOpenCases,
+  listCaseShares,
   removeCaseMessage,
   retraceMessageAttachments,
+  revokeCaseShare,
   sendCaseEmail,
+  shareCase,
   startAIBatchAnalyze,
   startCaseBatchCreate,
   updateAiSummary,
   updateCase,
   updateTimelineEvent,
 } from '../api/client'
-import type { CaseBatchRunRead, CaseDetail, CaseOutcome, CaseSeedPrefill, CaseSummary, CaseType, SeedType } from '../types/cases'
+import type { CaseBatchRunRead, CaseDetail, CaseOutcome, CaseSeedPrefill, CaseShareRead, CaseSummary, CaseType, SeedType } from '../types/cases'
 import type { JobRead } from '../types/jobs'
 import type { MessageListItem } from '../types/messages'
 import { CASE_OUTCOME_LABELS, DETERMINATION_LABELS } from '../types/cases'
@@ -39,9 +42,11 @@ import type { AIBatchRunRead } from '../types/ai'
 import type { MailboxAccountRead } from '../types/mailboxes'
 import { PRIORITY_LABELS } from '../types/ai'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { ShareModal } from '../components/ShareModal'
 import { AttachmentItem } from '../components/AttachmentItem'
 import { MessageBodyModal, type MessageBodyModalState } from '../components/MessageBodyModal'
 import { useToast } from '../context/ToastContext'
+import { useAuth } from '../context/AuthContext'
 import { formatDateTime, groupTimelineEvents, stripCorreoSuffix } from '../utils/timeline'
 import { toEndOfDayISO, toStartOfDayISO } from '../utils/dates'
 import { useBodyScrollLock } from '../utils/modalScrollLock'
@@ -70,6 +75,52 @@ interface CasesViewProps {
 
 export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const { showToast } = useToast()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+
+  const [shareCaseTarget, setShareCaseTarget] = useState<CaseSummary | null>(null)
+  const [caseShares, setCaseShares] = useState<CaseShareRead[]>([])
+  const [sharingCase, setSharingCase] = useState(false)
+  const [revokingCaseShareUserId, setRevokingCaseShareUserId] = useState<number | null>(null)
+
+  async function openShareCaseModal(c: CaseSummary) {
+    setShareCaseTarget(c)
+    try {
+      setCaseShares(await listCaseShares(c.case_id))
+    } catch (err) {
+      setCaseShares([])
+      showToast(err instanceof ApiError ? err.message : 'No se pudieron cargar las comparticiones.', true)
+    }
+  }
+
+  async function handleShareCaseConfirm(userId: number, permission: 'read' | 'edit') {
+    if (!shareCaseTarget) return
+    setSharingCase(true)
+    try {
+      await shareCase(shareCaseTarget.case_id, userId, permission)
+      showToast('Expediente compartido.')
+      setCaseShares(await listCaseShares(shareCaseTarget.case_id))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo compartir el expediente.', true)
+    } finally {
+      setSharingCase(false)
+    }
+  }
+
+  async function handleRevokeCaseShare(userId: number) {
+    if (!shareCaseTarget) return
+    setRevokingCaseShareUserId(userId)
+    try {
+      await revokeCaseShare(shareCaseTarget.case_id, userId)
+      showToast('Acceso revocado.')
+      setCaseShares(await listCaseShares(shareCaseTarget.case_id))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo revocar el acceso.', true)
+    } finally {
+      setRevokingCaseShareUserId(null)
+    }
+  }
+
   const [cases, setCases] = useState<CaseSummary[] | null>(null)
   const [openCaseIds, setOpenCaseIds] = useState<Set<number>>(new Set())
   const [details, setDetails] = useState<Record<number, CaseDetail>>({})
@@ -970,37 +1021,37 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
           <p>Procesos reconstruidos desde correos, conversaciones y documentos relacionados.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="btn danger" onClick={() => setClearModalOpen(true)}>
-            Limpiar expedientes
+          <button type="button" className="btn danger btn-labeled" onClick={() => setClearModalOpen(true)}>
+            🗑 Limpiar expedientes
           </button>
           <button
             type="button"
-            className="btn"
+            className="btn btn-labeled"
             onClick={handleAssociateMail}
             disabled={associatingMail}
             title="Vuelve a correlacionar todos los expedientes abiertos contra lo ya indexado -- útil si otro trabajo trajo correos nuevos que corresponden a un expediente existente"
           >
-            {associatingMail ? 'Asociando correos…' : 'Asociar correos'}
+            {associatingMail ? 'Asociando correos…' : '🔗 Asociar correos'}
           </button>
           <button
             type="button"
-            className="btn"
+            className="btn btn-labeled"
             onClick={() => setAiConfirmOpen(true)}
             disabled={(activeAiBatch !== null && activeAiBatch.status !== 'success' && activeAiBatch.status !== 'failed') || cases === null}
           >
             {activeAiBatch && (activeAiBatch.status === 'queued' || activeAiBatch.status === 'running')
               ? `Procesando con IA… (${activeAiBatch.processed_cases}/${activeAiBatch.total_cases})`
-              : 'Procesar todo con IA'}
+              : '🤖 Procesar todo con IA'}
           </button>
-          <button type="button" className="btn" onClick={() => setBulkOpen((v) => !v)}>
+          <button type="button" className="btn btn-labeled" onClick={() => setBulkOpen((v) => !v)}>
             {activeCaseBatch && (activeCaseBatch.status === 'queued' || activeCaseBatch.status === 'running')
               ? `Creando… (${activeCaseBatch.processed_keywords}/${activeCaseBatch.total_keywords})`
               : bulkOpen
-                ? 'Cerrar creación en lote'
+                ? '✕ Cerrar creación en lote'
                 : '＋ Crear en lote'}
           </button>
-          <button type="button" className="btn primary" onClick={() => setFormOpen((v) => !v)}>
-            {formOpen ? 'Cerrar formulario' : '＋ Nuevo expediente'}
+          <button type="button" className="btn primary btn-labeled" onClick={() => setFormOpen((v) => !v)}>
+            {formOpen ? '✕ Cerrar formulario' : '＋ Nuevo expediente'}
           </button>
         </div>
       </div>
@@ -1032,8 +1083,8 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
               </p>
             )}
           </div>
-          <button type="button" className="btn small" onClick={() => setBulkOpen(true)}>
-            Ver detalle
+          <button type="button" className="btn small btn-labeled" onClick={() => setBulkOpen(true)}>
+            🔍 Ver detalle
           </button>
         </div>
       )}
@@ -1148,7 +1199,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
               <div className="field full actions">
                 <button
                   type="button"
-                  className="btn primary"
+                  className="btn primary btn-labeled"
                   onClick={handleBulkCreate}
                   disabled={
                     (activeCaseBatch !== null && activeCaseBatch.status !== 'success' && activeCaseBatch.status !== 'failed') ||
@@ -1157,11 +1208,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                 >
                   {activeCaseBatch && (activeCaseBatch.status === 'queued' || activeCaseBatch.status === 'running')
                     ? `Creando… (${activeCaseBatch.processed_keywords}/${activeCaseBatch.total_keywords})`
-                    : `Crear ${parseBulkKeywords().length || ''} expediente(s)`}
+                    : `＋ Crear ${parseBulkKeywords().length || ''} expediente(s)`}
                 </button>
               </div>
               {activeCaseBatch && activeCaseBatch.items.length > 0 && (
-                <div className="field full">
+                <div className="field full panel table-wrap">
                   <table>
                     <thead>
                       <tr>
@@ -1188,8 +1239,8 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
             </div>
           </div>
           <div className="modal-actions">
-            <button type="button" className="btn small" onClick={() => setBulkOpen(false)}>
-              Cerrar
+            <button type="button" className="btn small btn-labeled" onClick={() => setBulkOpen(false)}>
+              ✕ Cerrar
             </button>
           </div>
         </div>
@@ -1297,11 +1348,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
               </div>
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn small" onClick={() => setFormOpen(false)}>
-                Cancelar
+              <button type="button" className="btn small btn-labeled" onClick={() => setFormOpen(false)}>
+                ✕ Cancelar
               </button>
-              <button className="btn primary" type="submit" disabled={creating}>
-                {creating ? 'Correlacionando…' : 'Crear expediente'}
+              <button className="btn primary btn-labeled" type="submit" disabled={creating}>
+                {creating ? 'Correlacionando…' : '＋ Crear expediente'}
               </button>
             </div>
           </form>
@@ -1380,69 +1431,96 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         onClick={() => handleRefreshCorrelation(c.case_id)}
                         disabled={refreshingId === c.case_id || isClosed}
+                        data-tooltip={refreshingId === c.case_id ? 'Buscando correos relacionados…' : 'Buscar correos relacionados'}
+                        aria-label="Buscar correos relacionados"
                       >
-                        {refreshingId === c.case_id ? 'Buscando correos relacionados…' : 'Buscar correos relacionados'}
+                        {refreshingId === c.case_id ? '…' : '🔍'}
                       </button>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         onClick={() => toggleMailboxSearch(c.case_id, c.external_code)}
                         disabled={isClosed}
+                        data-tooltip={mailboxSearchOpenIds.has(c.case_id) ? 'Cerrar búsqueda en el buzón' : 'Buscar en el buzón (Graph)'}
+                        aria-label="Buscar en el buzón (Graph)"
                       >
-                        {mailboxSearchOpenIds.has(c.case_id) ? 'Cerrar búsqueda en el buzón' : 'Buscar en el buzón (Graph)'}
+                        📥
                       </button>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         onClick={() => handleAnalyze(c.case_id)}
                         disabled={analyzingId === c.case_id || isClosed || isSinHallazgos}
+                        data-tooltip={analyzingId === c.case_id ? 'Analizando con IA…' : 'Analizar con IA'}
+                        aria-label="Analizar con IA"
                       >
-                        {analyzingId === c.case_id ? 'Analizando con IA…' : 'Analizar con IA'}
+                        {analyzingId === c.case_id ? '…' : '🤖'}
                       </button>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         disabled={exportingCaseId === c.case_id}
                         onClick={() => handleExportCase(c.case_id, c.title)}
+                        data-tooltip={exportingCaseId === c.case_id ? 'Generando PDF…' : 'Exportar expediente (PDF)'}
+                        aria-label="Exportar expediente (PDF)"
                       >
-                        {exportingCaseId === c.case_id ? 'Generando PDF…' : 'Exportar expediente (PDF)'}
+                        {exportingCaseId === c.case_id ? '…' : '📄'}
                       </button>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         disabled={!detail || detail.messages.length === 0}
                         onClick={() => openSendEmailModal(c.case_id)}
+                        data-tooltip="Enviar correo"
+                        aria-label="Enviar correo"
                       >
-                        Enviar correo
+                        ✉
                       </button>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         disabled={togglingStatusId === c.case_id || (!isClosed && isSinHallazgos)}
                         onClick={() => handleToggleStatus(c.case_id, c.status === 'open' ? 'closed' : 'open')}
+                        data-tooltip={
+                          togglingStatusId === c.case_id
+                            ? 'Guardando…'
+                            : c.status === 'open'
+                              ? 'Cerrar expediente'
+                              : 'Reabrir expediente'
+                        }
+                        aria-label={c.status === 'open' ? 'Cerrar expediente' : 'Reabrir expediente'}
                       >
-                        {togglingStatusId === c.case_id
-                          ? 'Guardando…'
-                          : c.status === 'open'
-                            ? 'Cerrar expediente'
-                            : 'Reabrir expediente'}
+                        {togglingStatusId === c.case_id ? '…' : c.status === 'open' ? '🔒' : '🔓'}
                       </button>
+                      {(isAdmin || c.owner_user_id === user?.user_id) && (
+                        <button
+                          type="button"
+                          className="btn small icon-btn"
+                          onClick={() => openShareCaseModal(c)}
+                          data-tooltip="Compartir"
+                          aria-label="Compartir"
+                        >
+                          🔗
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="btn small danger"
+                        className="btn small danger icon-btn"
                         onClick={() => setDeleteTarget(c)}
                         style={{ marginLeft: 'auto' }}
+                        data-tooltip="Eliminar expediente"
+                        aria-label="Eliminar expediente"
                       >
-                        Eliminar expediente
+                        🗑
                       </button>
                     </div>
                     {mailboxSearchOpenIds.has(c.case_id) && (
                       <div className="add-message-search" style={{ marginTop: 10 }}>
                         <label>
-                          "Buscar correos relacionados" solo busca dentro de lo ya indexado en Postgres — esto en
+                          "Buscar correos relacionados" solo busca dentro de lo ya indexado localmente — esto en
                           cambio trae correos nuevos desde el buzón real (Graph) que contengan el texto en asunto o
                           cuerpo, los indexa, y automáticamente vuelve a correlacionar el expediente.
                         </label>
@@ -1505,15 +1583,17 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                           </div>
                           <button
                             type="button"
-                            className="btn small primary"
+                            className="btn small primary icon-btn"
                             disabled={
                               !(mailboxQuery[c.case_id] ?? '').trim() ||
                               !mailboxSearchAccountId[c.case_id] ||
                               (mailboxJobs[c.case_id] ?? []).some((j) => j.status === 'queued' || j.status === 'running')
                             }
                             onClick={() => handleSearchMailbox(c.case_id)}
+                            data-tooltip="Buscar"
+                            aria-label="Buscar"
                           >
-                            Buscar
+                            🔍
                           </button>
                         </div>
                         {!mailboxDateFrom[c.case_id] && !mailboxDateTo[c.case_id] && (
@@ -1583,11 +1663,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                           </select>
                           <button
                             type="button"
-                            className="btn small primary"
+                            className="btn small primary icon-btn"
                             disabled={savingOutcomeId === c.case_id || isClosed}
                             onClick={() => handleSaveOutcome(c.case_id)}
+                            data-tooltip={savingOutcomeId === c.case_id ? 'Guardando…' : 'Guardar conclusión'}
+                            aria-label="Guardar conclusión"
                           >
-                            {savingOutcomeId === c.case_id ? 'Guardando…' : 'Guardar conclusión'}
+                            {savingOutcomeId === c.case_id ? '…' : '💾'}
                           </button>
                         </div>
                       </div>
@@ -1606,19 +1688,23 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                           />
                           <button
                             type="button"
-                            className="btn small"
+                            className="btn small icon-btn"
                             onClick={() => handleSearchMessageToAdd(c.case_id)}
                             disabled={addMessageSearching === c.case_id || isClosed}
+                            data-tooltip={addMessageSearching === c.case_id ? 'Buscando…' : 'Buscar'}
+                            aria-label="Buscar"
                           >
-                            {addMessageSearching === c.case_id ? 'Buscando…' : 'Buscar'}
+                            {addMessageSearching === c.case_id ? '…' : '🔍'}
                           </button>
                           <button
                             type="button"
-                            className="btn small"
+                            className="btn small icon-btn"
                             onClick={() => handleClearMessageSearch(c.case_id)}
                             disabled={!addMessageQuery[c.case_id] && !addMessageResults[c.case_id]}
+                            data-tooltip="Limpiar"
+                            aria-label="Limpiar"
                           >
-                            Limpiar
+                            ✕
                           </button>
                         </div>
                         {addMessageResults[c.case_id] && addMessageResults[c.case_id].length === 0 && (
@@ -1641,15 +1727,19 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                   </div>
                                   <button
                                     type="button"
-                                    className="btn small"
+                                    className="btn small icon-btn"
                                     disabled={alreadyLinked || addingMessageId === m.message_id || isClosed}
                                     onClick={() => handleAddMessageToCase(c.case_id, m.message_id)}
+                                    data-tooltip={
+                                      alreadyLinked
+                                        ? 'Ya está en el expediente'
+                                        : addingMessageId === m.message_id
+                                          ? 'Agregando…'
+                                          : 'Agregar'
+                                    }
+                                    aria-label="Agregar"
                                   >
-                                    {alreadyLinked
-                                      ? 'Ya está en el expediente'
-                                      : addingMessageId === m.message_id
-                                        ? 'Agregando…'
-                                        : 'Agregar'}
+                                    {addingMessageId === m.message_id ? '…' : '＋'}
                                   </button>
                                 </li>
                               )
@@ -1662,10 +1752,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                     <div className="add-message-search">
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small btn-labeled"
                         onClick={() => toggleNotes(c.case_id)}
                       >
-                        {notesOpenIds.has(c.case_id) ? 'Ocultar notas del auditor ▾' : `Notas del auditor (${detail?.notes.length ?? 0}) ▸`}
+                        {notesOpenIds.has(c.case_id) ? '📝 Ocultar notas del auditor ▾' : `📝 Notas del auditor (${detail?.notes.length ?? 0}) ▸`}
                       </button>
                       {notesOpenIds.has(c.case_id) && (
                         <>
@@ -1684,15 +1774,18 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             />
                             <button
                               type="button"
-                              className="btn small primary"
+                              className="btn small primary icon-btn"
                               disabled={addingNoteId === c.case_id || !(newNoteDraft[c.case_id] ?? '').trim() || isClosed}
                               onClick={() => handleAddNote(c.case_id)}
+                              data-tooltip={addingNoteId === c.case_id ? 'Agregando…' : 'Agregar nota'}
+                              aria-label="Agregar nota"
                             >
-                              {addingNoteId === c.case_id ? 'Agregando…' : 'Agregar nota'}
+                              {addingNoteId === c.case_id ? '…' : '💾'}
                             </button>
                           </div>
                           {detail && detail.notes.length > 0 && (
-                            <table style={{ marginTop: 12 }}>
+                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                            <table>
                               <thead>
                                 <tr>
                                   <th style={{ width: 160 }}>Fecha</th>
@@ -1712,6 +1805,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                   ))}
                               </tbody>
                             </table>
+                            </div>
                           )}
                         </>
                       )}
@@ -1720,10 +1814,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                     <div className="add-message-search">
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small btn-labeled"
                         onClick={() => toggleEvidence(c.case_id)}
                       >
-                        {evidenceOpenIds.has(c.case_id) ? 'Ocultar evidencia ▾' : `Evidencia (${detail?.evidence.length ?? 0}) ▸`}
+                        {evidenceOpenIds.has(c.case_id) ? '🖼 Ocultar evidencia ▾' : `🖼 Evidencia (${detail?.evidence.length ?? 0}) ▸`}
                       </button>
                       {evidenceOpenIds.has(c.case_id) && (
                         <>
@@ -1750,7 +1844,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             />
                             <button
                               type="button"
-                              className="btn small primary"
+                              className="btn small primary icon-btn"
                               disabled={
                                 addingEvidenceId === c.case_id ||
                                 !(newEvidenceGlosa[c.case_id] ?? '').trim() ||
@@ -1758,17 +1852,20 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                 isClosed
                               }
                               onClick={() => handleAddEvidence(c.case_id)}
+                              data-tooltip={addingEvidenceId === c.case_id ? 'Agregando…' : 'Agregar evidencia'}
+                              aria-label="Agregar evidencia"
                             >
-                              {addingEvidenceId === c.case_id ? 'Agregando…' : 'Agregar evidencia'}
+                              {addingEvidenceId === c.case_id ? '…' : '💾'}
                             </button>
                           </div>
                           {detail && detail.evidence.length > 0 && (
-                            <table style={{ marginTop: 12 }}>
+                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                            <table>
                               <thead>
                                 <tr>
                                   <th style={{ width: 160 }}>Fecha</th>
                                   <th>Glosa</th>
-                                  <th>Evidencia</th>
+                                  <th style={{ width: 210 }}>Evidencia</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1793,6 +1890,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                   ))}
                               </tbody>
                             </table>
+                            </div>
                           )}
                         </>
                       )}
@@ -1811,19 +1909,23 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                               <button
                                 type="button"
-                                className="btn small"
+                                className="btn small icon-btn"
                                 disabled={savingAiSummaryId === c.case_id || !aiSummaryDraft.trim()}
                                 onClick={() => handleSaveAiSummary(c.case_id)}
+                                data-tooltip={savingAiSummaryId === c.case_id ? 'Guardando…' : 'Guardar'}
+                                aria-label="Guardar"
                               >
-                                {savingAiSummaryId === c.case_id ? 'Guardando…' : 'Guardar'}
+                                {savingAiSummaryId === c.case_id ? '…' : '💾'}
                               </button>
                               <button
                                 type="button"
-                                className="btn small ghost"
+                                className="btn small ghost icon-btn"
                                 disabled={savingAiSummaryId === c.case_id}
                                 onClick={cancelEditAiSummary}
+                                data-tooltip="Cancelar"
+                                aria-label="Cancelar"
                               >
-                                Cancelar
+                                ✕
                               </button>
                             </div>
                           </>
@@ -1835,10 +1937,12 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             )}
                             <button
                               type="button"
-                              className="btn small ghost"
+                              className="btn small ghost icon-btn"
                               onClick={() => startEditAiSummary(c.case_id, detail?.ai_summary_override || aiResult.summary)}
+                              data-tooltip="Editar resumen"
+                              aria-label="Editar resumen"
                             >
-                              Editar resumen
+                              ✎
                             </button>
                           </>
                         )}
@@ -1863,14 +1967,14 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                     {detail && (
                       <>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 14 }}>
-                          <button type="button" className="btn small" onClick={() => toggleTimeline(c.case_id)}>
+                          <button type="button" className="btn small btn-labeled" onClick={() => toggleTimeline(c.case_id)}>
                             {timelineOpenIds.has(c.case_id)
-                              ? 'Ocultar línea de tiempo ▾'
-                              : `Mostrar línea de tiempo (${groupTimelineEvents(detail.timeline).length} evento(s)) ▸`}
+                              ? '🕒 Ocultar línea de tiempo ▾'
+                              : `🕒 Mostrar línea de tiempo (${groupTimelineEvents(detail.timeline).length} evento(s)) ▸`}
                           </button>
                           <button
                             type="button"
-                            className="btn small"
+                            className="btn small btn-labeled"
                             onClick={() =>
                               setCaseChartOpen((prev) => ({
                                 ...prev,
@@ -1878,11 +1982,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               }))
                             }
                           >
-                            {caseChartOpen[c.case_id] === 'timeline' ? 'Ocultar gráfico de actividad' : 'Gráfico: actividad por día'}
+                            {caseChartOpen[c.case_id] === 'timeline' ? '📊 Ocultar gráfico de actividad' : '📊 Gráfico: actividad por día'}
                           </button>
                           <button
                             type="button"
-                            className="btn small"
+                            className="btn small btn-labeled"
                             onClick={() =>
                               setCaseChartOpen((prev) => ({
                                 ...prev,
@@ -1890,7 +1994,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               }))
                             }
                           >
-                            {caseChartOpen[c.case_id] === 'histogram' ? 'Ocultar histograma' : 'Gráfico: por remitente'}
+                            {caseChartOpen[c.case_id] === 'histogram' ? '📈 Ocultar histograma' : '📈 Gráfico: por remitente'}
                           </button>
                         </div>
                         {caseChartOpen[c.case_id] && (
@@ -1917,18 +2021,26 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               <p>{event.actor && `De: ${event.actor}`}</p>
                               {eventMessage && (eventMessage.body_content || eventMessage.body_preview) && (
                                 <div style={{ marginTop: 6 }}>
-                                  <button type="button" className="btn small" onClick={() => openBodyModal(eventMessage)}>
-                                    Ver cuerpo
+                                  <button
+                                    type="button"
+                                    className="btn small icon-btn"
+                                    onClick={() => openBodyModal(eventMessage)}
+                                    data-tooltip="Ver cuerpo"
+                                    aria-label="Ver cuerpo"
+                                  >
+                                    👁
                                   </button>
                                   {eventMessage.web_link && (
                                     <a
                                       href={eventMessage.web_link}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="btn small"
+                                      className="btn small icon-btn"
                                       style={{ marginLeft: 6 }}
+                                      data-tooltip="Ver correo"
+                                      aria-label="Ver correo"
                                     >
-                                      Ver correo
+                                      🔗
                                     </a>
                                   )}
                                 </div>
@@ -1938,11 +2050,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                   <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
                                   <button
                                     type="button"
-                                    className="btn small"
+                                    className="btn small icon-btn"
                                     disabled={retracingMessageId === eventMessage.message_id}
                                     onClick={() => handleRetraceAttachments(c.case_id, eventMessage.message_id)}
+                                    data-tooltip={retracingMessageId === eventMessage.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                    aria-label="Recuperar adjuntos"
                                   >
-                                    {retracingMessageId === eventMessage.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                    {retracingMessageId === eventMessage.message_id ? '…' : '📎'}
                                   </button>
                                 </div>
                               )}
@@ -1971,10 +2085,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                         {child.determination_type !== 'validacion_manual' && (
                                           <button
                                             type="button"
+                                            className="btn small icon-btn"
                                             disabled={isClosed}
                                             onClick={() => validateEvent(c.case_id, child.event_id)}
+                                            data-tooltip="Validar"
+                                            aria-label="Validar"
                                           >
-                                            Validar
+                                            ✓
                                           </button>
                                         )}
                                       </li>
@@ -1986,10 +2103,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                 <div className="event-actions">
                                   <button
                                     type="button"
+                                    className="btn small icon-btn"
                                     disabled={isClosed}
                                     onClick={() => validateEvent(c.case_id, event.event_id)}
+                                    data-tooltip="Marcar como validado manualmente"
+                                    aria-label="Marcar como validado manualmente"
                                   >
-                                    Marcar como validado manualmente
+                                    ✓
                                   </button>
                                 </div>
                               )}
@@ -2003,7 +2123,8 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                           <strong>70%</strong> = coincidencia por palabra clave/código ·{' '}
                           <strong>40%</strong> = heurística (mismo tema + participante en común, dentro de 30 días).
                         </p>
-                        <table>
+                        <div className="table-wrap">
+                        <table className="table-wide">
                           <thead>
                             <tr>
                               <th>Buzón</th>
@@ -2034,11 +2155,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                           <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
                                           <button
                                             type="button"
-                                            className="btn small"
+                                            className="btn small icon-btn"
                                             disabled={retracingMessageId === m.message_id}
                                             onClick={() => handleRetraceAttachments(c.case_id, m.message_id)}
+                                            data-tooltip={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            aria-label="Recuperar adjuntos"
                                           >
-                                            {retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            {retracingMessageId === m.message_id ? '…' : '📎'}
                                           </button>
                                         </div>
                                       )}
@@ -2063,20 +2186,33 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                     <td>
                                       <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
                                         {(m.body_content || m.body_preview) ? (
-                                          <button type="button" className="btn small" onClick={() => openBodyModal(m)}>
-                                            Ver cuerpo
+                                          <button
+                                            type="button"
+                                            className="btn small icon-btn"
+                                            onClick={() => openBodyModal(m)}
+                                            data-tooltip="Ver cuerpo"
+                                            aria-label="Ver cuerpo"
+                                          >
+                                            👁
                                           </button>
                                         ) : (
                                           <span style={{ color: 'var(--muted)' }}>Sin contenido</span>
                                         )}
                                         {m.web_link && (
-                                          <a href={m.web_link} target="_blank" rel="noreferrer" className="btn small">
-                                            Ver correo
+                                          <a
+                                            href={m.web_link}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="btn small icon-btn"
+                                            data-tooltip="Ver correo"
+                                            aria-label="Ver correo"
+                                          >
+                                            🔗
                                           </a>
                                         )}
                                         <button
                                           type="button"
-                                          className="btn small danger"
+                                          className="btn small danger icon-btn"
                                           disabled={isClosed}
                                           onClick={() =>
                                             setRemoveMessageTarget({
@@ -2085,8 +2221,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                               subject: m.subject || '(sin asunto)',
                                             })
                                           }
+                                          data-tooltip="Quitar"
+                                          aria-label="Quitar"
                                         >
-                                          Quitar
+                                          ✕
                                         </button>
                                       </div>
                                     </td>
@@ -2096,6 +2234,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             })}
                           </tbody>
                         </table>
+                        </div>
                       </>
                     )}
                   </div>
@@ -2134,6 +2273,8 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
         title="Procesar todo con IA"
         description="Esta acción ejecuta el análisis de IA sobre todos los expedientes que todavía no tienen un análisis exitoso. El expediente no se cierra automáticamente — el resumen queda disponible para revisión y edición del auditor. Dependiendo de la cantidad de expedientes puede tardar varios minutos."
         confirmLabel="Procesar con IA"
+        confirmIcon="🤖"
+        confirmDanger={false}
         onCancel={() => setAiConfirmOpen(false)}
         onConfirm={handleConfirmProcessAllWithAI}
       />
@@ -2152,6 +2293,19 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
         onConfirm={handleDeleteCase}
       />
 
+      <ShareModal
+        open={shareCaseTarget !== null}
+        title={shareCaseTarget ? `Compartir "${shareCaseTarget.title}"` : 'Compartir expediente'}
+        description="Elige con quién compartir este expediente y con qué permiso."
+        allowEditPermission
+        existingShares={caseShares}
+        sharing={sharingCase}
+        revokingUserId={revokingCaseShareUserId}
+        onShare={handleShareCaseConfirm}
+        onRevoke={handleRevokeCaseShare}
+        onClose={() => setShareCaseTarget(null)}
+      />
+
       <ConfirmModal
         open={removeMessageTarget !== null}
         title="Quitar correo del expediente"
@@ -2161,6 +2315,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
             : ''
         }
         confirmLabel="Quitar correo"
+        confirmIcon="✕"
         confirming={removingMessage}
         onCancel={() => setRemoveMessageTarget(null)}
         onConfirm={handleRemoveMessage}
@@ -2260,11 +2415,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
             </div>
           </div>
           <div className="modal-actions">
-            <button type="button" className="btn small" disabled={sendingEmail} onClick={closeSendEmailModal}>
-              Cancelar
+            <button type="button" className="btn small btn-labeled" disabled={sendingEmail} onClick={closeSendEmailModal}>
+              ✕ Cancelar
             </button>
-            <button type="button" className="btn small primary" disabled={sendingEmail} onClick={handleSendEmail}>
-              {sendingEmail ? 'Enviando…' : 'Enviar'}
+            <button type="button" className="btn small primary btn-labeled" disabled={sendingEmail} onClick={handleSendEmail}>
+              {sendingEmail ? 'Enviando…' : '✉ Enviar'}
             </button>
           </div>
         </div>

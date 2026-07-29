@@ -285,12 +285,12 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
         <div>
           <h2>Mensajes indexados</h2>
           <p>
-            Buscá texto completo (asunto + cuerpo), por carpeta, fecha, remitente o asunto entre los mensajes ya
+            Busca texto completo (asunto + cuerpo), por carpeta, fecha, remitente o asunto entre los mensajes ya
             traídos desde Microsoft Graph.
           </p>
         </div>
-        <button type="button" className="btn danger" onClick={() => setClearModalOpen(true)}>
-          Limpiar mensajes
+        <button type="button" className="btn danger btn-labeled" onClick={() => setClearModalOpen(true)}>
+          🗑 Limpiar mensajes
         </button>
       </div>
 
@@ -327,13 +327,13 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
           </strong>
           <button
             type="button"
-            className="btn small"
+            className="btn small btn-labeled"
             onClick={(e) => {
               e.stopPropagation()
               setFiltersOpen((o) => !o)
             }}
           >
-            {filtersOpen ? 'Ocultar ▾' : 'Mostrar ▸'}
+            {filtersOpen ? '🔍 Ocultar ▾' : '🔍 Mostrar ▸'}
           </button>
         </div>
 
@@ -491,8 +491,8 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-          <button type="button" className="btn primary" onClick={runSearch} disabled={loading}>
-            {loading ? 'Buscando…' : 'Buscar'}
+          <button type="button" className="btn primary btn-labeled" onClick={runSearch} disabled={loading}>
+            {loading ? 'Buscando…' : '🔍 Buscar'}
           </button>
         </div>
           </>
@@ -502,7 +502,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
       {error && <p className="form-error">{error}</p>}
 
       <div className="panel table-wrap">
-        <table>
+        <table className="table-wide">
           <thead>
             <tr>
               <th>#</th>
@@ -564,10 +564,12 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                                   <span className="mono">{detail.conversation_id}</span>
                                   <button
                                     type="button"
-                                    className="btn small"
+                                    className="btn small icon-btn"
                                     onClick={() => copyConversationId(detail.conversation_id!)}
+                                    data-tooltip="Copiar"
+                                    aria-label="Copiar"
                                   >
-                                    Copiar
+                                    📋
                                   </button>
                                 </span>
                               ) : (
@@ -588,11 +590,13 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                                     <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
                                     <button
                                       type="button"
-                                      className="btn small"
+                                      className="btn small icon-btn"
                                       disabled={retracingMessageId === detail.message_id}
                                       onClick={() => handleRetraceAttachments(detail.message_id)}
+                                      data-tooltip={retracingMessageId === detail.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                      aria-label="Recuperar adjuntos"
                                     >
-                                      {retracingMessageId === detail.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                      {retracingMessageId === detail.message_id ? '…' : '📎'}
                                     </button>
                                   </div>
                                 </dd>
@@ -625,17 +629,36 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                         {detail && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
                             {(detail.body_content || detail.body_preview) && (
-                              <button type="button" className="btn small" onClick={() => openBodyModal(detail)}>
-                                Ver cuerpo
+                              <button
+                                type="button"
+                                className="btn small icon-btn"
+                                onClick={() => openBodyModal(detail)}
+                                data-tooltip="Ver cuerpo"
+                                aria-label="Ver cuerpo"
+                              >
+                                👁
                               </button>
                             )}
                             {detail.web_link && (
-                              <a href={detail.web_link} target="_blank" rel="noreferrer" className="btn small">
-                                ↗ Abrir en Outlook
+                              <a
+                                href={detail.web_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn small icon-btn"
+                                data-tooltip="Abrir en Outlook"
+                                aria-label="Abrir en Outlook"
+                              >
+                                🔗
                               </a>
                             )}
-                            <button type="button" className="btn small" onClick={() => sendToNewCase(message)}>
-                              Enviar a nuevo expediente
+                            <button
+                              type="button"
+                              className="btn small icon-btn"
+                              onClick={() => sendToNewCase(message)}
+                              data-tooltip="Enviar a nuevo expediente"
+                              aria-label="Enviar a nuevo expediente"
+                            >
+                              🆕
                             </button>
                             <select
                               value={targetCaseId}
@@ -651,11 +674,13 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                             </select>
                             <button
                               type="button"
-                              className="btn small"
+                              className="btn small icon-btn"
                               disabled={!targetCaseId || sendingId === message.message_id}
                               onClick={() => sendToExistingCase(message.message_id)}
+                              data-tooltip={sendingId === message.message_id ? 'Agregando…' : 'Agregar al expediente'}
+                              aria-label="Agregar al expediente"
                             >
-                              {sendingId === message.message_id ? 'Agregando…' : 'Agregar al expediente'}
+                              {sendingId === message.message_id ? '…' : '＋'}
                             </button>
                           </div>
                         )}
@@ -681,8 +706,8 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
             <span style={{ color: 'var(--muted)', fontSize: 12 }}>
               Mostrando {messages.length} de {total} mensajes que coinciden con estos filtros.
             </span>
-            <button type="button" className="btn primary" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? 'Cargando…' : `Cargar ${Math.min(PAGE_SIZE, total - messages.length)} más`}
+            <button type="button" className="btn primary btn-labeled" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? 'Cargando…' : `⬇ Cargar ${Math.min(PAGE_SIZE, total - messages.length)} más`}
             </button>
           </div>
         )}
@@ -691,7 +716,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
       <ConfirmModal
         open={clearModalOpen}
         title="Limpiar mensajes indexados"
-        description="Borra mensajes de mailing.messages (el índice local). No borra nada del buzón real ni de Microsoft Graph — puedes volver a traerlos corriendo un trabajo de nuevo. Si un mensaje borrado estaba correlacionado a un expediente, ese expediente pierde la correlación (el expediente en sí no se borra)."
+        description="Borra mensajes del índice local. No borra nada del buzón real ni de Microsoft Graph — puedes volver a traerlos corriendo un trabajo de nuevo. Si un mensaje borrado estaba correlacionado a un expediente, ese expediente pierde la correlación (el expediente en sí no se borra)."
         confirmLabel="Confirmar limpieza"
         confirming={clearing}
         onCancel={() => setClearModalOpen(false)}

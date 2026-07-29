@@ -395,6 +395,110 @@ textarea:focus {
   background: rgba(255, 107, 122, 0.1);
 }
 
+/* Botones de fila/tabla: solo ícono, ancho y alto fijos, tooltip al hover
+   con el texto de la acción (via data-tooltip). overflow-y de .table-wrap
+   quedó en "visible" justamente para que este tooltip no se recorte. */
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  background: #0c1524;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  /* display:none (no visibility:hidden) -- un elemento visibility:hidden
+     sigue ocupando su caja geométrica y cuenta para el scrollable overflow
+     de cualquier ancestro con overflow:auto, así esté invisible. Centrado
+     sobre un botón de la última columna, el tooltip (más ancho que el
+     botón) se corría un poco más allá del borde de la tabla y forzaba un
+     scroll horizontal fantasma de unos pocos px. display:none saca la caja
+     del árbol de render por completo -- ya no cuenta para nada. */
+  display: none;
+  pointer-events: none;
+  z-index: 60;
+  box-shadow: var(--shadow);
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  display: block;
+}
+
+/* Botones de modal / barra de acciones: ícono + texto, ancho fijo (se
+   alinean entre sí, ej. Cancelar/Guardar del mismo modal quedan parejos). */
+.btn-labeled {
+  min-width: 132px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.btn-labeled.small {
+  min-width: 108px;
+}
+
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: 340px;
+  padding: 32px 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.login-card p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 0 22px;
+}
+
+.login-card .btn.primary {
+  width: 100%;
+  padding: 12px;
+}
+
+.login-error {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 107, 122, 0.5);
+  background: rgba(255, 107, 122, 0.1);
+  color: #ffd4d9;
+  font-size: 12.5px;
+  text-align: left;
+}
+
 .btn.active {
   border-color: var(--accent);
   color: var(--accent);
@@ -476,13 +580,29 @@ textarea:focus {
 }
 
 .table-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 table {
   border-collapse: collapse;
   width: 100%;
+  /* max-width tope duro: aunque la suma de anchos de columna (o el propio
+     algoritmo de layout) quiera más espacio, la tabla nunca se renderiza
+     más ancha que su contenedor -- sin esto, table-layout:fixed igual puede
+     desbordar por un par de px si las columnas no suman exactamente 100%. */
+  max-width: 100%;
+  /* fixed = el ancho de cada columna sale del contenedor, no del contenido
+     -- el contenido largo se envuelve en vez de forzar scroll. */
+  table-layout: fixed;
+}
+
+/* Solo las tablas con muchas columnas (mensajes, adjuntos, trabajos) necesitan
+   ancho propio y que las columnas se dimensionen por contenido -- ahí el
+   scroll horizontal es intencional. */
+.table-wide {
   min-width: 850px;
+  table-layout: auto;
 }
 
 th {
@@ -500,6 +620,7 @@ td {
   border-bottom: 1px solid rgba(33, 54, 82, 0.7);
   font-size: 13px;
   vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 
 tr:last-child td {

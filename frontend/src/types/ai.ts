@@ -64,6 +64,17 @@ export const AI_PROVIDER_TYPE_LABELS: Record<AIProviderType, string> = {
   anthropic: 'Claude (Anthropic)',
 }
 
+// "Local" = infraestructura propia (Ollama autohospedado, sea en este equipo
+// o en un servidor de la red corporativa) -- nunca manda el contenido a un
+// tercero. No tiene que ver con la ubicación de red, sino con quién es dueño
+// del servidor. Debe reflejar exactamente _LOCAL_PROVIDERS del backend
+// (ai_providers_service.py).
+const LOCAL_PROVIDER_TYPES: ReadonlySet<AIProviderType> = new Set(['ollama'])
+
+export function isLocalProviderType(type: AIProviderType): boolean {
+  return LOCAL_PROVIDER_TYPES.has(type)
+}
+
 export const AI_POLICY_LABELS: Record<AIPolicy, string> = {
   local_only: 'Solo local (bloquea proveedores externos)',
   allow_external: 'Permitir proveedores externos',

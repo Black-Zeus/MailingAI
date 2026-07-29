@@ -28,10 +28,10 @@ const POLL_INTERVAL_MS = 5000
 
 const ERROR_HELP: Record<string, string> = {
   execute_workflow_error:
-    'Revisa que n8n esté corriendo y que el workflow correspondiente no tenga problemas de conexión con Microsoft Graph (token OAuth2 vencido, falta de permisos, o Graph caído). Puedes reintentar una vez resuelto.',
+    'Hubo un problema de conexión con el buzón (puede ser un permiso vencido o que Microsoft Graph no esté disponible en este momento). Puedes reintentar; si vuelve a fallar, contacta al administrador del sistema.',
 }
 const DEFAULT_ERROR_HELP =
-  'Revisa los logs del backend (docker compose logs backend) y del workflow en n8n para más detalle.'
+  'Si el problema persiste después de reintentar, contacta al administrador del sistema para revisar el detalle técnico.'
 
 function formatDateTime(value: string | null): string {
   if (!value) return '—'
@@ -552,10 +552,10 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
           <p>Seguimiento de ejecuciones históricas y procesos actualmente en curso.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="btn danger" onClick={() => setClearModalOpen(true)}>
-            Limpiar historial
+          <button type="button" className="btn danger btn-labeled" onClick={() => setClearModalOpen(true)}>
+            🗑 Limpiar historial
           </button>
-          <button type="button" className="btn primary" onClick={onCreateNew}>
+          <button type="button" className="btn primary btn-labeled" onClick={onCreateNew}>
             ＋ Nuevo trabajo
           </button>
         </div>
@@ -599,7 +599,7 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
       {error && <p className="form-error">{error}</p>}
 
       <div className="panel table-wrap">
-        <table>
+        <table className="table-wide">
           <thead>
             <tr>
               <th>Trabajo</th>
@@ -637,57 +637,72 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                       <span className={statusClassName(job.status)}>{JOB_STATUS_LABELS[job.status]}</span>
                       <button
                         type="button"
-                        className="btn small"
+                        className="btn small icon-btn"
                         onClick={() => setOpenParamsId(openParamsId === job.job_id ? null : job.job_id)}
+                        data-tooltip={openParamsId === job.job_id ? 'Ocultar parámetros' : 'Ver parámetros'}
+                        aria-label="Ver parámetros"
                       >
-                        {openParamsId === job.job_id ? 'Ocultar parámetros' : 'Ver parámetros'}
+                        ℹ
                       </button>
                       {(job.status === 'queued' || job.status === 'running') && (
                         <button
                           type="button"
-                          className="btn small danger"
+                          className="btn small danger icon-btn"
                           onClick={() => handleCancel(job.job_id)}
                           disabled={cancelingId === job.job_id}
-                          title="Marca el trabajo como cancelado. Si ya está corriendo una consulta a Graph en n8n, esa consulta puntual termina igual, pero el resultado se descarta."
+                          data-tooltip={
+                            cancelingId === job.job_id
+                              ? 'Cancelando…'
+                              : 'Cancelar — la búsqueda en curso termina igual, pero el resultado se descarta'
+                          }
+                          aria-label="Cancelar"
                         >
-                          {cancelingId === job.job_id ? 'Cancelando…' : 'Cancelar'}
+                          {cancelingId === job.job_id ? '…' : '✕'}
                         </button>
                       )}
                       {job.status === 'failed' && (
                         <button
                           type="button"
-                          className="btn small danger"
+                          className="btn small danger icon-btn"
                           onClick={() => setOpenErrorId(openErrorId === job.job_id ? null : job.job_id)}
+                          data-tooltip={openErrorId === job.job_id ? 'Ocultar error' : 'Ver error'}
+                          aria-label="Ver error"
                         >
-                          {openErrorId === job.job_id ? 'Ocultar error' : 'Ver error'}
+                          ⚠
                         </button>
                       )}
                       {job.status === 'failed' && (
                         <button
                           type="button"
-                          className="btn small"
+                          className="btn small icon-btn"
                           onClick={() => handleRetry(job.job_id)}
                           disabled={retryingId === job.job_id}
+                          data-tooltip={retryingId === job.job_id ? 'Reintentando…' : 'Reintentar'}
+                          aria-label="Reintentar"
                         >
-                          {retryingId === job.job_id ? 'Reintentando…' : 'Reintentar'}
+                          {retryingId === job.job_id ? '…' : '↻'}
                         </button>
                       )}
                       {job.status === 'success' && (
                         <button
                           type="button"
-                          className="btn small"
+                          className="btn small icon-btn"
                           onClick={() => toggleResults(job.job_id, job.job_type)}
+                          data-tooltip={openResultsId === job.job_id ? 'Ocultar resultados' : 'Ver resultados'}
+                          aria-label="Ver resultados"
                         >
-                          {openResultsId === job.job_id ? 'Ocultar resultados' : 'Ver resultados'}
+                          📋
                         </button>
                       )}
                       {job.status !== 'queued' && job.status !== 'running' && (
                         <button
                           type="button"
-                          className="btn small danger"
+                          className="btn small danger icon-btn"
                           onClick={() => setDeleteTarget(job)}
+                          data-tooltip="Eliminar"
+                          aria-label="Eliminar"
                         >
-                          Eliminar
+                          🗑
                         </button>
                       )}
                     </div>
@@ -816,21 +831,31 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                               </span>
                               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                 {hasNaturalCaseSeed(job) && (
-                                  <button type="button" className="btn small" onClick={() => seedCaseFromJob(job)}>
-                                    Crear expediente con estos resultados
+                                  <button
+                                    type="button"
+                                    className="btn small icon-btn"
+                                    onClick={() => seedCaseFromJob(job)}
+                                    data-tooltip="Crear expediente con estos resultados"
+                                    aria-label="Crear expediente con estos resultados"
+                                  >
+                                    🆕
                                   </button>
                                 )}
                                 <button
                                   type="button"
-                                  className="btn small primary"
+                                  className="btn small primary icon-btn"
                                   disabled={
                                     (selectedByJob[job.job_id]?.size ?? 0) === 0 || creatingBatchId === job.job_id
                                   }
                                   onClick={() => createCasesForSelected(job)}
+                                  data-tooltip={
+                                    creatingBatchId === job.job_id
+                                      ? `Creando ${batchProgress?.done ?? 0}/${batchProgress?.total ?? 0}…`
+                                      : `Crear expedientes separados (${selectedByJob[job.job_id]?.size ?? 0})`
+                                  }
+                                  aria-label="Crear expedientes separados"
                                 >
-                                  {creatingBatchId === job.job_id
-                                    ? `Creando ${batchProgress?.done ?? 0}/${batchProgress?.total ?? 0}…`
-                                    : `Crear expedientes separados (${selectedByJob[job.job_id]?.size ?? 0})`}
+                                  {creatingBatchId === job.job_id ? '…' : '＋'}
                                 </button>
                               </div>
                             </div>
@@ -846,7 +871,7 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                 <p style={{ color: 'var(--muted)' }}>Ningún mensaje coincide con el filtro.</p>
                               ))}
                             {getFilteredResults(job.job_id).length > 0 && (
-                            <table>
+                            <table className="table-wide">
                               <thead>
                                 <tr>
                                   <th style={{ width: 28 }}>
@@ -888,11 +913,13 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                           <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
                                           <button
                                             type="button"
-                                            className="btn small"
+                                            className="btn small icon-btn"
                                             disabled={retracingMessageId === m.message_id}
                                             onClick={() => handleRetraceAttachments(job.job_id, m.message_id)}
+                                            data-tooltip={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            aria-label="Recuperar adjuntos"
                                           >
-                                            {retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            {retracingMessageId === m.message_id ? '…' : '📎'}
                                           </button>
                                         </div>
                                       )}
@@ -918,14 +945,22 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                       <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
                                         <button
                                           type="button"
-                                          className="btn small"
+                                          className="btn small icon-btn"
                                           disabled={loadingBodyId === m.message_id}
                                           onClick={() => handleViewBody(m.message_id)}
+                                          data-tooltip={loadingBodyId === m.message_id ? 'Cargando…' : 'Ver cuerpo'}
+                                          aria-label="Ver cuerpo"
                                         >
-                                          {loadingBodyId === m.message_id ? 'Cargando…' : 'Ver cuerpo'}
+                                          {loadingBodyId === m.message_id ? '…' : '👁'}
                                         </button>
-                                        <button type="button" className="btn small" onClick={() => seedCaseFromMessage(m)}>
-                                          Usar como semilla
+                                        <button
+                                          type="button"
+                                          className="btn small icon-btn"
+                                          onClick={() => seedCaseFromMessage(m)}
+                                          data-tooltip="Usar como semilla"
+                                          aria-label="Usar como semilla"
+                                        >
+                                          🌱
                                         </button>
                                       </div>
                                     </td>

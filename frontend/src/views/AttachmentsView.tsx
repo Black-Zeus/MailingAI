@@ -139,15 +139,15 @@ export function AttachmentsView() {
           <option value="yes">Solo vinculados a un expediente</option>
           <option value="no">Solo sin expediente</option>
         </select>
-        <button type="button" className="btn primary" onClick={runSearch} disabled={loading}>
-          {loading ? 'Buscando…' : 'Buscar'}
+        <button type="button" className="btn primary btn-labeled" onClick={runSearch} disabled={loading}>
+          {loading ? 'Buscando…' : '🔍 Buscar'}
         </button>
       </div>
 
       {error && <p className="form-error">{error}</p>}
 
       <div className="panel table-wrap">
-        <table>
+        <table className="table-wide">
           <thead>
             <tr>
               <th>Buzón</th>

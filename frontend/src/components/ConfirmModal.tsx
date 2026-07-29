@@ -7,6 +7,9 @@ interface ConfirmModalProps {
   description: string
   children?: ReactNode
   confirmLabel?: string
+  confirmingLabel?: string
+  confirmIcon?: string
+  confirmDanger?: boolean
   onCancel: () => void
   onConfirm: () => void
   confirming?: boolean
@@ -18,6 +21,9 @@ export function ConfirmModal({
   description,
   children,
   confirmLabel = 'Confirmar',
+  confirmingLabel = 'Procesando…',
+  confirmIcon = '🗑',
+  confirmDanger = true,
   onCancel,
   onConfirm,
   confirming = false,
@@ -32,11 +38,16 @@ export function ConfirmModal({
           {children}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onCancel}>
-            Cancelar
+          <button type="button" className="btn btn-labeled" onClick={onCancel}>
+            ✕ Cancelar
           </button>
-          <button type="button" className="btn danger" onClick={onConfirm} disabled={confirming}>
-            {confirming ? 'Eliminando…' : confirmLabel}
+          <button
+            type="button"
+            className={`btn btn-labeled${confirmDanger ? ' danger' : ' primary'}`}
+            onClick={onConfirm}
+            disabled={confirming}
+          >
+            {confirming ? confirmingLabel : `${confirmIcon} ${confirmLabel}`}
           </button>
         </div>
       </div>

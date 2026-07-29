@@ -519,7 +519,7 @@ export function NewJobView({ onJobCreated }: NewJobViewProps) {
 
             <div className="field full actions">
               <button
-                className="btn"
+                className="btn btn-labeled"
                 type="reset"
                 onClick={() => {
                   setForm(EMPTY_FORM)
@@ -528,14 +528,14 @@ export function NewJobView({ onJobCreated }: NewJobViewProps) {
                   setPatternIsRegex(false)
                 }}
               >
-                Limpiar
+                ✕ Limpiar
               </button>
               <button
-                className="btn primary"
+                className="btn primary btn-labeled"
                 type="submit"
                 disabled={submitting || (fields.mailbox && !mailboxAccountId)}
               >
-                {submitting ? 'Creando…' : 'Iniciar análisis →'}
+                {submitting ? 'Creando…' : '▶ Iniciar análisis'}
               </button>
             </div>
           </div>

@@ -59,12 +59,12 @@ export function MessageBodyModal({
         </div>
         <div className="modal-actions">
           {state?.webLink && (
-            <a href={state.webLink} target="_blank" rel="noreferrer" className="btn small">
-              Ver correo
+            <a href={state.webLink} target="_blank" rel="noreferrer" className="btn small btn-labeled">
+              🔗 Ver correo
             </a>
           )}
-          <button type="button" className="btn small" onClick={onClose}>
-            Cerrar
+          <button type="button" className="btn small btn-labeled" onClick={onClose}>
+            ✕ Cerrar
           </button>
         </div>
       </div>

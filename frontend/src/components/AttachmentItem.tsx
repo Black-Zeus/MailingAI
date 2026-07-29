@@ -130,14 +130,23 @@ export function AttachmentItem({
         {sizeBytes !== null && ` (${formatBytes(sizeBytes)})`}
         {matchesNamingConvention && ' · patrón CR'}
         {matchesSearchPattern === false && ' · no coincide con la búsqueda'}
-        <button type="button" onClick={handleClick} disabled={loading}>
-          {loading ? 'Descargando…' : blobUrl ? 'Abrir' : 'Descargar'}
+        <button
+          type="button"
+          className="btn small icon-btn"
+          onClick={handleClick}
+          disabled={loading}
+          data-tooltip={loading ? 'Descargando…' : blobUrl ? 'Abrir' : 'Descargar'}
+          aria-label={blobUrl ? 'Abrir' : 'Descargar'}
+        >
+          {loading ? '…' : blobUrl ? '👁' : '⬇'}
         </button>
         {hash && (
           <button
             type="button"
-            title={`SHA-256: ${hash}`}
+            className="btn small"
             onClick={copyHash}
+            data-tooltip={`Copiar hash — SHA-256: ${hash}`}
+            aria-label="Copiar hash SHA-256"
             style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
           >
             🔒 {hash.slice(0, 8)}…
@@ -152,8 +161,8 @@ export function AttachmentItem({
               <iframe src={blobUrl} title={fileName} style={{ width: '100%', height: '80vh', border: 0 }} />
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn" onClick={() => setModalOpen(false)}>
-                Cerrar
+              <button type="button" className="btn btn-labeled" onClick={() => setModalOpen(false)}>
+                ✕ Cerrar
               </button>
             </div>
           </div>
