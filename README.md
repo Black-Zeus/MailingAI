@@ -81,9 +81,9 @@ n8n necesita una App Registration en tu tenant de Microsoft Entra ID (Azure AD) 
 
 ## 2. Cargar credenciales y workflows con el script
 
-Toda la lógica de importación corre **dentro del contenedor** `mailingai_n8n`, en `n8n/import.sh` (montado en `/import/import.sh`): crea la carpeta `n8n/credentials` y las plantillas si faltan, valida que la de Graph ya no tenga placeholders, y llama a la CLI de n8n (`n8n import:credentials`, `n8n import:workflow`) contra las carpetas montadas en `/import/credentials` y `/import/workflows`. `scripts/import-n8n.ps1` es solo un disparador desde PowerShell: comprueba que el contenedor esté arriba y ejecuta `docker compose exec n8n sh /import/import.sh` — no contiene lógica propia. Si prefieres no usar PowerShell, puedes invocar el mismo script directamente:
+Toda la lógica de importación corre **dentro del contenedor** `mailingai_n8n`, en `n8n/import.sh` (montado en `/import/import.sh`): crea la carpeta `n8n/credentials` y las plantillas si faltan, valida que la de Graph ya no tenga placeholders, y llama a la CLI de n8n (`n8n import:credentials`, `n8n import:workflow`) contra las carpetas montadas en `/import/credentials` y `/import/workflows`. `scripts/import-n8n.sh` es solo un disparador desde shell (funciona igual en Linux que en Windows vía Git Bash/WSL): comprueba que el contenedor esté arriba y ejecuta `docker compose exec n8n sh /import/import.sh` — no contiene lógica propia. Si prefieres no usar el wrapper, puedes invocar el mismo script directamente:
 
-```powershell
+```sh
 docker compose exec -T n8n sh /import/import.sh
 ```
 
@@ -92,8 +92,8 @@ Credenciales y workflows tienen un `id` fijo en su JSON, así que **volver a cor
 Pasos:
 
 1. Con el stack arriba (`docker compose up -d`), corre una vez:
-   ```powershell
-   .\scripts\import-n8n.ps1
+   ```sh
+   ./scripts/import-n8n.sh
    ```
    La primera vez el contenedor va a crear `n8n/credentials/mailingai-postgres.json` (ya listo, usa el password de `.env`) y `n8n/credentials/mailingai-graph-oauth2.json` (con placeholders) — como `n8n/credentials` está montado como bind mount, esos archivos aparecen también en el host. Luego el import se detiene, pidiéndote llenar los datos reales de Graph.
 2. Edita `n8n/credentials/mailingai-graph-oauth2.json` con los datos de tu App Registration (sección 1). Usa el tipo genérico **`OAuth2 API`** de n8n, no el nativo "Microsoft OAuth2 API" — ese pega siempre contra el endpoint `/common`, que falla con `AADSTS50194` en apps single-tenant (el caso normal). La plantilla ya viene armada así, solo reemplaza `REEMPLAZA_CON_TU_TENANT_ID` (aparece dos veces, en las dos URLs) y `REEMPLAZA_CON_TU_CLIENT_ID`/`REEMPLAZA_CON_TU_CLIENT_SECRET`:
@@ -112,8 +112,8 @@ Pasos:
    }
    ```
 3. Corre el script de nuevo:
-   ```powershell
-   .\scripts\import-n8n.ps1
+   ```sh
+   ./scripts/import-n8n.sh
    ```
    Esta vez importa las 3 credenciales y los 8 workflows.
 4. Entra a n8n (`http://localhost:5680`) → **Credentials → MailingAI Graph OAuth2 → Connect my account**. Este paso es manual sí o sí: OAuth2 necesita que completes el consentimiento en el navegador con tu cuenta real, no se puede automatizar desde un script.
@@ -235,7 +235,7 @@ curl http://localhost:8001/api/jobs/<job_id>/messages
 
 El job pasa por `queued` → `running` → `success`/`failed`. Si n8n no responde (webhook caído, `WEBHOOK_SHARED_SECRET` mal configurado, etc.), el job queda en `queued` y el error se loguea en el backend — todavía no hay reintento automático.
 
-**Requisito**: `.env` debe tener `WEBHOOK_SHARED_SECRET` (ya viene generado) y `n8n/credentials/mailingai-webhook-secret.json` con el mismo valor, importado a n8n (lo hace `scripts/import-n8n.ps1` como cualquier otra credencial).
+**Requisito**: `.env` debe tener `WEBHOOK_SHARED_SECRET` (ya viene generado) y `n8n/credentials/mailingai-webhook-secret.json` con el mismo valor, importado a n8n (lo hace `scripts/import-n8n.sh` como cualquier otra credencial).
 
 ### Pruebas del backend
 

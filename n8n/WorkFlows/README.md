@@ -36,7 +36,7 @@ Un `INSERT`/`UPDATE` de Postgres sin `RETURNING` produce **cero items de salida*
 
 ### 3. Publicar (`n8n publish:workflow`) y activar no toman efecto sin reiniciar n8n
 
-`n8n execute` (CLI) y un nodo `Execute Workflow` que llama a otro workflow exigen que el workflow **llamado** esté "publicado" (`workflow_published_version`), no solo `active=true` — es un concepto nuevo de esta versión de n8n, distinto de simplemente activar. El propio CLI lo advierte: *"Note: Changes will not take effect if n8n is running. Please restart n8n..."*. Por eso `n8n/import.sh` publica los 7 workflows después de importarlos, y `scripts/import-n8n.ps1` reinicia el contenedor `n8n` al final si se tocaron workflows. Si editas un workflow a mano desde la UI de n8n y necesitas que otro lo pueda invocar, recuerda publicarlo (botón de publicar en el editor) — la UI sí lo hace automáticamente al guardar, esto solo aplica a cambios hechos por script/CLI.
+`n8n execute` (CLI) y un nodo `Execute Workflow` que llama a otro workflow exigen que el workflow **llamado** esté "publicado" (`workflow_published_version`), no solo `active=true` — es un concepto nuevo de esta versión de n8n, distinto de simplemente activar. El propio CLI lo advierte: *"Note: Changes will not take effect if n8n is running. Please restart n8n..."*. Por eso `n8n/import.sh` publica los 7 workflows después de importarlos, y `scripts/import-n8n.sh` reinicia el contenedor `n8n` al final si se tocaron workflows. Si editas un workflow a mano desde la UI de n8n y necesitas que otro lo pueda invocar, recuerda publicarlo (botón de publicar en el editor) — la UI sí lo hace automáticamente al guardar, esto solo aplica a cambios hechos por script/CLI.
 
 ### 4. `import:workflow` siempre deja los workflows como `inactive`
 
@@ -117,7 +117,7 @@ Esto evalúa a `NULL` (sin error) si la carpeta todavía no fue descubierta, y a
 
 ### 9. Reimportar credenciales pisa el token OAuth2 ya conectado
 
-`n8n import:credentials` sobrescribe el `data` completo de la credencial en disco — incluido el `oauthTokenData` que `Connect my account` completa del lado del servidor una vez que el usuario autoriza. Si corres el import completo (sin `-SkipCredentials`) después de haber conectado la cuenta real de Graph, la credencial vuelve a quedar sin token y el próximo job falla con `Unable to sign without access token`, aunque nada haya cambiado en el JSON de la credencial en disco. **Si solo cambiaste archivos de workflow, usa `.\scripts\import-n8n.ps1 -SkipCredentials`** para no perder el token ya conectado.
+`n8n import:credentials` sobrescribe el `data` completo de la credencial en disco — incluido el `oauthTokenData` que `Connect my account` completa del lado del servidor una vez que el usuario autoriza. Si corres el import completo (sin `-SkipCredentials`) después de haber conectado la cuenta real de Graph, la credencial vuelve a quedar sin token y el próximo job falla con `Unable to sign without access token`, aunque nada haya cambiado en el JSON de la credencial en disco. **Si solo cambiaste archivos de workflow, usa `./scripts/import-n8n.sh --skip-credentials`** para no perder el token ya conectado.
 
 ### 10. Microsoft Graph rechaza combinar `$search` con `$filter` en `/messages` ("Bad request")
 
@@ -613,4 +613,4 @@ A pedido del usuario: "buscar adjuntos sin importar el formato, eligiendo una o 
 - **`MailingAI Postgres`** (`postgres`) — usada por todos los nodos `Postgres: *` en los 10 workflows.
 - **`MailingAI Webhook Secret`** (`httpHeaderAuth`) — usada por el nodo `Webhook` del workflow 07, para validar el header `X-MailingAI-Secret` que manda el backend.
 
-Las tres quedan pre-enlazadas por `id` cuando se importan con `scripts/import-n8n.ps1` / `n8n/import.sh` (ver README de la raíz del proyecto).
+Las tres quedan pre-enlazadas por `id` cuando se importan con `scripts/import-n8n.sh` / `n8n/import.sh` (ver README de la raíz del proyecto).
