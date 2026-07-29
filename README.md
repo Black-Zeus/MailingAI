@@ -208,6 +208,13 @@ docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entryp
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260716_0004_mailing_cases_timeline.sql
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260716_0005_mailing_ai_runs.sql
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260716_0006_mailing_jobs_retry.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0001_identity_users_sessions.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0002_mailing_case_ownership_sharing.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0003_identity_mailbox_ownership_sharing.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0004_mailing_case_summary_owner.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0005_mailing_case_batch_runs_owner.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0006_identity_notifications.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0007_identity_mailbox_notification_sender.sql
 ```
 
 ## 5. Trabajos de análisis (`/api/jobs`)
@@ -319,6 +326,71 @@ curl -X DELETE "http://localhost:8001/api/cases?scope=closed"
 `GET /api/system/status` verifica backend/Postgres/n8n (`/healthz`)/Ollama en un solo llamado — lo usa el panel lateral del frontend. `GET /api/system/stats` devuelve conteos reales (mensajes, adjuntos, conversaciones, casos) — lo usa la vista "Nueva consulta".
 
 `DELETE /api/jobs?scope=` (`failed` | `finished` | `all-inactive`) y `DELETE /api/cases?scope=` (`all` | `open` | `closed`) borran registros reales — nunca tocan jobs `queued`/`running`. El frontend pide confirmación explícita (modal) antes de llamarlos; si los usas directo por `curl`, no hay vuelta atrás.
+
+## 11. Seguridad y acceso multiusuario (login, sesiones, expedientes/buzones compartidos)
+
+El sistema exige sesión iniciada para usar cualquier endpoint de negocio. Login vía SSO Microsoft/Entra ID (mismo tenant que ya usa `identity-broker` para conectar buzones, sección 1) — sin usuario/contraseña local, sin auto-registro: un admin tiene que dar de alta el email de cada persona antes de que pueda entrar.
+
+### Azure AD: segundo Redirect URI
+
+Además del Redirect URI de n8n (sección 1), agrega uno nuevo a la misma App Registration para el login de usuarios del backend:
+
+```text
+http://localhost:8001/api/auth/microsoft/callback
+```
+
+Scope delegado usado por este flujo: `openid profile email User.Read` (sin `offline_access` ni `Mail.*` — a diferencia del flujo de buzones, aquí no se guarda ningún token de Microsoft a largo plazo).
+
+### Primer acceso: crear el admin inicial
+
+`identity.users` empieza vacía — sin al menos un admin, nadie puede loguearse (ver `find_or_link_by_oauth`, que nunca crea cuentas nuevas). Con el stack arriba y las migraciones de la sección 4 aplicadas:
+
+```powershell
+docker exec mailingai_backend python -m app.scripts.bootstrap_admin --email tu-email@empresa.com --name "Tu Nombre"
+```
+
+**El email tiene que ser el de una cuenta real de Microsoft/Entra ID dentro del tenant configurado en `MS_TENANT_ID`** — el login es exclusivamente SSO contra Azure AD, así que una cuenta personal (Gmail, Outlook.com sin relación con el tenant, etc.) nunca va a poder completar el login aunque el registro exista en `identity.users`. Si el bootstrap se corre con un email que luego no corresponde a ninguna cuenta del tenant, simplemente queda una fila sin usar (inofensiva, pero conviene evitarlo).
+
+Nunca escala privilegios de un usuario ya existente (si el email ya está en `identity.users`, no toca esa fila). Después de correrlo, entra a `http://localhost:5173` y usa "Ingresar con Microsoft" con esa misma cuenta.
+
+### Migrar a un entorno nuevo (otro host, otro ambiente)
+
+Cada entorno con una base de datos nueva (volumen de Postgres recién creado, o `identity.users` vacía por cualquier motivo) necesita repetir estos pasos — son independientes del código, que no cambia entre entornos:
+
+1. **Redirect URI en Azure AD**: agregar `http://<host-del-backend>/api/auth/microsoft/callback` a la misma App Registration (sección "Azure AD: segundo Redirect URI" arriba). Si cambia el dominio/puerto público del backend, el Redirect URI viejo no sirve — hay que agregar el nuevo (se puede dejar el anterior también, no hace falta borrarlo).
+2. **Variables de entorno**: `BACKEND_PUBLIC_URL` y `FRONTEND_URL` en `.env` deben apuntar a las URLs públicas reales del entorno nuevo; `MS_TENANT_ID`/`MS_CLIENT_ID`/`MS_CLIENT_SECRET` normalmente son los mismos (mismo tenant/App Registration), salvo que el entorno nuevo use un tenant distinto.
+3. **Bootstrap del admin**: correr `bootstrap_admin.py` (arriba) con el email real de quien va a administrar ese entorno — `identity.users` arranca vacía en cada base de datos nueva, no se migra sola.
+4. **Login**: entrar con esa cuenta desde el frontend del entorno nuevo para activarla.
+
+Un volumen de Postgres existente que se copia/restaura entre entornos (backup real, no un volumen nuevo) sí conserva `identity.users` tal cual — en ese caso no hace falta repetir el bootstrap, solo el paso 1 y 2 si cambió el host.
+
+### Alta de usuarios (solo admin)
+
+```powershell
+curl -X POST http://localhost:8001/api/admin/users --cookie "mailingai_session=<tu cookie de sesion admin>" `
+  -H "Content-Type: application/json" -d '{\"email_address\":\"colega@empresa.com\",\"display_name\":\"Colega\"}'
+curl http://localhost:8001/api/admin/users --cookie "mailingai_session=<...>"
+curl -X PATCH http://localhost:8001/api/admin/users/<user_id> --cookie "mailingai_session=<...>" -H "Content-Type: application/json" -d '{\"enabled\":false}'
+```
+
+La cuenta queda "pendiente de primer login" (`ms_object_id` nulo) hasta que la persona entra por primera vez con SSO — recién ahí se vincula. Desactivar (`enabled:false`) revoca todas sus sesiones activas de inmediato.
+
+### Expedientes y buzones: dueño + compartición
+
+Cada expediente (`mailing.cases`) y cada buzón (`identity.mailbox_accounts`) tiene un `owner_user_id`: quien crea el expediente, o quien completa el consentimiento OAuth2 de un buzón nuevo (se reclama automáticamente vía `POST /api/mailboxes/{id}/claim` tras el flujo de conexión de la sección 1). Nadie más ve ese expediente/buzón salvo que:
+
+- El dueño lo comparta explícitamente: `POST /api/cases/{id}/shares` / `POST /api/mailboxes/{id}/shares` con `{"user_id": ..., "permission": "read"|"edit"}` (buzones solo admiten `"read"`).
+- El usuario tenga rol `admin` (ve y gestiona todo, sin excepción, para soporte/auditoría).
+
+Expedientes y buzones que ya existían antes de aplicar esta capa de seguridad quedan con `owner_user_id` nulo — visibles solo para un admin hasta que se les asigne dueño a mano (`PATCH /api/cases/{id}` / reclamo manual del buzón).
+
+### Cascada: quitar un buzón también quita expedientes relacionados
+
+Al revocar el acceso de un usuario a un buzón (`DELETE /api/mailboxes/{id}/shares/{user_id}`, o `DELETE /api/mailboxes/{id}/owner` — este último solo admin, libera el buzón por completo) se le quita en cascada el acceso a cualquier expediente que tenga al menos un mensaje de ese buzón: si era dueño del expediente, queda sin dueño (nunca se borra); si lo tenía compartido, se le borra esa fila de `case_shares`. Ambos endpoints devuelven `{"revoked": true, "cases_affected": N}` para poder avisar cuántos expedientes se vieron afectados. La ficha de cada usuario (panel Usuarios → "Ver ficha", solo admin) muestra sus buzones y permite compartir/quitar desde ahí.
+
+### Notificaciones in-app al compartir
+
+No existe una cuenta de correo de "sistema" separada de los buzones reales de Microsoft, así que compartir un expediente o un buzón no envía un email real — genera una notificación visible dentro de la app (campanita en la barra lateral, `GET /api/notifications`). Revocar un acceso no genera notificación, solo compartirlo.
 
 ## Detener
 
