@@ -1,0 +1,636 @@
+{
+  "id": "maiw0010search000",
+  "name": "09 - MailingAI - Search Attachments (carpetas + patron)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.mailbox_account_id || 1) }}",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa99",
+      "name": "Obtener Token de Buzón",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        250,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder_ids",
+              "type": "array",
+              "value": "={{ $('Manual Trigger').item.json.folder_ids || [] }}"
+            },
+            {
+              "name": "pattern",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.pattern || '' }}"
+            },
+            {
+              "name": "pattern_is_regex",
+              "type": "boolean",
+              "value": "={{ $('Manual Trigger').item.json.pattern_is_regex || false }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $('Manual Trigger').item.json.top || 200 }}"
+            },
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.date_from || '' }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.date_to || '' }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Manual Trigger').item.json.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02",
+      "name": "Set: Parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.fetch_runs (folder, date_from, date_to, search_query, filter_description, top_requested, mailbox_account_id, status, workflow_execution_id) VALUES ($1, $2, $3, $4, $5, $6, $7, 'started', $8) RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [ ($json.folder_ids || []).join(','), $json.date_from ? DateTime.fromISO($json.date_from, { zone: 'utc' }).startOf('day').toISO() : null, $json.date_to ? DateTime.fromISO($json.date_to, { zone: 'utc' }).endOf('day').toISO() : null, $json.pattern || null, 'search_attachments: ' + ($json.folder_ids || []).length + ' carpeta(s)' + ($json.pattern ? (', patron=' + $json.pattern + (($json.pattern_is_regex) ? ' (regex)' : ' (texto libre)')) : ', sin patron') + ($json.date_from || $json.date_to ? (', rango=' + ($json.date_from || '...') + ' a ' + ($json.date_to || '...')) : ''), $json.top, $json.mailbox_account_id, $execution.id ] }}"
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03",
+      "name": "Postgres: Insert fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $json.run_id }}"
+            },
+            {
+              "name": "folder_ids",
+              "type": "array",
+              "value": "={{ $('Set: Parametros').item.json.folder_ids }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
+      "name": "Set: Merge run_id",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "folder_ids",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05",
+      "name": "Split Out Folders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder",
+              "type": "string",
+              "value": "={{ $json.folder_ids }}"
+            },
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $json.run_id }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $('Set: Parametros').item.json.top }}"
+            },
+            {
+              "name": "is_sent",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "name": "filter",
+              "type": "string",
+              "value": "={{ (() => { const from = $('Set: Parametros').item.json.date_from; const to = $('Set: Parametros').item.json.date_to; const parts = []; if (from) parts.push('receivedDateTime ge ' + DateTime.fromISO(from, { zone: 'utc' }).startOf('day').toISO()); if (to) parts.push('receivedDateTime le ' + DateTime.fromISO(to, { zone: 'utc' }).endOf('day').toISO()); return parts.length ? parts.join(' and ') : undefined; })() }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Set: Parametros').item.json.mailbox_account_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa06",
+      "name": "Set: Build Subworkflow Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0001subworkflow",
+          "cachedResultName": "00 - MailingAI - Graph Fetch (subworkflow, uso interno)"
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa07",
+      "name": "Execute: 00 Graph Fetch (por carpeta)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "alwaysOutputData": true,
+      "position": [
+        1500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT message_id FROM mailing.messages WHERE run_id = $1 AND has_attachments = true;",
+        "options": {
+          "queryReplacement": "={{ [$('Postgres: Insert fetch_runs').item.json.run_id] }}"
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa08",
+      "name": "Postgres: Query Mensajes Con Adjuntos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "alwaysOutputData": true,
+      "position": [
+        1750,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "messages",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa09",
+      "name": "Aggregate: Matched Count",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = now(), total_messages = $1 WHERE run_id = $2 RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [ (($json.messages || []).filter(m => m && m.message_id)).length, $('Postgres: Insert fetch_runs').item.json.run_id ] }}"
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa10",
+      "name": "Postgres: Update fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2250,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-real-message",
+              "leftValue": "={{ !!$json.message_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa11",
+      "name": "Filter: Es Mensaje Real",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/me/messages/' + $json.message_id + '/attachments' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$select",
+              "value": "id,name,contentType,size"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa12",
+      "name": "Graph: List Message Attachments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "onError": "continueRegularOutput",
+      "waitBetweenTries": 2000,
+      "position": [
+        2250,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa13",
+      "name": "Split Out Attachments",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $('Filter: Es Mensaje Real').item.json.message_id }}"
+            },
+            {
+              "name": "attachment_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "file_name",
+              "type": "string",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "name": "content_type",
+              "type": "string",
+              "value": "={{ $json.contentType }}"
+            },
+            {
+              "name": "size_bytes",
+              "type": "number",
+              "value": "={{ $json.size }}"
+            },
+            {
+              "name": "extension",
+              "type": "string",
+              "value": "={{ ($json.name.split('.').pop() || '').toLowerCase() }}"
+            },
+            {
+              "name": "matches_naming_convention",
+              "type": "boolean",
+              "value": "={{ /20\\d{6}/.test($json.name) }}"
+            },
+            {
+              "name": "file_date",
+              "type": "string",
+              "value": "={{ /20\\d{6}/.test($json.name) ? DateTime.fromFormat($json.name.match(/20\\d{6}/)[0], 'yyyyMMdd').toISODate() : null }}"
+            },
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $('Postgres: Insert fetch_runs').item.json.run_id }}"
+            },
+            {
+              "name": "matches_search_pattern",
+              "type": "boolean",
+              "value": "={{ (() => { const pattern = $('Set: Parametros').item.json.pattern; if (!pattern) return true; const name = $json.name || ''; if ($('Set: Parametros').item.json.pattern_is_regex) { try { return new RegExp(pattern, 'i').test(name); } catch (e) { return false; } } return name.toLowerCase().includes(pattern.toLowerCase()); })() }}"
+            },
+            {
+              "name": "raw_record",
+              "type": "string",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa14",
+      "name": "Set: Parse Attachment Name",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2750,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.message_attachments (message_id, attachment_id, run_id, file_name, extension, content_type, size_bytes, file_date, matches_naming_convention, matches_search_pattern, raw_record) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb) ON CONFLICT (message_id, attachment_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_name = EXCLUDED.file_name, extension = EXCLUDED.extension, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, file_date = EXCLUDED.file_date, matches_naming_convention = EXCLUDED.matches_naming_convention, matches_search_pattern = EXCLUDED.matches_search_pattern, raw_record = EXCLUDED.raw_record, updated_at = now() RETURNING attachment_row_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.message_id, $json.attachment_id, $json.run_id, $json.file_name, $json.extension, $json.content_type, $json.size_bytes, $json.file_date, $json.matches_naming_convention, $json.matches_search_pattern, $json.raw_record] }}"
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa16",
+      "name": "Postgres: Upsert mailing.message_attachments",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3250,
+        -150
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Token de Buzón": {
+      "main": [
+        [
+          {
+            "node": "Set: Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parametros": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert fetch_runs": {
+      "main": [
+        [
+          {
+            "node": "Set: Merge run_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Merge run_id": {
+      "main": [
+        [
+          {
+            "node": "Split Out Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Folders": {
+      "main": [
+        [
+          {
+            "node": "Set: Build Subworkflow Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Build Subworkflow Input": {
+      "main": [
+        [
+          {
+            "node": "Execute: 00 Graph Fetch (por carpeta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 00 Graph Fetch (por carpeta)": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Query Mensajes Con Adjuntos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Query Mensajes Con Adjuntos": {
+      "main": [
+        [
+          {
+            "node": "Filter: Es Mensaje Real",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate: Matched Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate: Matched Count": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Es Mensaje Real": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Message Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Message Attachments": {
+      "main": [
+        [
+          {
+            "node": "Split Out Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Attachments": {
+      "main": [
+        [
+          {
+            "node": "Set: Parse Attachment Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parse Attachment Name": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert mailing.message_attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

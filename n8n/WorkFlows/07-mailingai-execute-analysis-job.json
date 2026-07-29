@@ -1,0 +1,922 @@
+{
+  "id": "maiw0007executejob00",
+  "name": "07 - MailingAI - Execute Analysis Job",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "execute-analysis-job",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777701",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "maiw0007executejob00-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.analysis_jobs SET status = 'running', started_at = now(), last_heartbeat_at = now() WHERE job_id = $1::uuid RETURNING job_id, job_type;",
+        "options": {
+          "queryReplacement": "={{ [$json.body.job_id] }}"
+        }
+      },
+      "id": "77777777-7777-4777-8777-777777777702",
+      "name": "Postgres: Mark Running",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true, job_id: $json.job_id } }}",
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777703",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "job_id",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.job_id }}"
+            },
+            {
+              "name": "job_type",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.job_type }}"
+            },
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.date_from }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.date_to }}"
+            },
+            {
+              "name": "folder",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.folder }}"
+            },
+            {
+              "name": "from_address",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.from_address }}"
+            },
+            {
+              "name": "subject_contains",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.subject_contains }}"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.conversation_id }}"
+            },
+            {
+              "name": "cr_keyword",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.cr_keyword }}"
+            },
+            {
+              "name": "chart_type",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.chart_type }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $('Webhook').item.json.body.parameters?.top }}"
+            },
+            {
+              "name": "folder_ids",
+              "type": "array",
+              "value": "={{ $('Webhook').item.json.body.parameters?.folder_ids || [] }}"
+            },
+            {
+              "name": "pattern",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.parameters?.pattern }}"
+            },
+            {
+              "name": "pattern_is_regex",
+              "type": "boolean",
+              "value": "={{ $('Webhook').item.json.body.parameters?.pattern_is_regex || false }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Webhook').item.json.body.parameters?.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777704",
+      "name": "Set: Flatten Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-sent-items",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "fetch_sent_items",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777705",
+      "name": "IF: Is Fetch Sent Items",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0002sentitems00",
+          "cachedResultName": "01 - MailingAI - Fetch Sent Items"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777706",
+      "name": "Execute: 01 Fetch Sent Items",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-message-series",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "fetch_message_series",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777707",
+      "name": "IF: Is Fetch Message Series",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0003msgseries00",
+          "cachedResultName": "02 - MailingAI - Fetch Message Series (parametrizado)"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777708",
+      "name": "Execute: 02 Fetch Message Series",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-related-thread",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "fetch_related_thread",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777709",
+      "name": "IF: Is Fetch Related Thread",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0004related0000",
+          "cachedResultName": "03 - MailingAI - Fetch Related Thread"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777710",
+      "name": "Execute: 03 Fetch Related Thread",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-cr-attachments",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "fetch_cr_attachments",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777711",
+      "name": "IF: Is Fetch CR Attachments",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0006crattach000",
+          "cachedResultName": "05 - MailingAI - Fetch CR Attachments (Enviados)"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777712",
+      "name": "Execute: 05 Fetch CR Attachments",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-activity-charts",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "generate_activity_charts",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777713",
+      "name": "IF: Is Generate Activity Charts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0005charts00000",
+          "cachedResultName": "04 - MailingAI - Generate Activity Charts"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777714",
+      "name": "Execute: 04 Generate Activity Charts",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-discover-folders",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "discover_mail_folders",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777718",
+      "name": "IF: Is Discover Mail Folders",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0008folders000",
+          "cachedResultName": "06 - MailingAI - Discover Mail Folders"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777719",
+      "name": "Execute: 06 Discover Mail Folders",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-search-attachments",
+              "leftValue": "={{ $json.job_type }}",
+              "rightValue": "search_attachments",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777720",
+      "name": "IF: Is Search Attachments",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0010search000",
+          "cachedResultName": "09 - MailingAI - Search Attachments (carpetas + patron)"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777721",
+      "name": "Execute: 09 Search Attachments",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "onError": "continueErrorOutput",
+      "position": [
+        1250,
+        750
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.analysis_jobs SET status = 'success', finished_at = now(), current_stage = NULL, fetch_run_id = $2::bigint, chart_id = $3::bigint WHERE job_id = $1::uuid AND status != 'cancelled';",
+        "options": {
+          "queryReplacement": "={{ [$('Set: Flatten Parameters').item.json.job_id, $json.run_id || null, $json.chart_id || null] }}"
+        }
+      },
+      "id": "77777777-7777-4777-8777-777777777715",
+      "name": "Postgres: Mark Success",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1550,
+        -500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.analysis_jobs SET status = 'failed', finished_at = now(), error_code = 'execute_workflow_error', error_message = $1 WHERE job_id = $2::uuid AND status != 'cancelled';",
+        "options": {
+          "queryReplacement": "={{ [($json.error || 'job_type desconocido o error sin detalle').toString().slice(0, 2000), $('Set: Flatten Parameters').item.json.job_id] }}"
+        }
+      },
+      "id": "77777777-7777-4777-8777-777777777716",
+      "name": "Postgres: Mark Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1550,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ $json.date_from ? DateTime.fromISO($json.date_from, { zone: 'utc' }).toFormat('yyyyMMdd') : $json.date_from }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ $json.date_to ? DateTime.fromISO($json.date_to, { zone: 'utc' }).toFormat('yyyyMMdd') : $json.date_to }}"
+            }
+          ]
+        },
+        "options": {
+          "includeOtherFields": true
+        }
+      },
+      "id": "77777777-7777-4777-8777-777777777717",
+      "name": "Set: Convert Dates For CR Attachments",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1125,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Set: Flatten Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Flatten Parameters": {
+      "main": [
+        [
+          {
+            "node": "IF: Is Fetch Sent Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Fetch Sent Items": {
+      "main": [
+        [
+          {
+            "node": "Execute: 01 Fetch Sent Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Fetch Message Series",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 01 Fetch Sent Items": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Fetch Message Series": {
+      "main": [
+        [
+          {
+            "node": "Execute: 02 Fetch Message Series",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Fetch Related Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 02 Fetch Message Series": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Fetch Related Thread": {
+      "main": [
+        [
+          {
+            "node": "Execute: 03 Fetch Related Thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Fetch CR Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 03 Fetch Related Thread": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Fetch CR Attachments": {
+      "main": [
+        [
+          {
+            "node": "Set: Convert Dates For CR Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Generate Activity Charts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 05 Fetch CR Attachments": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Generate Activity Charts": {
+      "main": [
+        [
+          {
+            "node": "Execute: 04 Generate Activity Charts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Discover Mail Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 04 Generate Activity Charts": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Discover Mail Folders": {
+      "main": [
+        [
+          {
+            "node": "Execute: 06 Discover Mail Folders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF: Is Search Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 06 Discover Mail Folders": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Is Search Attachments": {
+      "main": [
+        [
+          {
+            "node": "Execute: 09 Search Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: 09 Search Attachments": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Mark Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Convert Dates For CR Attachments": {
+      "main": [
+        [
+          {
+            "node": "Execute: 05 Fetch CR Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

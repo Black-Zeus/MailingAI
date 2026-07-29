@@ -1,0 +1,91 @@
+import logging
+from typing import Any
+from urllib.parse import urlencode
+
+import httpx
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+class IdentityBrokerError(Exception):
+    pass
+
+
+def build_connect_url(label: str) -> str:
+    """URL publica (alcanzable desde el navegador) para iniciar el consentimiento
+    OAuth2 de una cuenta nueva -- el frontend navega directo ahi, no pasa por
+    este backend (el broker responde con un redirect a login.microsoftonline.com)."""
+    settings = get_settings()
+    query = urlencode({"label": label})
+    return f"{settings.identity_broker_public_url}/oauth/microsoft/start?{query}"
+
+
+async def list_mailboxes() -> list[dict[str, Any]]:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{settings.identity_broker_url}/internal/mailboxes")
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo listar las cuentas de buzon en el identity-broker")
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def update_mailbox(mailbox_account_id: int, *, label: str | None, enabled: bool | None) -> dict[str, Any] | None:
+    settings = get_settings()
+    payload = {"label": label, "enabled": enabled}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.patch(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}", json=payload
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo actualizar la cuenta de buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def test_mailbox(mailbox_account_id: int) -> dict[str, Any] | None:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/test"
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.exception("La prueba de conexion de la cuenta %s fallo", mailbox_account_id)
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        raise IdentityBrokerError(detail) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo contactar al identity-broker para probar la cuenta %s", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return response.json()
+
+
+async def delete_mailbox(mailbox_account_id: int) -> bool:
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}"
+            )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo eliminar la cuenta de buzon %s en el identity-broker", mailbox_account_id)
+        raise IdentityBrokerError(f"No se pudo contactar al identity-broker: {exc}") from exc
+    return True

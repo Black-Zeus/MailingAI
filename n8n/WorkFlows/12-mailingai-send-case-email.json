@@ -1,0 +1,109 @@
+{
+  "id": "maiw0013sendemail00",
+  "name": "12 - MailingAI - Send Case Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-case-email",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "webhookId": "maiw0013sendemail00-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.body.mailbox_account_id || 1) }}",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02",
+      "name": "Obtener Token de Buzón",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { message: { subject: $('Webhook').item.json.body.subject, body: { contentType: \"Text\", content: $('Webhook').item.json.body.body }, toRecipients: ($('Webhook').item.json.body.to || []).map(addr => ({ emailAddress: { address: addr } })), ccRecipients: ($('Webhook').item.json.body.cc || []).map(addr => ({ emailAddress: { address: addr } })), attachments: ($('Webhook').item.json.body.attachments || []).map(a => ({ \"@odata.type\": \"#microsoft.graph.fileAttachment\", name: a.filename, contentType: a.content_type, contentBytes: a.content_base64 })) }, saveToSentItems: true } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03",
+      "name": "Graph: Send Mail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "sent",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
+      "name": "Set: Shape Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [750, 0]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Obtener Token de Buzón", "type": "main", "index": 0 }]]
+    },
+    "Obtener Token de Buzón": {
+      "main": [[{ "node": "Graph: Send Mail", "type": "main", "index": 0 }]]
+    },
+    "Graph: Send Mail": {
+      "main": [[{ "node": "Set: Shape Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

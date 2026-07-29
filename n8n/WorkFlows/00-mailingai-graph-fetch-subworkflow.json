@@ -1,0 +1,498 @@
+{
+  "id": "maiw0001subworkflow",
+  "name": "00 - MailingAI - Graph Fetch (subworkflow, uso interno)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "folder",
+              "type": "string"
+            },
+            {
+              "name": "filter",
+              "type": "string"
+            },
+            {
+              "name": "search",
+              "type": "string"
+            },
+            {
+              "name": "top",
+              "type": "number"
+            },
+            {
+              "name": "run_id",
+              "type": "number"
+            },
+            {
+              "name": "is_sent",
+              "type": "boolean"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "11111111-1111-4111-8111-111111111101",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://identity-broker:8000/internal/token/' + ($('When Executed by Another Workflow').item.json.mailbox_account_id || 1) }}",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111199",
+      "name": "Obtener Token de Buzón",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        125,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('When Executed by Another Workflow').item.json.folder ? 'https://graph.microsoft.com/v1.0/me/mailFolders/' + $('When Executed by Another Workflow').item.json.folder + '/messages' : 'https://graph.microsoft.com/v1.0/me/messages' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "={{ $('When Executed by Another Workflow').item.json.filter || undefined }}"
+            },
+            {
+              "name": "$top",
+              "value": "={{ $('When Executed by Another Workflow').item.json.top || 50 }}"
+            },
+            {
+              "name": "$orderby",
+              "value": "={{ $('When Executed by Another Workflow').item.json.filter ? undefined : 'sentDateTime desc' }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "outlook.body-content-type=\"html\""
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body[\"@odata.nextLink\"] }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body[\"@odata.nextLink\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "id": "11111111-1111-4111-8111-111111111102",
+      "name": "Graph: List Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111103",
+      "name": "Split Out Messages",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $('When Executed by Another Workflow').item.json.run_id }}"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string",
+              "value": "={{ $json.conversationId }}"
+            },
+            {
+              "name": "internet_message_id",
+              "type": "string",
+              "value": "={{ $json.internetMessageId }}"
+            },
+            {
+              "name": "subject",
+              "type": "string",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "from_address",
+              "type": "string",
+              "value": "={{ $json.from?.emailAddress?.address }}"
+            },
+            {
+              "name": "from_name",
+              "type": "string",
+              "value": "={{ $json.from?.emailAddress?.name }}"
+            },
+            {
+              "name": "to_addresses",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.toRecipients || []).map(r => r.emailAddress.address)) }}"
+            },
+            {
+              "name": "cc_addresses",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.ccRecipients || []).map(r => r.emailAddress.address)) }}"
+            },
+            {
+              "name": "sent_datetime",
+              "type": "string",
+              "value": "={{ $json.sentDateTime }}"
+            },
+            {
+              "name": "received_datetime",
+              "type": "string",
+              "value": "={{ $json.receivedDateTime }}"
+            },
+            {
+              "name": "has_attachments",
+              "type": "boolean",
+              "value": "={{ $json.hasAttachments }}"
+            },
+            {
+              "name": "importance",
+              "type": "string",
+              "value": "={{ $json.importance }}"
+            },
+            {
+              "name": "is_sent",
+              "type": "boolean",
+              "value": "={{ $('When Executed by Another Workflow').item.json.is_sent ?? true }}"
+            },
+            {
+              "name": "categories",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.categories || []) }}"
+            },
+            {
+              "name": "body_preview",
+              "type": "string",
+              "value": "={{ $json.bodyPreview }}"
+            },
+            {
+              "name": "body_content",
+              "type": "string",
+              "value": "={{ $json.body?.content }}"
+            },
+            {
+              "name": "body_content_type",
+              "type": "string",
+              "value": "={{ $json.body?.contentType || 'text' }}"
+            },
+            {
+              "name": "web_link",
+              "type": "string",
+              "value": "={{ $json.webLink }}"
+            },
+            {
+              "name": "folder_id",
+              "type": "string",
+              "value": "={{ $json.parentFolderId }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('When Executed by Another Workflow').item.json.mailbox_account_id || 1 }}"
+            },
+            {
+              "name": "raw_record",
+              "type": "string",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111104",
+      "name": "Map To mailing.messages",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.messages (message_id, run_id, conversation_id, internet_message_id, subject, from_address, from_name, to_addresses, cc_addresses, sent_datetime, received_datetime, has_attachments, importance, is_sent, categories, body_preview, body_content, web_link, folder_id, mailbox_account_id, raw_record, body_content_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, (SELECT folder_id FROM mailing.mail_folders WHERE folder_id = $19), $20, $21::jsonb, $22) ON CONFLICT (message_id) DO UPDATE SET run_id = EXCLUDED.run_id, conversation_id = EXCLUDED.conversation_id, internet_message_id = EXCLUDED.internet_message_id, subject = EXCLUDED.subject, from_address = EXCLUDED.from_address, from_name = EXCLUDED.from_name, to_addresses = EXCLUDED.to_addresses, cc_addresses = EXCLUDED.cc_addresses, sent_datetime = EXCLUDED.sent_datetime, received_datetime = EXCLUDED.received_datetime, has_attachments = EXCLUDED.has_attachments, importance = EXCLUDED.importance, is_sent = EXCLUDED.is_sent, categories = EXCLUDED.categories, body_preview = EXCLUDED.body_preview, body_content = EXCLUDED.body_content, web_link = EXCLUDED.web_link, folder_id = COALESCE(EXCLUDED.folder_id, mailing.messages.folder_id), mailbox_account_id = EXCLUDED.mailbox_account_id, raw_record = EXCLUDED.raw_record, body_content_type = EXCLUDED.body_content_type, updated_at = now() RETURNING message_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.message_id, $json.run_id, $json.conversation_id, $json.internet_message_id, $json.subject, $json.from_address, $json.from_name, $json.to_addresses, $json.cc_addresses, $json.sent_datetime, $json.received_datetime, $json.has_attachments, $json.importance, $json.is_sent, $json.categories, $json.body_preview, $json.body_content, $json.web_link, $json.folder_id, $json.mailbox_account_id, $json.raw_record, $json.body_content_type] }}"
+        }
+      },
+      "id": "11111111-1111-4111-8111-111111111105",
+      "name": "Upsert mailing.messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "messages",
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111106",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "fetched_count",
+              "type": "number",
+              "value": "={{ ($json.messages || []).filter(m => m && m.id).length }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111107",
+      "name": "Return Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-matches-query",
+              "leftValue": "={{ (() => {\n  const raw = ($('When Executed by Another Workflow').item.json.search || '').trim();\n  if (!raw) return true;\n  const haystack = (($json.subject || '') + ' ' + ($json.body?.content || '') + ' ' + ($json.bodyPreview || '')).toLowerCase();\n  const terms = raw.split(/\\s+/).filter(t => t.length > 0);\n  for (const term of terms) {\n    if (term.startsWith('-') && term.length > 1) {\n      const needle = term.slice(1).replace(/^%|%$/g, '').toLowerCase();\n      if (needle && haystack.includes(needle)) return false;\n    } else {\n      const needle = term.replace(/^%|%$/g, '').toLowerCase();\n      if (needle && !haystack.includes(needle)) return false;\n    }\n  }\n  return true;\n})() }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777719",
+      "name": "Filter: Coincide Busqueda",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "alwaysOutputData": true,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-real-message",
+              "leftValue": "={{ !!$json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "77777777-7777-4777-8777-777777777720",
+      "name": "Filter: Es Mensaje Real",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Token de Buzón": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Messages": {
+      "main": [
+        [
+          {
+            "node": "Split Out Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Messages": {
+      "main": [
+        [
+          {
+            "node": "Filter: Coincide Busqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map To mailing.messages": {
+      "main": [
+        [
+          {
+            "node": "Upsert mailing.messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert mailing.messages": {
+      "main": [
+        []
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Return Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Es Mensaje Real": {
+      "main": [
+        [
+          {
+            "node": "Map To mailing.messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Coincide Busqueda": {
+      "main": [
+        [
+          {
+            "node": "Filter: Es Mensaje Real",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

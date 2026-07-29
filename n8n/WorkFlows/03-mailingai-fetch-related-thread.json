@@ -1,0 +1,179 @@
+{
+  "id": "maiw0004related0000",
+  "name": "03 - MailingAI - Fetch Related Thread",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "44444444-4444-4444-8444-444444444401",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "conversation_id",
+              "type": "string",
+              "value": "={{ $json.conversation_id || 'REEMPLAZA_CON_UN_CONVERSATION_ID_DE_mailing.messages' }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $json.top || 100 }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $json.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-444444444402",
+      "name": "Set: Parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.fetch_runs (folder, filter_description, top_requested, mailbox_account_id, status, workflow_execution_id) VALUES ('related', $1, $2, $3, 'started', $4) RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [\"conversationId eq '\" + $json.conversation_id + \"'\", $json.top, $json.mailbox_account_id, $execution.id] }}"
+        }
+      },
+      "id": "44444444-4444-4444-8444-444444444403",
+      "name": "Postgres: Insert fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0001subworkflow",
+          "cachedResultName": "00 - MailingAI - Graph Fetch (subworkflow, uso interno)"
+        },
+        "workflowInputs": {
+          "value": {
+            "folder": "",
+            "filter": "={{ \"conversationId eq '\" + $('Set: Parametros').item.json.conversation_id + \"'\" }}",
+            "search": "",
+            "top": "={{ $('Set: Parametros').item.json.top }}",
+            "run_id": "={{ $json.run_id }}",
+            "is_sent": false,
+            "mailbox_account_id": "={{ $('Set: Parametros').item.json.mailbox_account_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-444444444404",
+      "name": "Execute: Graph Fetch",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = $1, total_messages = $2 WHERE run_id = $3 RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [$now.toISO(), $json.fetched_count, $('Postgres: Insert fetch_runs').item.json.run_id] }}"
+        }
+      },
+      "id": "44444444-4444-4444-8444-444444444405",
+      "name": "Postgres: Update fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set: Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parametros": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert fetch_runs": {
+      "main": [
+        [
+          {
+            "node": "Execute: Graph Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: Graph Fetch": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

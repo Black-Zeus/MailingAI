@@ -1,0 +1,188 @@
+services:
+  postgres:
+    image: postgres:16.13-alpine
+    container_name: mailingai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mailingai}
+      POSTGRES_USER: ${POSTGRES_USER:-mailingai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: ${TZ:-America/Santiago}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - mailingai_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mailingai} -d ${POSTGRES_DB:-mailingai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  backend:
+    image: mailingai-backend:${BACKEND_VERSION:-0.1.0}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mailingai_backend
+    restart: unless-stopped
+    environment:
+      APP_NAME: ${BACKEND_APP_NAME:-mailingai-backend}
+      TZ: ${TZ:-America/Santiago}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-mailingai}
+      DB_USER: ${POSTGRES_USER:-mailingai}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:5173}
+      N8N_WEBHOOK_INTERNAL_URL: ${N8N_WEBHOOK_INTERNAL_URL:-http://n8n:5678/webhook/execute-analysis-job}
+      N8N_WEBHOOK_DOWNLOAD_URL: ${N8N_WEBHOOK_DOWNLOAD_URL:-http://n8n:5678/webhook/download-attachment}
+      N8N_WEBHOOK_RETRACE_URL: ${N8N_WEBHOOK_RETRACE_URL:-http://n8n:5678/webhook/retrace-attachments}
+      WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET:?la variable WEBHOOK_SHARED_SECRET es obligatoria, ver .env}
+      WEBHOOK_SHARED_SECRET_HEADER: ${WEBHOOK_SHARED_SECRET_HEADER:-X-MailingAI-Secret}
+      IDENTITY_BROKER_URL: ${IDENTITY_BROKER_URL:-http://identity-broker:8000}
+      IDENTITY_BROKER_PUBLIC_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost:8002}
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"
+    volumes:
+      - ./share:/files:ro
+    networks:
+      - mailingai_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  identity-broker:
+    image: mailingai-identity-broker:${IDENTITY_BROKER_VERSION:-0.1.0}
+    build:
+      context: ./identity-broker
+      dockerfile: Dockerfile
+    container_name: mailingai_identity_broker
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/Santiago}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-mailingai}
+      DB_USER: ${POSTGRES_USER:-mailingai}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      MS_TENANT_ID: ${MS_TENANT_ID:?la variable MS_TENANT_ID es obligatoria, ver .env}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:?la variable MS_CLIENT_ID es obligatoria, ver .env}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:?la variable MS_CLIENT_SECRET es obligatoria, ver .env}
+      PUBLIC_BASE_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost:8002}
+    ports:
+      - "${IDENTITY_BROKER_PORT:-8002}:8000"
+    networks:
+      - mailingai_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    image: mailingai-frontend:${FRONTEND_VERSION:-0.1.0}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${FRONTEND_API_URL:-http://localhost:8001}
+    container_name: mailingai_frontend
+    restart: unless-stopped
+    environment:
+      API_URL: ${FRONTEND_API_URL:-http://localhost:8001}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    networks:
+      - mailingai_internal
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:-2.31.1}
+    container_name: mailingai_n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5680}:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-mailingai}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-mailingai}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+
+      TZ: ${TZ:-America/Santiago}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-America/Santiago}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5680/}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5680/}
+      N8N_SECURE_COOKIE: "false"
+      N8N_RESTRICT_FILE_ACCESS_TO: ${N8N_RESTRICT_FILE_ACCESS_TO:-/home/node/.n8n-files;/files}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./share:/files
+      - ./n8n/WorkFlows:/import/workflows:ro
+      - ./n8n/credentials:/import/credentials
+      - ./n8n/import.sh:/import/import.sh:ro
+      - ./n8n/create-folder.sh:/import/create-folder.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      identity-broker:
+        condition: service_healthy
+    networks:
+      - mailingai_internal
+
+  ollama:
+    image: ollama/ollama:0.32.0
+    container_name: mailingai_ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - mailingai_internal
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  mailingai_internal:
+    name: mailingai_internal
+
+volumes:
+  postgres_data:
+  n8n_data:
+  ollama_data:

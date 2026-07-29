@@ -1,0 +1,539 @@
+{
+  "id": "maiw0005charts00000",
+  "name": "04 - MailingAI - Generate Activity Charts",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "55555555-5555-4555-8555-555555555501",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "chart_type",
+              "type": "string",
+              "value": "={{ $json.chart_type || 'timeline' }}"
+            },
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ $json.date_from || $now.minus({ days: 30 }).toFormat('yyyy-LL-dd') }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ $json.date_to || $now.toFormat('yyyy-LL-dd') }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $json.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555502",
+      "name": "Set: Parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT label FROM identity.mailbox_accounts WHERE mailbox_account_id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.mailbox_account_id] }}"
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555516",
+      "name": "Postgres: Get Mailbox Label",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "alwaysOutputData": true,
+      "position": [
+        375,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-chart-type",
+              "leftValue": "={{ $('Set: Parametros').item.json.chart_type }}",
+              "rightValue": "timeline",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555503",
+      "name": "IF: Chart Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT date_trunc('day', sent_datetime)::date AS day, count(*) AS message_count FROM mailing.messages WHERE sent_datetime::date BETWEEN $1::date AND $2::date AND mailbox_account_id = $3 GROUP BY date_trunc('day', sent_datetime)::date ORDER BY day;",
+        "options": {
+          "queryReplacement": "={{ [$('Set: Parametros').item.json.date_from, $('Set: Parametros').item.json.date_to, $('Set: Parametros').item.json.mailbox_account_id] }}"
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555504",
+      "name": "Postgres: Query by_day",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "alwaysOutputData": true,
+      "position": [
+        750,
+        -180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "rows",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555505",
+      "name": "Aggregate: Timeline Rows",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "title",
+              "type": "string",
+              "value": "={{ 'Actividad de correo por dia — ' + ($('Postgres: Get Mailbox Label').item.json.label || 'buzón desconocido') }}"
+            },
+            {
+              "name": "points",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.rows || []).filter(r => r && r.day).map(r => ({ date: (r.day.toISOString ? r.day.toISOString() : String(r.day)).slice(0, 10), count: r.message_count }))) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555506",
+      "name": "Set: Build Timeline Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1250,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/charts/timeline",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { title: $json.title, points: JSON.parse($json.points) } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555507",
+      "name": "Backend: POST /charts/timeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "fileName": "=/files/mailingai/out/timeline-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.png",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555508",
+      "name": "Write: Timeline PNG",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.chart_runs (chart_type, params, output_file) VALUES ('timeline', $1::jsonb, $2) RETURNING chart_id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ date_from: $('Set: Parametros').item.json.date_from, date_to: $('Set: Parametros').item.json.date_to, mailbox_account_id: $('Set: Parametros').item.json.mailbox_account_id }), $('Write: Timeline PNG').item.json.fileName] }}"
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555509",
+      "name": "Postgres: Insert chart_runs (timeline)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        -180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(from_address, 'desconocido') AS label, count(*) AS message_count FROM mailing.messages WHERE mailbox_account_id = $1 GROUP BY COALESCE(from_address, 'desconocido') ORDER BY message_count DESC LIMIT 20;",
+        "options": {
+          "queryReplacement": "={{ [$('Set: Parametros').item.json.mailbox_account_id] }}"
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555510",
+      "name": "Postgres: Query by_sender",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "alwaysOutputData": true,
+      "position": [
+        750,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "rows",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555511",
+      "name": "Aggregate: Histogram Rows",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "title",
+              "type": "string",
+              "value": "={{ 'Correos enviados por remitente — ' + ($('Postgres: Get Mailbox Label').item.json.label || 'buzón desconocido') }}"
+            },
+            {
+              "name": "buckets",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.rows || []).filter(r => r && r.label).map(r => ({ label: r.label, count: r.message_count }))) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555512",
+      "name": "Set: Build Histogram Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1250,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/charts/histogram",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { title: $json.title, buckets: JSON.parse($json.buckets) } }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555513",
+      "name": "Backend: POST /charts/histogram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "fileName": "=/files/mailingai/out/histogram-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.png",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555514",
+      "name": "Write: Histogram PNG",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.chart_runs (chart_type, params, output_file) VALUES ('histogram', $1::jsonb, $2) RETURNING chart_id;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify({ date_from: $('Set: Parametros').item.json.date_from, date_to: $('Set: Parametros').item.json.date_to, mailbox_account_id: $('Set: Parametros').item.json.mailbox_account_id }), $('Write: Histogram PNG').item.json.fileName] }}"
+        }
+      },
+      "id": "55555555-5555-4555-8555-555555555515",
+      "name": "Postgres: Insert chart_runs (histogram)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set: Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parametros": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Mailbox Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Mailbox Label": {
+      "main": [
+        [
+          {
+            "node": "IF: Chart Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Chart Type": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Query by_day",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Postgres: Query by_sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Query by_day": {
+      "main": [
+        [
+          {
+            "node": "Aggregate: Timeline Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate: Timeline Rows": {
+      "main": [
+        [
+          {
+            "node": "Set: Build Timeline Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Build Timeline Payload": {
+      "main": [
+        [
+          {
+            "node": "Backend: POST /charts/timeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backend: POST /charts/timeline": {
+      "main": [
+        [
+          {
+            "node": "Write: Timeline PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write: Timeline PNG": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert chart_runs (timeline)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Query by_sender": {
+      "main": [
+        [
+          {
+            "node": "Aggregate: Histogram Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate: Histogram Rows": {
+      "main": [
+        [
+          {
+            "node": "Set: Build Histogram Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Build Histogram Payload": {
+      "main": [
+        [
+          {
+            "node": "Backend: POST /charts/histogram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backend: POST /charts/histogram": {
+      "main": [
+        [
+          {
+            "node": "Write: Histogram PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write: Histogram PNG": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert chart_runs (histogram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

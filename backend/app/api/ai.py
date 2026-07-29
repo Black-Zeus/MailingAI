@@ -1,0 +1,122 @@
+from typing import Annotated
+from uuid import UUID
+
+import asyncpg
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import status as http_status
+
+from app.db import get_pool
+from app.schemas.ai import AIAnalyzeResponse, AIBatchRunRead, AIHealthResponse
+from app.schemas.ai_providers import (
+    AIPolicyRead,
+    AIPolicyUpdate,
+    AIProviderCreate,
+    AIProviderModelsRequest,
+    AIProviderModelsResponse,
+    AIProviderRead,
+    AIProviderUpdate,
+)
+from app.services import ai_batch_service, ai_providers_service
+from app.services.ai import gateway
+from app.services.ai.base import ProviderUnavailableError
+
+router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+PoolDep = Annotated[asyncpg.Pool, Depends(get_pool)]
+
+
+@router.get("/health", response_model=AIHealthResponse)
+async def ai_health(pool: PoolDep) -> AIHealthResponse:
+    return await gateway.health(pool)
+
+
+@router.post("/cases/{case_id}/analyze", response_model=AIAnalyzeResponse)
+async def analyze_case(case_id: int, pool: PoolDep) -> AIAnalyzeResponse:
+    result = await gateway.analyze_case(pool, case_id)
+    if result is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return result
+
+
+@router.post("/batch-analyze", response_model=AIBatchRunRead, status_code=http_status.HTTP_201_CREATED)
+async def start_batch_analyze(pool: PoolDep, background_tasks: BackgroundTasks) -> AIBatchRunRead:
+    batch = await ai_batch_service.start_batch(pool)
+    background_tasks.add_task(ai_batch_service.run_batch, pool, batch.batch_run_id)
+    return batch
+
+
+@router.get("/batch-analyze/latest", response_model=AIBatchRunRead | None)
+async def get_latest_batch_analyze(pool: PoolDep) -> AIBatchRunRead | None:
+    return await ai_batch_service.get_latest_batch(pool)
+
+
+@router.get("/batch-analyze/{batch_run_id}", response_model=AIBatchRunRead)
+async def get_batch_analyze(batch_run_id: UUID, pool: PoolDep) -> AIBatchRunRead:
+    batch = await ai_batch_service.get_batch(pool, batch_run_id)
+    if batch is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Corrida en lote no encontrada")
+    return batch
+
+
+@router.get("/providers", response_model=list[AIProviderRead])
+async def list_providers(pool: PoolDep) -> list[AIProviderRead]:
+    return await ai_providers_service.list_providers(pool)
+
+
+@router.post("/providers", response_model=AIProviderRead, status_code=http_status.HTTP_201_CREATED)
+async def create_provider(payload: AIProviderCreate, pool: PoolDep) -> AIProviderRead:
+    try:
+        return await ai_providers_service.create_provider(pool, payload)
+    except ai_providers_service.InvalidProviderConfigError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/providers/models", response_model=AIProviderModelsResponse)
+async def list_provider_models(payload: AIProviderModelsRequest, pool: PoolDep) -> AIProviderModelsResponse:
+    try:
+        models = await ai_providers_service.list_available_models(
+            pool,
+            provider_type=payload.provider_type,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            provider_id=payload.provider_id,
+        )
+    except ProviderUnavailableError as exc:
+        raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return AIProviderModelsResponse(models=models)
+
+
+@router.put("/providers/{provider_id}", response_model=AIProviderRead)
+async def update_provider(provider_id: int, payload: AIProviderUpdate, pool: PoolDep) -> AIProviderRead:
+    try:
+        provider = await ai_providers_service.update_provider(pool, provider_id, payload)
+    except ai_providers_service.InvalidProviderConfigError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if provider is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
+    return provider
+
+
+@router.delete("/providers/{provider_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_provider(provider_id: int, pool: PoolDep) -> None:
+    deleted = await ai_providers_service.delete_provider(pool, provider_id)
+    if not deleted:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
+
+
+@router.post("/providers/{provider_id}/activate", response_model=AIProviderRead)
+async def activate_provider(provider_id: int, pool: PoolDep) -> AIProviderRead:
+    provider = await ai_providers_service.set_active_provider(pool, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
+    return provider
+
+
+@router.get("/policy", response_model=AIPolicyRead)
+async def get_policy(pool: PoolDep) -> AIPolicyRead:
+    return AIPolicyRead(policy=await ai_providers_service.get_policy(pool))
+
+
+@router.put("/policy", response_model=AIPolicyRead)
+async def update_policy(payload: AIPolicyUpdate, pool: PoolDep) -> AIPolicyRead:
+    return AIPolicyRead(policy=await ai_providers_service.set_policy(pool, payload.policy))

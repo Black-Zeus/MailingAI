@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>MailingAI — Centro de análisis</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: #0e1a2d;
+      --panel-2: #12223a;
+      --line: #213652;
+      --text: #eef5ff;
+      --muted: #91a4bd;
+      --accent: #59d4c6;
+      --accent-2: #6f8cff;
+      --warning: #ffbe55;
+      --danger: #ff6b7a;
+      --success: #55d98b;
+      --shadow: 0 18px 55px rgba(0,0,0,.28);
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(111,140,255,.13), transparent 28%),
+        radial-gradient(circle at 95% 18%, rgba(89,212,198,.10), transparent 24%),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .shell { display: grid; grid-template-columns: 245px 1fr; min-height: 100vh; }
+    aside {
+      position: sticky; top: 0; height: 100vh; padding: 24px 18px;
+      border-right: 1px solid var(--line); background: rgba(7,16,29,.86);
+      backdrop-filter: blur(18px); z-index: 5;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 25px; }
+    .brand-icon {
+      width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px;
+      background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: #06101d;
+      font-weight: 900; box-shadow: 0 10px 25px rgba(89,212,198,.18);
+    }
+    .brand strong { display: block; letter-spacing: -.03em; font-size: 19px; }
+    .brand small { color: var(--muted); }
+    nav { display: grid; gap: 7px; }
+    .nav-btn {
+      border: 0; width: 100%; display: flex; align-items: center; gap: 11px; padding: 11px 12px;
+      border-radius: 11px; color: var(--muted); background: transparent; text-align: left;
+    }
+    .nav-btn:hover, .nav-btn.active { color: var(--text); background: var(--panel-2); }
+    .nav-btn.active { box-shadow: inset 3px 0 var(--accent); }
+    .nav-icon { width: 21px; text-align: center; }
+    .system-card {
+      position: absolute; left: 18px; right: 18px; bottom: 20px; padding: 14px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 13px;
+    }
+    .status-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
+    .status-row + .status-row { margin-top: 9px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--success); box-shadow: 0 0 12px var(--success); }
+    main { min-width: 0; }
+    header {
+      height: 76px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 30px; border-bottom: 1px solid var(--line); background: rgba(8,17,31,.72);
+      backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 4;
+    }
+    .header-title h1 { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+    .header-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .scope-pill { color: var(--accent); border: 1px solid rgba(89,212,198,.35); background: rgba(89,212,198,.07); padding: 8px 12px; border-radius: 999px; font-size: 12px; }
+    .content { padding: 28px 30px 45px; max-width: 1500px; margin: auto; }
+    .view { display: none; animation: enter .18s ease-out; }
+    .view.active { display: block; }
+    @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+    .hero { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 23px; }
+    .hero h2 { font-size: 27px; margin: 0 0 7px; letter-spacing: -.035em; }
+    .hero p { margin: 0; color: var(--muted); max-width: 700px; line-height: 1.55; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(310px, .55fr); gap: 20px; }
+    .panel { background: linear-gradient(180deg, rgba(18,34,58,.92), rgba(14,26,45,.94)); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 19px 21px; border-bottom: 1px solid var(--line); }
+    .panel-head h3 { margin: 0; font-size: 15px; }
+    .panel-head span { color: var(--muted); font-size: 12px; }
+    .panel-body { padding: 21px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 17px; }
+    .field.full { grid-column: 1 / -1; }
+    label { display: block; margin: 0 0 7px; color: #b8c8dc; font-size: 12px; font-weight: 650; }
+    input, select, textarea {
+      width: 100%; border: 1px solid var(--line); border-radius: 10px; outline: 0; color: var(--text);
+      background: #091727; padding: 11px 12px; transition: .15s border-color, .15s box-shadow;
+    }
+    textarea { resize: vertical; min-height: 78px; }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px rgba(111,140,255,.12); }
+    .check-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+    .check {
+      display: flex; align-items: center; gap: 9px; padding: 10px 11px; border: 1px solid var(--line);
+      background: rgba(8,17,31,.45); border-radius: 10px; color: #b8c8dc; font-size: 12px;
+    }
+    .check input { width: 15px; accent-color: var(--accent); }
+    .actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 5px; }
+    .btn { border: 1px solid var(--line); color: var(--text); background: var(--panel-2); padding: 10px 15px; border-radius: 10px; font-weight: 700; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn.primary { border: 0; color: #071321; background: linear-gradient(135deg, var(--accent), #79e2a6); }
+    .btn.small { padding: 7px 10px; font-size: 12px; }
+    .summary-stack { display: grid; gap: 13px; }
+    .summary {
+      display: grid; grid-template-columns: 42px 1fr; gap: 12px; align-items: center; padding: 14px;
+      border: 1px solid var(--line); border-radius: 12px; background: rgba(8,17,31,.46);
+    }
+    .summary-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: rgba(89,212,198,.1); }
+    .summary strong { display: block; font-size: 22px; }
+    .summary span { color: var(--muted); font-size: 12px; }
+    .notice { margin-top: 16px; padding: 13px; color: #d7e1ed; font-size: 12px; line-height: 1.5; background: rgba(111,140,255,.08); border: 1px solid rgba(111,140,255,.23); border-radius: 11px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .toolbar input { max-width: 390px; }
+    .toolbar select { width: 180px; }
+    .table-wrap { overflow: auto; }
+    table { border-collapse: collapse; width: 100%; min-width: 850px; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 12px 15px; border-bottom: 1px solid var(--line); }
+    td { padding: 14px 15px; border-bottom: 1px solid rgba(33,54,82,.7); font-size: 13px; vertical-align: middle; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: rgba(111,140,255,.035); }
+    .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #b7c8dd; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 750; background: rgba(145,164,189,.1); color: #c4d0df; }
+    .badge.running { color: #b8c6ff; background: rgba(111,140,255,.13); }
+    .badge.completed { color: #85e9ae; background: rgba(85,217,139,.11); }
+    .badge.failed { color: #ff9ba6; background: rgba(255,107,122,.1); }
+    .badge.queued { color: #ffd288; background: rgba(255,190,85,.1); }
+    .progress { height: 6px; min-width: 110px; overflow: hidden; border-radius: 99px; background: #071321; }
+    .progress > i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,var(--accent-2),var(--accent)); }
+    .kpis { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin-bottom: 20px; }
+    .kpi { padding: 17px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+    .kpi span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+    .kpi strong { display: block; font-size: 25px; margin-top: 7px; }
+    .case-list { display: grid; gap: 12px; }
+    .case-card { border: 1px solid var(--line); border-radius: 13px; overflow: hidden; background: rgba(8,17,31,.35); }
+    .case-summary { display: grid; grid-template-columns: 1fr auto; gap: 15px; align-items: center; padding: 17px; cursor: pointer; }
+    .case-summary h4 { margin: 0 0 6px; font-size: 14px; }
+    .case-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 11px; }
+    .case-detail { display: none; padding: 0 18px 20px; border-top: 1px solid var(--line); }
+    .case-card.open .case-detail { display: block; }
+    .timeline { position: relative; margin-top: 19px; padding-left: 25px; }
+    .timeline::before { content: ""; position: absolute; left: 6px; top: 7px; bottom: 10px; width: 2px; background: var(--line); }
+    .event { position: relative; padding: 0 0 18px; }
+    .event::before { content: ""; position: absolute; left: -23px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(89,212,198,.1); }
+    .event time { color: var(--accent); font-size: 11px; }
+    .event h5 { margin: 4px 0; font-size: 13px; }
+    .event p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .event-file { display:inline-flex; vertical-align:middle; align-items:center; gap:6px; max-width:100%; margin:4px 3px 0; padding:3px 4px 3px 7px; border:1px solid rgba(89,212,198,.24); border-radius:6px; color:#c7eae6; background:rgba(89,212,198,.06); font-size:10px; }
+    .event-file:hover { border-color:var(--accent); background:rgba(89,212,198,.11); }
+    .event-file .file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .event-file .download-icon { display:grid; place-items:center; width:18px; height:18px; flex:0 0 auto; border-radius:4px; color:#071321; background:var(--accent); font-size:12px; font-weight:900; }
+    .message-box { margin-top: 18px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .message { padding: 13px; border-bottom: 1px solid var(--line); }
+    .message:last-child { border-bottom: 0; }
+    .message strong { font-size: 12px; }
+    .message p { color: var(--muted); font-size: 11px; margin: 5px 0 0; }
+    .message-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+    .message-head time { color:var(--muted); font-size:10px; white-space:nowrap; }
+    .attachment-tags { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+    .attachment-tag { display:inline-flex; align-items:center; gap:6px; max-width:100%; padding:6px 8px; border:1px solid rgba(89,212,198,.25); border-radius:8px; background:rgba(89,212,198,.07); color:#bceee8; font-size:10px; }
+    .attachment-tag b { color:var(--accent); font-size:9px; letter-spacing:.04em; }
+    .attachment-tag button { border:0; padding:0; color:#d8e8ff; background:transparent; text-decoration:underline; text-underline-offset:2px; }
+    .empty-view { padding: 70px 20px; text-align: center; color: var(--muted); }
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 20; padding: 13px 16px; border-radius: 11px; background: #17334a; border: 1px solid var(--accent); box-shadow: var(--shadow); transform: translateY(80px); opacity: 0; transition: .22s; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .error-row td { padding: 0; background: rgba(255,107,122,.035); }
+    .error-detail { display: none; padding: 15px 18px 18px; border-bottom: 1px solid rgba(255,107,122,.25); }
+    .error-row.open .error-detail { display: block; }
+    .error-grid { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; font-size: 12px; }
+    .error-grid dt { color: var(--muted); }
+    .error-grid dd { margin: 0; color: #ffd5da; overflow-wrap: anywhere; }
+    .error-help { margin-top: 13px; padding: 11px 12px; border-left: 3px solid var(--warning); background: rgba(255,190,85,.07); color: #d8e1ec; font-size: 12px; line-height: 1.5; }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; padding: 18px; background: rgba(2,8,16,.76); backdrop-filter: blur(7px); }
+    .modal-backdrop.open { display: grid; }
+    .modal { width: min(520px,100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+    .modal h3 { margin: 0 0 8px; }
+    .modal p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .modal-body { padding: 22px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 15px 22px; border-top: 1px solid var(--line); }
+    .danger-zone { margin-top: 17px; padding: 13px; border: 1px solid rgba(255,107,122,.3); background: rgba(255,107,122,.06); border-radius: 10px; }
+    .danger-zone label { color: #ffc4ca; }
+    .btn.danger { border-color: rgba(255,107,122,.5); color: #ffd4d9; background: rgba(255,107,122,.1); }
+    @media (max-width: 1050px) {
+      .grid { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2,1fr); }
+    }
+    @media (max-width: 760px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; padding: 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .brand { padding-bottom: 10px; }
+      nav { grid-template-columns: repeat(4,1fr); }
+      .nav-btn { justify-content: center; padding: 9px; font-size: 0; }
+      .nav-icon { font-size: 17px; }
+      .system-card { display: none; }
+      header { top: 0; height: 67px; padding: 0 17px; }
+      .scope-pill { display: none; }
+      .content { padding: 20px 15px 35px; }
+      .hero { display: block; }
+      .form-grid, .check-grid { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .toolbar { flex-wrap: wrap; }
+      .toolbar input, .toolbar select { max-width: none; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><div class="brand-icon">M</div><div><strong>MailingAI</strong><small>Análisis de buzón</small></div></div>
+      <nav>
+        <button class="nav-btn active" data-view="new"><span class="nav-icon">＋</span>Nueva consulta</button>
+        <button class="nav-btn" data-view="jobs"><span class="nav-icon">◷</span>Trabajos</button>
+        <button class="nav-btn" data-view="cases"><span class="nav-icon">▤</span>Expedientes</button>
+        <button class="nav-btn" data-view="settings"><span class="nav-icon">⚙</span>Configuración</button>
+      </nav>
+      <div class="system-card">
+        <div class="status-row"><span><i class="dot"></i>FastAPI</span><strong>Activo</strong></div>
+        <div class="status-row"><span><i class="dot"></i>n8n</span><strong>Activo</strong></div>
+        <div class="status-row"><span><i class="dot"></i>PostgreSQL</span><strong>Activo</strong></div>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <div class="header-title"><h1 id="pageTitle">Nueva consulta</h1><p>Buzón conectado: usuario@empresa.com</p></div>
+        <div class="scope-pill">● Política IA: solo local</div>
+      </header>
+
+      <div class="content">
+        <section class="view active" id="view-new">
+          <div class="hero"><div><h2>Crear trabajo de análisis</h2><p>Define el alcance de la búsqueda. El trabajo se ejecutará en segundo plano y conservará la trazabilidad de mensajes, carpetas y adjuntos.</p></div></div>
+          <div class="grid">
+            <form class="panel" id="analysisForm">
+              <div class="panel-head"><h3>Parámetros del trabajo</h3><span>Microsoft Graph · Solo lectura</span></div>
+              <div class="panel-body form-grid">
+                <div class="field full"><label for="operation">Tipo de operación</label><select id="operation"><option value="cr">Buscar adjuntos y procesos CR</option><option value="sent">Consultar Elementos enviados</option><option value="series">Buscar serie de mensajes</option><option value="conversation">Recuperar conversación</option><option value="timeline">Construir expediente y línea de tiempo</option></select></div>
+                <div class="field"><label for="dateFrom">Fecha inicial</label><input id="dateFrom" type="date" value="2026-01-01" required></div>
+                <div class="field"><label for="dateTo">Fecha final</label><input id="dateTo" type="date" value="2026-12-31" required></div>
+                <div class="field"><label for="folder">Carpeta</label><select id="folder"><option>Elementos enviados</option><option>Buzón completo</option><option>Bandeja de entrada</option><option>Seleccionar carpeta...</option></select></div>
+                <div class="field"><label for="keyword">Código o palabra clave</label><input id="keyword" value="CR" placeholder="Ej.: CR, RFC, Proyecto Andes"></div>
+                <div class="field"><label for="sender">Remitente</label><input id="sender" type="email" placeholder="Opcional"></div>
+                <div class="field"><label for="recipient">Destinatario</label><input id="recipient" type="email" placeholder="Opcional"></div>
+                <div class="field full"><label for="subject">Texto contenido en el asunto</label><input id="subject" placeholder="Ej.: solicitud de firma, Change Request"></div>
+                <div class="field"><label for="filePattern">Patrón del adjunto</label><input id="filePattern" value="YYYYMMDD_*" placeholder="Ej.: YYYYMMDD_*"></div>
+                <div class="field"><label for="files">Tipos de archivo</label><select id="files"><option>PDF y Word</option><option>Solo PDF</option><option>Todos los permitidos</option></select></div>
+                <div class="field full"><label>Procesamiento adicional</label><div class="check-grid"><label class="check"><input type="checkbox" checked> Solo mensajes con adjuntos</label><label class="check"><input type="checkbox" checked> Recuperar respuestas relacionadas</label><label class="check"><input type="checkbox" checked> Generar línea de tiempo</label><label class="check"><input type="checkbox"> Analizar mediante IA local</label></div></div>
+                <div class="field full"><label for="notes">Descripción del objetivo</label><textarea id="notes" placeholder="Ej.: identificar CR enviados para firma y confirmar si existe respuesta con PDF firmado."></textarea></div>
+                <div class="field full actions"><button class="btn" type="reset">Limpiar</button><button class="btn primary" type="submit">Iniciar análisis →</button></div>
+              </div>
+            </form>
+
+            <div>
+              <div class="panel">
+                <div class="panel-head"><h3>Resumen del entorno</h3><span>Laboratorio</span></div>
+                <div class="panel-body summary-stack">
+                  <div class="summary"><div class="summary-icon">✉</div><div><strong>4.862</strong><span>Mensajes indexados</span></div></div>
+                  <div class="summary"><div class="summary-icon">▣</div><div><strong>126</strong><span>Adjuntos trazados</span></div></div>
+                  <div class="summary"><div class="summary-icon">⌁</div><div><strong>38</strong><span>Conversaciones correlacionadas</span></div></div>
+                  <div class="notice"><strong>Protección de datos:</strong> el modelo local recibe únicamente el contenido reducido del expediente. Los correos no se envían a proveedores externos.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-jobs">
+          <div class="hero"><div><h2>Cola de trabajos</h2><p>Seguimiento de ejecuciones históricas y procesos actualmente en curso.</p></div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn danger" id="clearHistory">Limpiar historial</button><button class="btn primary" data-go="new">＋ Nuevo trabajo</button></div></div>
+          <div class="toolbar"><input id="jobSearch" placeholder="Buscar por ID, operación o palabra clave"><select id="statusFilter"><option value="all">Todos los estados</option><option value="running">En ejecución</option><option value="completed">Completados</option><option value="queued">En cola</option><option value="failed">Fallidos</option></select></div>
+          <div class="panel table-wrap"><table><thead><tr><th>Trabajo</th><th>Operación</th><th>Periodo</th><th>Estado</th><th>Progreso</th><th>Creación</th></tr></thead><tbody id="jobsBody"></tbody></table></div>
+        </section>
+
+        <section class="view" id="view-cases">
+          <div class="hero"><div><h2>Expedientes detectados</h2><p>Procesos reconstruidos desde correos, conversaciones y documentos relacionados.</p></div><button class="btn danger" id="clearCases">Limpiar expedientes</button></div>
+          <div class="kpis"><div class="kpi"><span>Expedientes</span><strong id="kpiCases">0</strong></div><div class="kpi"><span>Firmados</span><strong id="kpiSigned" style="color:var(--success)">0</strong></div><div class="kpi"><span>Pendientes</span><strong id="kpiPending" style="color:var(--warning)">0</strong></div><div class="kpi"><span>Revisión</span><strong id="kpiReview" style="color:var(--accent-2)">0</strong></div></div>
+          <div class="panel"><div class="panel-head"><h3>Resultados del análisis CR 2026</h3><span id="caseCount">0 expedientes</span></div><div class="panel-body case-list" id="caseList"></div></div>
+        </section>
+
+        <section class="view" id="view-settings">
+          <div class="hero"><div><h2>Configuración</h2><p>Vista conceptual. En la implementación real, los secretos permanecerán únicamente en backend y n8n.</p></div></div>
+          <div class="grid"><div class="panel"><div class="panel-head"><h3>Motor de inteligencia artificial</h3></div><div class="panel-body form-grid"><div class="field full"><label>Política predeterminada</label><select><option>Solo local</option><option>Local preferente</option><option>Externo anonimizado</option></select></div><div class="field"><label>Proveedor</label><select><option>Ollama</option><option>LM Studio</option><option>API compatible con OpenAI</option></select></div><div class="field"><label>Modelo</label><select><option>qwen3:8b</option><option>llama3.1:8b</option></select></div><div class="field full actions"><button class="btn primary" type="button" id="testAi">Probar conexión</button></div></div></div><div class="panel"><div class="panel-head"><h3>Controles</h3></div><div class="panel-body summary-stack"><div class="summary"><div class="summary-icon">✓</div><div><strong style="font-size:15px">Microsoft Graph</strong><span>OAuth2 conectado</span></div></div><div class="summary"><div class="summary-icon">⌘</div><div><strong style="font-size:15px">Solo lectura</strong><span>Mail.Read delegado</span></div></div><div class="summary"><div class="summary-icon">⛨</div><div><strong style="font-size:15px">Red interna</strong><span>Egreso externo bloqueado</span></div></div></div></div></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <div class="modal-backdrop" id="clearModal" role="dialog" aria-modal="true" aria-labelledby="clearTitle">
+    <div class="modal">
+      <div class="modal-body">
+        <h3 id="clearTitle">Limpiar historial de trabajos</h3>
+        <p>Esta acción eliminará las corridas finalizadas y sus registros de ejecución. Los trabajos activos, mensajes indexados, expedientes y adjuntos permanecerán intactos.</p>
+        <div class="danger-zone"><label for="clearScope">Alcance de la limpieza</label><select id="clearScope"><option value="finished">Trabajos completados y fallidos</option><option value="failed">Solo trabajos fallidos</option><option value="all-inactive">Todo el historial inactivo</option></select></div>
+      </div>
+      <div class="modal-actions"><button class="btn" id="cancelClear">Cancelar</button><button class="btn danger" id="confirmClear">Confirmar limpieza</button></div>
+    </div>
+  </div>
+  <div class="modal-backdrop" id="clearCasesModal" role="dialog" aria-modal="true" aria-labelledby="clearCasesTitle">
+    <div class="modal">
+      <div class="modal-body">
+        <h3 id="clearCasesTitle">Limpiar expedientes</h3>
+        <p>Esta acción elimina los expedientes, sus relaciones y líneas de tiempo generadas. Los correos indexados y los adjuntos originales permanecerán disponibles para futuros análisis.</p>
+        <div class="danger-zone"><label for="clearCasesScope">Alcance de la limpieza</label><select id="clearCasesScope"><option value="all">Todos los expedientes</option><option value="pending">Solo expedientes pendientes</option><option value="completed">Solo expedientes cerrados o aprobados</option></select></div>
+      </div>
+      <div class="modal-actions"><button class="btn" id="cancelClearCases">Cancelar</button><button class="btn danger" id="confirmClearCases">Confirmar limpieza</button></div>
+    </div>
+  </div>
+  <script>
+    // Sustituir este estado de demostración por llamadas a la API FastAPI.
+    const jobs = [
+      { id:"JOB-2026-0018", operation:"Adjuntos CR · CR", period:"01 ene — 31 dic 2026", status:"running", progress:64, created:"Hoy, 16:42", processed:"628 / 982", stage:"Correlacionando mensajes" },
+      { id:"JOB-2026-0017", operation:"Elementos enviados", period:"01 jun — 30 jun 2026", status:"completed", progress:100, created:"Hoy, 14:10", processed:"384 / 384", stage:"Completado" },
+      { id:"JOB-2026-0016", operation:"Conversación AAMk…", period:"Hilo completo", status:"completed", progress:100, created:"Ayer, 18:22", processed:"12 / 12", stage:"Completado" },
+      { id:"JOB-2026-0015", operation:"Serie · solicitud firma", period:"01 ene — 31 may 2026", status:"failed", progress:41, created:"15 jul, 11:04", processed:"126 / 307", stage:"Error consultando Graph", error:{ code:"GRAPH_AUTH_403", stage:"fetching_messages", occurred:"15 jul 2026, 11:08:42", message:"Microsoft Graph rechazó la consulta porque el token no contiene permisos suficientes para leer la carpeta solicitada.", trace:"HTTP 403 · ErrorAccessDenied · request-id: 38b2d940-demo", help:"Revisar que la App Registration tenga Mail.Read delegado, renovar el consentimiento OAuth2 y reintentar el trabajo." } },
+      { id:"JOB-2026-0014", operation:"Buzón completo", period:"01 ene — 31 mar 2026", status:"queued", progress:0, created:"15 jul, 09:50", processed:"0 / —", stage:"Esperando worker" }
+    ];
+    const cases = [
+      { code:"CR-2026-0142", title:"Habilitación de reglas de firewall", status:"Documento firmado", confidence:"94%", owner:"Víctor Soto", updated:"21 mar 2026", messages:[
+        { type:"Mensaje inicial", location:"Enviados / Proyectos / Change Requests", date:"18 mar · 09:14", attachments:[{type:"PDF",name:"20260318_CR-0142.pdf"},{type:"DOCX",name:"Anexo_tecnico_CR-0142.docx"}] },
+        { type:"Respuesta relacionada", location:"Bandeja de entrada / Infraestructura", date:"19 mar · 16:08", attachments:[] },
+        { type:"Documento firmado", location:"Bandeja de entrada / Aprobaciones", date:"21 mar · 14:41", attachments:[{type:"PDF",name:"20260321_CR-0142_firmado.pdf"}] }
+      ], events:[
+        ["18 mar · 09:14", "CR enviado para firma", "Correo a Carlos Miranda con los documentos adjuntos."],
+        ["18 mar · 11:32", "Recepción confirmada", "El destinatario confirma que el documento quedó en revisión."],
+        ["19 mar · 16:08", "Corrección solicitada", "Se solicita ajustar el detalle de puertos en el documento."],
+        ["21 mar · 14:41", "Documento firmado recibido", "Documento firmado detectado en la respuesta."]
+      ]},
+      { code:"CR-2026-0108", title:"Actualización del Distribution Point SCCM", status:"Pendiente de respuesta", confidence:"88%", owner:"Víctor Soto", updated:"04 mar 2026", messages:[
+        { type:"Mensaje inicial", location:"Elementos enviados", date:"04 mar · 10:05", attachments:[{type:"DOCX",name:"20260304_CR-0108_SCCM.docx"}] },
+        { type:"Confirmación de entrega", location:"Elementos enviados", date:"04 mar · 10:17", attachments:[] }
+      ], events:[
+        ["04 mar · 10:05", "Solicitud enviada", "Correo enviado con documento CR en formato Word."],
+        ["04 mar · 10:17", "Entrega registrada", "Microsoft 365 confirma la entrega; no se detectaron respuestas posteriores."]
+      ]},
+      { code:"CR-2026-0077", title:"Cambio de configuración DHCP DRP", status:"Aprobado por correo", confidence:"91%", owner:"Víctor Soto", updated:"12 feb 2026", messages:[
+        { type:"Mensaje inicial", location:"Elementos enviados / CR", date:"10 feb · 08:43", attachments:[{type:"PDF",name:"20260210_CR-0077_DHCP.pdf"}] },
+        { type:"Consulta técnica", location:"Bandeja de entrada / Redes", date:"11 feb · 13:12", attachments:[{type:"XLSX",name:"Detalle_DNS_DRP.xlsx"}] },
+        { type:"Aprobación por correo", location:"Bandeja de entrada / Redes", date:"12 feb · 09:28", attachments:[] }
+      ], events:[
+        ["10 feb · 08:43", "CR enviado", "Solicitud remitida a Infraestructura y Redes."],
+        ["11 feb · 13:12", "Consulta técnica", "Se solicita confirmar DNS secundario."],
+        ["12 feb · 09:28", "Aprobación explícita", "El responsable autoriza proceder mediante respuesta de correo."]
+      ]}
+    ];
+
+    const titles = { new:"Nueva consulta", jobs:"Cola de trabajos", cases:"Expedientes", settings:"Configuración" };
+    function setView(name) {
+      document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === `view-${name}`));
+      document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+      document.getElementById("pageTitle").textContent = titles[name];
+      if (name === "jobs") renderJobs();
+    }
+    document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+    document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => setView(b.dataset.go)));
+
+    const statusLabels = { running:"En ejecución", completed:"Completado", failed:"Fallido", queued:"En cola" };
+    function renderJobs() {
+      const query = document.getElementById("jobSearch").value.toLowerCase();
+      const filter = document.getElementById("statusFilter").value;
+      const rows = jobs.filter(j => (filter === "all" || j.status === filter) && `${j.id} ${j.operation}`.toLowerCase().includes(query));
+      document.getElementById("jobsBody").innerHTML = rows.map(j => `<tr>
+        <td class="mono">${j.id}</td><td>${j.operation}</td><td>${j.period}</td>
+        <td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap"><span class="badge ${j.status}">${statusLabels[j.status]}</span>${j.error ? `<button class="btn small danger" onclick="toggleError('${j.id}',this)">Ver error</button>` : ""}</div></td>
+        <td><div style="display:flex;align-items:center;gap:9px"><div class="progress"><i style="width:${j.progress}%"></i></div><span class="mono">${j.progress}%</span></div></td>
+        <td>${j.created}</td></tr>
+        ${j.error ? `<tr class="error-row" id="error-${j.id}"><td colspan="6"><div class="error-detail"><dl class="error-grid"><dt>Código</dt><dd class="mono">${j.error.code}</dd><dt>Etapa</dt><dd>${j.error.stage}</dd><dt>Fecha</dt><dd>${j.error.occurred}</dd><dt>Descripción</dt><dd>${j.error.message}</dd><dt>Referencia técnica</dt><dd class="mono">${j.error.trace}</dd></dl><div class="error-help"><strong>Acción sugerida:</strong> ${j.error.help}</div></div></td></tr>` : ""}`).join("") || `<tr><td colspan="6" class="empty-view">No existen trabajos que coincidan con el filtro.</td></tr>`;
+    }
+    function toggleError(id, button) {
+      const row = document.getElementById(`error-${id}`);
+      const open = row.classList.toggle("open");
+      button.textContent = open ? "Ocultar error" : "Ver error";
+    }
+    document.getElementById("jobSearch").addEventListener("input", renderJobs);
+    document.getElementById("statusFilter").addEventListener("change", renderJobs);
+
+    function renderEventFiles(caseItem, eventDate) {
+      const message = caseItem.messages.find(m => m.date === eventDate);
+      if (!message?.attachments?.length) return "";
+      return message.attachments.map(a => `<button class="event-file" onclick="event.stopPropagation();downloadAttachment('${a.name}')" title="Descargar ${a.name}"><span class="file-name">${a.name}</span><span class="download-icon">↓</span></button>`).join("");
+    }
+    function renderCases() {
+      const signed = cases.filter(c => /firmado|aprobado/i.test(c.status)).length;
+      const pending = cases.filter(c => /pendiente/i.test(c.status)).length;
+      document.getElementById("kpiCases").textContent = cases.length;
+      document.getElementById("kpiSigned").textContent = signed;
+      document.getElementById("kpiPending").textContent = pending;
+      document.getElementById("kpiReview").textContent = Math.max(0, cases.length - signed - pending);
+      document.getElementById("caseCount").textContent = `${cases.length} ${cases.length === 1 ? "expediente" : "expedientes"}`;
+      document.getElementById("caseList").innerHTML = cases.map((c,i) => `<article class="case-card">
+        <div class="case-summary" onclick="this.parentElement.classList.toggle('open')"><div><h4>${c.code} · ${c.title}</h4><div class="case-meta"><span>Responsable: ${c.owner}</span><span>Último evento: ${c.updated}</span><span>Confianza: ${c.confidence}</span></div></div><span class="badge ${c.status.includes('Pendiente') ? 'queued':'completed'}">${c.status}</span></div>
+        <div class="case-detail"><div class="timeline">${c.events.map(e => `<div class="event"><time>${e[0]}</time><h5>${e[1]}</h5><p>${e[2]} ${renderEventFiles(c,e[0])}</p></div>`).join("")}</div></div>
+      </article>`).join("") || `<div class="empty-view"><strong>No existen expedientes almacenados.</strong><p>Ejecuta un nuevo análisis para reconstruirlos desde los correos indexados.</p></div>`;
+    }
+    function downloadAttachment(name) { showToast(`Descarga preparada: ${name}`); }
+
+    document.getElementById("analysisForm").addEventListener("submit", e => {
+      e.preventDefault();
+      const from = document.getElementById("dateFrom").value, to = document.getElementById("dateTo").value;
+      if (from > to) return showToast("La fecha inicial no puede superar la fecha final", true);
+      const id = `JOB-2026-${String(19 + jobs.length).padStart(4,"0")}`;
+      jobs.unshift({ id, operation:document.getElementById("operation").selectedOptions[0].text, period:`${from} — ${to}`, status:"queued", progress:0, created:"Ahora", processed:"0 / —", stage:"Esperando worker" });
+      showToast(`Trabajo ${id} agregado a la cola`);
+      setTimeout(() => setView("jobs"), 650);
+    });
+    document.getElementById("testAi").addEventListener("click", () => showToast("Ollama responde correctamente · qwen3:8b"));
+    const clearModal = document.getElementById("clearModal");
+    document.getElementById("clearHistory").addEventListener("click", () => clearModal.classList.add("open"));
+    document.getElementById("cancelClear").addEventListener("click", () => clearModal.classList.remove("open"));
+    clearModal.addEventListener("click", e => { if (e.target === clearModal) clearModal.classList.remove("open"); });
+    document.getElementById("confirmClear").addEventListener("click", () => {
+      const scope = document.getElementById("clearScope").value;
+      for (let i = jobs.length - 1; i >= 0; i--) {
+        const inactive = !["running","queued"].includes(jobs[i].status);
+        const remove = scope === "failed" ? jobs[i].status === "failed" : inactive;
+        if (remove) jobs.splice(i,1);
+      }
+      clearModal.classList.remove("open"); renderJobs(); showToast("Historial seleccionado eliminado correctamente");
+    });
+    const clearCasesModal = document.getElementById("clearCasesModal");
+    document.getElementById("clearCases").addEventListener("click", () => clearCasesModal.classList.add("open"));
+    document.getElementById("cancelClearCases").addEventListener("click", () => clearCasesModal.classList.remove("open"));
+    clearCasesModal.addEventListener("click", e => { if (e.target === clearCasesModal) clearCasesModal.classList.remove("open"); });
+    document.getElementById("confirmClearCases").addEventListener("click", () => {
+      const scope = document.getElementById("clearCasesScope").value;
+      for (let i = cases.length - 1; i >= 0; i--) {
+        const isPending = /pendiente/i.test(cases[i].status);
+        const remove = scope === "all" || (scope === "pending" && isPending) || (scope === "completed" && !isPending);
+        if (remove) cases.splice(i,1);
+      }
+      clearCasesModal.classList.remove("open"); renderCases(); showToast("Expedientes seleccionados eliminados correctamente");
+    });
+    function showToast(message, error=false) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message; toast.style.borderColor = error ? "var(--danger)" : "var(--accent)"; toast.classList.add("show");
+      clearTimeout(window.toastTimer); window.toastTimer = setTimeout(() => toast.classList.remove("show"), 2800);
+    }
+    renderJobs(); renderCases();
+  </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "id": "maiw0012errorhandl0",
+  "name": "11 - MailingAI - Mark Fetch Run Failed (error handler compartido)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccc01",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'failed', finished_at = now(), error_message = $1 WHERE workflow_execution_id = $2 AND status = 'started' RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [ ($json.execution.error && $json.execution.error.message ? $json.execution.error.message : 'Error sin mensaje detallado') + ' (nodo: ' + ($json.execution.lastNodeExecuted || 'desconocido') + ', workflow: ' + ($json.workflow.name || $json.workflow.id) + ')', String($json.execution.id) ] }}"
+        }
+      },
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccc02",
+      "name": "Postgres: Mark fetch_run Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{ "node": "Postgres: Mark fetch_run Failed", "type": "main", "index": 0 }]]
+    }
+  }
+}

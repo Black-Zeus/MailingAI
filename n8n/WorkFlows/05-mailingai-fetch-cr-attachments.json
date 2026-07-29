@@ -1,0 +1,883 @@
+{
+  "id": "maiw0006crattach000",
+  "name": "05 - MailingAI - Fetch CR Attachments (Enviados)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "66666666-6666-4666-8666-666666666601",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.mailbox_account_id || 1) }}",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666699",
+      "name": "Obtener Token de Buzón",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        125,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.date_from || $now.minus({ days: 30 }).toFormat('yyyyMMdd') }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.date_to || $now.toFormat('yyyyMMdd') }}"
+            },
+            {
+              "name": "cr_keyword",
+              "type": "string",
+              "value": "={{ $('Manual Trigger').item.json.cr_keyword || 'CR' }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $('Manual Trigger').item.json.top || 50 }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Manual Trigger').item.json.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666602",
+      "name": "Set: Parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "date_from_iso",
+              "type": "string",
+              "value": "={{ DateTime.fromFormat($json.date_from, 'yyyyMMdd', { zone: 'utc' }).startOf('day').toISO() }}"
+            },
+            {
+              "name": "date_to_iso",
+              "type": "string",
+              "value": "={{ DateTime.fromFormat($json.date_to, 'yyyyMMdd', { zone: 'utc' }).endOf('day').toISO() }}"
+            },
+            {
+              "name": "graph_filter",
+              "type": "string",
+              "value": "={{ 'hasAttachments eq true and sentDateTime ge ' + DateTime.fromFormat($json.date_from, 'yyyyMMdd', { zone: 'utc' }).startOf('day').toISO() + ' and sentDateTime le ' + DateTime.fromFormat($json.date_to, 'yyyyMMdd', { zone: 'utc' }).endOf('day').toISO() }}"
+            },
+            {
+              "name": "graph_search",
+              "type": "string",
+              "value": "={{ '\"' + $json.cr_keyword + '\"' }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $json.top }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666603",
+      "name": "Set: Build Graph Query",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.fetch_runs (folder, date_from, date_to, search_query, filter_description, top_requested, mailbox_account_id, status, workflow_execution_id) VALUES ('sentitems', $1, $2, $3, $4, $5, $6, 'started', $7) RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.date_from_iso, $json.date_to_iso, $json.graph_search, $json.graph_filter, $json.top, $('Set: Parametros').item.json.mailbox_account_id, $execution.id] }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666604",
+      "name": "Postgres: Insert fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        750,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "={{ $('Set: Build Graph Query').item.json.graph_filter }}"
+            },
+            {
+              "name": "$top",
+              "value": "={{ $('Set: Build Graph Query').item.json.top || 50 }}"
+            },
+            {
+              "name": "$count",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ConsistencyLevel",
+              "value": "eventual"
+            },
+            {
+              "name": "Prefer",
+              "value": "outlook.body-content-type=\"text\""
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body[\"@odata.nextLink\"] }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body[\"@odata.nextLink\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666605",
+      "name": "Graph: List Sent With Attachments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666606",
+      "name": "Split Out Messages",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-contains-keyword",
+              "leftValue": "={{ ($json.subject || '') + ' ' + ($json.bodyPreview || '') }}",
+              "rightValue": "={{ $('Set: Parametros').item.json.cr_keyword }}",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666618",
+      "name": "Filter: Contiene Keyword",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "alwaysOutputData": true,
+      "position": [
+        1375,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-real-message",
+              "leftValue": "={{ !!$json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666619",
+      "name": "Filter: Es Mensaje Real",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        1437,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "messages",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666620",
+      "name": "Aggregate: Matched Count",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1437,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $('Postgres: Insert fetch_runs').item.json.run_id }}"
+            },
+            {
+              "name": "conversation_id",
+              "type": "string",
+              "value": "={{ $json.conversationId }}"
+            },
+            {
+              "name": "internet_message_id",
+              "type": "string",
+              "value": "={{ $json.internetMessageId }}"
+            },
+            {
+              "name": "subject",
+              "type": "string",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "from_address",
+              "type": "string",
+              "value": "={{ $json.from?.emailAddress?.address }}"
+            },
+            {
+              "name": "from_name",
+              "type": "string",
+              "value": "={{ $json.from?.emailAddress?.name }}"
+            },
+            {
+              "name": "to_addresses",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.toRecipients || []).map(r => r.emailAddress.address)) }}"
+            },
+            {
+              "name": "cc_addresses",
+              "type": "string",
+              "value": "={{ JSON.stringify(($json.ccRecipients || []).map(r => r.emailAddress.address)) }}"
+            },
+            {
+              "name": "sent_datetime",
+              "type": "string",
+              "value": "={{ $json.sentDateTime }}"
+            },
+            {
+              "name": "received_datetime",
+              "type": "string",
+              "value": "={{ $json.receivedDateTime }}"
+            },
+            {
+              "name": "has_attachments",
+              "type": "boolean",
+              "value": "={{ $json.hasAttachments }}"
+            },
+            {
+              "name": "importance",
+              "type": "string",
+              "value": "={{ $json.importance }}"
+            },
+            {
+              "name": "is_sent",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "name": "categories",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.categories || []) }}"
+            },
+            {
+              "name": "body_preview",
+              "type": "string",
+              "value": "={{ $json.bodyPreview }}"
+            },
+            {
+              "name": "body_content",
+              "type": "string",
+              "value": "={{ $json.body?.content }}"
+            },
+            {
+              "name": "web_link",
+              "type": "string",
+              "value": "={{ $json.webLink }}"
+            },
+            {
+              "name": "folder_id",
+              "type": "string",
+              "value": "={{ $json.parentFolderId }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Set: Parametros').item.json.mailbox_account_id }}"
+            },
+            {
+              "name": "raw_record",
+              "type": "string",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666607",
+      "name": "Set: Map To mailing.messages",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1500,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.messages (message_id, run_id, conversation_id, internet_message_id, subject, from_address, from_name, to_addresses, cc_addresses, sent_datetime, received_datetime, has_attachments, importance, is_sent, categories, body_preview, body_content, web_link, folder_id, mailbox_account_id, raw_record) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, (SELECT folder_id FROM mailing.mail_folders WHERE folder_id = $19), $20, $21::jsonb) ON CONFLICT (message_id) DO UPDATE SET run_id = EXCLUDED.run_id, conversation_id = EXCLUDED.conversation_id, internet_message_id = EXCLUDED.internet_message_id, subject = EXCLUDED.subject, from_address = EXCLUDED.from_address, from_name = EXCLUDED.from_name, to_addresses = EXCLUDED.to_addresses, cc_addresses = EXCLUDED.cc_addresses, sent_datetime = EXCLUDED.sent_datetime, received_datetime = EXCLUDED.received_datetime, has_attachments = EXCLUDED.has_attachments, importance = EXCLUDED.importance, is_sent = EXCLUDED.is_sent, categories = EXCLUDED.categories, body_preview = EXCLUDED.body_preview, body_content = EXCLUDED.body_content, web_link = EXCLUDED.web_link, folder_id = COALESCE(EXCLUDED.folder_id, mailing.messages.folder_id), mailbox_account_id = EXCLUDED.mailbox_account_id, raw_record = EXCLUDED.raw_record, updated_at = now() RETURNING message_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.message_id, $json.run_id, $json.conversation_id, $json.internet_message_id, $json.subject, $json.from_address, $json.from_name, $json.to_addresses, $json.cc_addresses, $json.sent_datetime, $json.received_datetime, $json.has_attachments, $json.importance, $json.is_sent, $json.categories, $json.body_preview, $json.body_content, $json.web_link, $json.folder_id, $json.mailbox_account_id, $json.raw_record] }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666608",
+      "name": "Postgres: Upsert mailing.messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1750,
+        -150
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "messages",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666609",
+      "name": "Aggregate: Messages",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        -150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/me/messages/' + $('Set: Map To mailing.messages').item.json.message_id + '/attachments' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$select",
+              "value": "id,name,contentType,size"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666610",
+      "name": "Graph: List Message Attachments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        2000,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666611",
+      "name": "Split Out Attachments",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2250,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "message_id",
+              "type": "string",
+              "value": "={{ $('Split Out Messages').item.json.id }}"
+            },
+            {
+              "name": "attachment_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "file_name",
+              "type": "string",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "name": "content_type",
+              "type": "string",
+              "value": "={{ $json.contentType }}"
+            },
+            {
+              "name": "size_bytes",
+              "type": "number",
+              "value": "={{ $json.size }}"
+            },
+            {
+              "name": "extension",
+              "type": "string",
+              "value": "={{ ($json.name.split('.').pop() || '').toLowerCase() }}"
+            },
+            {
+              "name": "matches_naming_convention",
+              "type": "boolean",
+              "value": "={{ /20\\d{6}/.test($json.name) }}"
+            },
+            {
+              "name": "file_date",
+              "type": "string",
+              "value": "={{ /20\\d{6}/.test($json.name) ? DateTime.fromFormat($json.name.match(/20\\d{6}/)[0], 'yyyyMMdd').toISODate() : null }}"
+            },
+            {
+              "name": "run_id",
+              "type": "number",
+              "value": "={{ $('Postgres: Insert fetch_runs').item.json.run_id }}"
+            },
+            {
+              "name": "raw_record",
+              "type": "string",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666612",
+      "name": "Set: Parse Attachment Name",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2500,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-ext-supported",
+              "leftValue": "={{ ['pdf','doc','docx','xls','xlsx','ppt','pptx','csv','txt'].includes($json.extension) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666613",
+      "name": "Filter: Formatos Soportados",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        2750,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.message_attachments (message_id, attachment_id, run_id, file_name, extension, content_type, size_bytes, file_date, matches_naming_convention, raw_record) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) ON CONFLICT (message_id, attachment_id) DO UPDATE SET run_id = EXCLUDED.run_id, file_name = EXCLUDED.file_name, extension = EXCLUDED.extension, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, file_date = EXCLUDED.file_date, matches_naming_convention = EXCLUDED.matches_naming_convention, raw_record = EXCLUDED.raw_record, updated_at = now() RETURNING attachment_row_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.message_id, $json.attachment_id, $json.run_id, $json.file_name, $json.extension, $json.content_type, $json.size_bytes, $json.file_date, $json.matches_naming_convention, $json.raw_record] }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666614",
+      "name": "Postgres: Upsert mailing.message_attachments",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3000,
+        150
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "attachments",
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666615",
+      "name": "Aggregate: Attachments",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3250,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = $1, total_messages = $2 WHERE run_id = $3 RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [$now.toISO(), (($json.messages || []).filter(m => m && m.id)).length, $('Postgres: Insert fetch_runs').item.json.run_id] }}"
+        }
+      },
+      "id": "66666666-6666-4666-8666-666666666617",
+      "name": "Postgres: Update fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3750,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Token de Buzón": {
+      "main": [
+        [
+          {
+            "node": "Set: Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parametros": {
+      "main": [
+        [
+          {
+            "node": "Set: Build Graph Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Build Graph Query": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert fetch_runs": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Sent With Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Sent With Attachments": {
+      "main": [
+        [
+          {
+            "node": "Split Out Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Messages": {
+      "main": [
+        [
+          {
+            "node": "Filter: Contiene Keyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Contiene Keyword": {
+      "main": [
+        [
+          {
+            "node": "Filter: Es Mensaje Real",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate: Matched Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Es Mensaje Real": {
+      "main": [
+        [
+          {
+            "node": "Set: Map To mailing.messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate: Matched Count": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Map To mailing.messages": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert mailing.messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert mailing.messages": {
+      "main": [
+        [
+          {
+            "node": "Aggregate: Messages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Graph: List Message Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Message Attachments": {
+      "main": [
+        [
+          {
+            "node": "Split Out Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Attachments": {
+      "main": [
+        [
+          {
+            "node": "Set: Parse Attachment Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parse Attachment Name": {
+      "main": [
+        [
+          {
+            "node": "Filter: Formatos Soportados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Formatos Soportados": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert mailing.message_attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert mailing.message_attachments": {
+      "main": [
+        [
+          {
+            "node": "Aggregate: Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

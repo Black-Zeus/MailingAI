@@ -1,0 +1,660 @@
+{
+  "id": "maiw0008folders000",
+  "name": "06 - MailingAI - Discover Mail Folders",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "88888888-8888-4888-8888-888888888801",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.mailbox_account_id || 1) }}",
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888899",
+      "name": "Obtener Token de Buzón",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        125,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.fetch_runs (folder, filter_description, mailbox_account_id, status, workflow_execution_id) VALUES ('mailfolders', 'Descubrimiento de carpetas y subcarpetas (hasta 3 niveles)', $1, 'started', $2) RETURNING run_id, started_at;",
+        "options": {
+          "queryReplacement": "={{ [$('Manual Trigger').item.json.mailbox_account_id || 1, $execution.id] }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888802",
+      "name": "Postgres: Insert fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "100"
+            },
+            {
+              "name": "$select",
+              "value": "id,displayName,parentFolderId,childFolderCount,totalItemCount"
+            },
+            {
+              "name": "includeHiddenFolders",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body[\"@odata.nextLink\"] }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body[\"@odata.nextLink\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888803",
+      "name": "Graph: List Level 0 Folders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888804",
+      "name": "Split Out Level 0 Folders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "parent_folder_id",
+              "type": "string",
+              "value": "={{ null }}"
+            },
+            {
+              "name": "display_name",
+              "type": "string",
+              "value": "={{ $json.displayName }}"
+            },
+            {
+              "name": "child_folder_count",
+              "type": "number",
+              "value": "={{ $json.childFolderCount }}"
+            },
+            {
+              "name": "total_item_count",
+              "type": "number",
+              "value": "={{ $json.totalItemCount }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888805",
+      "name": "Set: Map Level 0 Folder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.mail_folders (folder_id, parent_folder_id, display_name, folder_path, child_folder_count, total_item_count, last_sync_at) VALUES ($1, $2, $3, CASE WHEN $2 IS NULL THEN $3 ELSE (SELECT folder_path FROM mailing.mail_folders WHERE folder_id = $2) || ' / ' || $3 END, $4, $5, now()) ON CONFLICT (folder_id) DO UPDATE SET parent_folder_id = EXCLUDED.parent_folder_id, display_name = EXCLUDED.display_name, folder_path = EXCLUDED.folder_path, child_folder_count = EXCLUDED.child_folder_count, total_item_count = EXCLUDED.total_item_count, last_sync_at = now(), updated_at = now() RETURNING folder_id, child_folder_count;",
+        "options": {
+          "queryReplacement": "={{ [$json.folder_id, $json.parent_folder_id, $json.display_name, $json.child_folder_count, $json.total_item_count] }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888806",
+      "name": "Postgres: Upsert Level 0 Folders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/me/mailFolders/' + $json.folder_id + '/childFolders' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "100"
+            },
+            {
+              "name": "$select",
+              "value": "id,displayName,parentFolderId,childFolderCount,totalItemCount"
+            },
+            {
+              "name": "includeHiddenFolders",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body[\"@odata.nextLink\"] }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body[\"@odata.nextLink\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888807",
+      "name": "Graph: List Level 1 Folders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        1500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888808",
+      "name": "Split Out Level 1 Folders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "parent_folder_id",
+              "type": "string",
+              "value": "={{ $json.parentFolderId }}"
+            },
+            {
+              "name": "display_name",
+              "type": "string",
+              "value": "={{ $json.displayName }}"
+            },
+            {
+              "name": "child_folder_count",
+              "type": "number",
+              "value": "={{ $json.childFolderCount }}"
+            },
+            {
+              "name": "total_item_count",
+              "type": "number",
+              "value": "={{ $json.totalItemCount }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888809",
+      "name": "Set: Map Level 1 Folder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.mail_folders (folder_id, parent_folder_id, display_name, folder_path, child_folder_count, total_item_count, last_sync_at) VALUES ($1, $2, $3, CASE WHEN $2 IS NULL THEN $3 ELSE (SELECT folder_path FROM mailing.mail_folders WHERE folder_id = $2) || ' / ' || $3 END, $4, $5, now()) ON CONFLICT (folder_id) DO UPDATE SET parent_folder_id = EXCLUDED.parent_folder_id, display_name = EXCLUDED.display_name, folder_path = EXCLUDED.folder_path, child_folder_count = EXCLUDED.child_folder_count, total_item_count = EXCLUDED.total_item_count, last_sync_at = now(), updated_at = now() RETURNING folder_id, child_folder_count;",
+        "options": {
+          "queryReplacement": "={{ [$json.folder_id, $json.parent_folder_id, $json.display_name, $json.child_folder_count, $json.total_item_count] }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888810",
+      "name": "Postgres: Upsert Level 1 Folders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/me/mailFolders/' + $json.folder_id + '/childFolders' }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$top",
+              "value": "100"
+            },
+            {
+              "name": "$select",
+              "value": "id,displayName,parentFolderId,childFolderCount,totalItemCount"
+            },
+            {
+              "name": "includeHiddenFolders",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Obtener Token de Buzón').item.json.access_token }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ $response.body[\"@odata.nextLink\"] }}",
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body[\"@odata.nextLink\"] }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20,
+              "requestInterval": 300
+            }
+          }
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888811",
+      "name": "Graph: List Level 2 Folders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "position": [
+        2500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888812",
+      "name": "Split Out Level 2 Folders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "parent_folder_id",
+              "type": "string",
+              "value": "={{ $json.parentFolderId }}"
+            },
+            {
+              "name": "display_name",
+              "type": "string",
+              "value": "={{ $json.displayName }}"
+            },
+            {
+              "name": "child_folder_count",
+              "type": "number",
+              "value": "={{ $json.childFolderCount }}"
+            },
+            {
+              "name": "total_item_count",
+              "type": "number",
+              "value": "={{ $json.totalItemCount }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "88888888-8888-4888-8888-888888888813",
+      "name": "Set: Map Level 2 Folder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.mail_folders (folder_id, parent_folder_id, display_name, folder_path, child_folder_count, total_item_count, last_sync_at) VALUES ($1, $2, $3, CASE WHEN $2 IS NULL THEN $3 ELSE (SELECT folder_path FROM mailing.mail_folders WHERE folder_id = $2) || ' / ' || $3 END, $4, $5, now()) ON CONFLICT (folder_id) DO UPDATE SET parent_folder_id = EXCLUDED.parent_folder_id, display_name = EXCLUDED.display_name, folder_path = EXCLUDED.folder_path, child_folder_count = EXCLUDED.child_folder_count, total_item_count = EXCLUDED.total_item_count, last_sync_at = now(), updated_at = now() RETURNING folder_id, child_folder_count;",
+        "options": {
+          "queryReplacement": "={{ [$json.folder_id, $json.parent_folder_id, $json.display_name, $json.child_folder_count, $json.total_item_count] }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888814",
+      "name": "Postgres: Upsert Level 2 Folders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = now(), total_messages = (SELECT count(*)::int FROM mailing.mail_folders WHERE last_sync_at >= $1) WHERE run_id = $2 RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Postgres: Insert fetch_runs').item.json.started_at, $('Postgres: Insert fetch_runs').item.json.run_id ] }}"
+        }
+      },
+      "id": "88888888-8888-4888-8888-888888888815",
+      "name": "Postgres: Update fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "executeOnce": true,
+      "position": [
+        3500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Token de Buzón": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert fetch_runs": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Level 0 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Level 0 Folders": {
+      "main": [
+        [
+          {
+            "node": "Split Out Level 0 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Level 0 Folders": {
+      "main": [
+        [
+          {
+            "node": "Set: Map Level 0 Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Map Level 0 Folder": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Level 0 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Level 0 Folders": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Level 1 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Level 1 Folders": {
+      "main": [
+        [
+          {
+            "node": "Split Out Level 1 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Level 1 Folders": {
+      "main": [
+        [
+          {
+            "node": "Set: Map Level 1 Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Map Level 1 Folder": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Level 1 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Level 1 Folders": {
+      "main": [
+        [
+          {
+            "node": "Graph: List Level 2 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: List Level 2 Folders": {
+      "main": [
+        [
+          {
+            "node": "Split Out Level 2 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Level 2 Folders": {
+      "main": [
+        [
+          {
+            "node": "Set: Map Level 2 Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Map Level 2 Folder": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert Level 2 Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Upsert Level 2 Folders": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,184 @@
+{
+  "id": "maiw0002sentitems00",
+  "name": "01 - MailingAI - Fetch Sent Items",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "22222222-2222-4222-8222-222222222201",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "date_from",
+              "type": "string",
+              "value": "={{ (() => { const v = $json.date_from || $now.minus({ days: 30 }).toISO(); return /^\\d{8}$/.test(v) ? DateTime.fromFormat(v, 'yyyyMMdd').toISO() : v; })() }}"
+            },
+            {
+              "name": "date_to",
+              "type": "string",
+              "value": "={{ (() => { const v = $json.date_to || $now.toISO(); return /^\\d{8}$/.test(v) ? DateTime.fromFormat(v, 'yyyyMMdd').toISO() : v; })() }}"
+            },
+            {
+              "name": "top",
+              "type": "number",
+              "value": "={{ $json.top || 50 }}"
+            },
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $json.mailbox_account_id || 1 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22222222-2222-4222-8222-222222222202",
+      "name": "Set: Parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO mailing.fetch_runs (folder, date_from, date_to, top_requested, mailbox_account_id, status, workflow_execution_id) VALUES ('sentitems', $1, $2, $3, $4, 'started', $5) RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.date_from, $json.date_to, $json.top, $json.mailbox_account_id, $execution.id] }}"
+        }
+      },
+      "id": "22222222-2222-4222-8222-222222222203",
+      "name": "Postgres: Insert fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        500,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0001subworkflow",
+          "cachedResultName": "00 - MailingAI - Graph Fetch (subworkflow, uso interno)"
+        },
+        "workflowInputs": {
+          "value": {
+            "folder": "SentItems",
+            "filter": "={{ 'sentDateTime ge ' + $('Set: Parametros').item.json.date_from + ' and sentDateTime le ' + $('Set: Parametros').item.json.date_to }}",
+            "search": "",
+            "top": "={{ $('Set: Parametros').item.json.top }}",
+            "run_id": "={{ $json.run_id }}",
+            "is_sent": true,
+            "mailbox_account_id": "={{ $('Set: Parametros').item.json.mailbox_account_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "22222222-2222-4222-8222-222222222204",
+      "name": "Execute: Graph Fetch",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = $1, total_messages = $2 WHERE run_id = $3 RETURNING run_id;",
+        "options": {
+          "queryReplacement": "={{ [$now.toISO(), $json.fetched_count, $('Postgres: Insert fetch_runs').item.json.run_id] }}"
+        }
+      },
+      "id": "22222222-2222-4222-8222-222222222205",
+      "name": "Postgres: Update fetch_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1000,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set: Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Parametros": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert fetch_runs": {
+      "main": [
+        [
+          {
+            "node": "Execute: Graph Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute: Graph Fetch": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

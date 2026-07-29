@@ -1,0 +1,28 @@
+# Credenciales reales (Client Secret de Graph, password de Postgres).
+# Los .example.json de referencia si se agregan quedan excluidos de esta regla.
+n8n/credentials/*.json
+
+# Credenciales sueltas fuera de la convencion n8n/credentials/ (ver PLAN.md, Fase 0).
+.cred.dev
+
+# Variables de entorno con secretos reales (Postgres, webhook, MS Graph client secret)
+.env
+.env.*
+!.env.example
+
+# Frontend (Node/Vite)
+frontend/node_modules/
+frontend/dist/
+
+# Backend / identity-broker (Python)
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
+.venv/
+venv/
+
+# Carpeta accidental (mkdir/cd mal ejecutado con ";C" pegado)
+backend;C/
+
+# Artefactos temporales locales
+share/mailingai/out/
