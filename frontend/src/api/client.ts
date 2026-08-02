@@ -29,6 +29,7 @@ import type { StatsResponse, SystemStatus } from '../types/system'
 import type {
   MailboxAccountRead,
   MailboxAccessRevokeResponse,
+  MailboxDeletionImpact,
   MailboxShareRead,
   MailboxSharePermission,
 } from '../types/mailboxes'
@@ -39,9 +40,12 @@ import type {
   UserUpdatePayload,
   UserDirectoryEntry,
   UserMailboxAccessEntry,
+  UserDeletionImpact,
+  UserDeleteResponse,
 } from '../types/users'
-import type { CaseShareRead, CaseSharePermission } from '../types/cases'
+import type { CaseAuditLogRead, CaseDashboardStats, CaseShareRead, CaseSharePermission } from '../types/cases'
 import type { NotificationRead } from '../types/notifications'
+import type { MailboxIndexRunRead } from '../types/mailboxIndex'
 
 declare global {
   interface Window {
@@ -128,6 +132,13 @@ export function retraceMessageAttachments(messageId: string): Promise<{ traced_c
   return request<{ traced_count: number }>(
     `/api/messages/${encodeURIComponent(messageId)}/retrace-attachments`,
     { method: 'POST' },
+  )
+}
+
+export function deleteAttachment(messageId: string, attachmentId: string): Promise<void> {
+  return request<void>(
+    `/api/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { method: 'DELETE' },
   )
 }
 
@@ -315,6 +326,38 @@ export function getLatestCaseBatchCreate(): Promise<CaseBatchRunRead | null> {
   return request<CaseBatchRunRead | null>('/api/cases/batch-create/latest')
 }
 
+export function startMailboxIndex(mailboxAccountId: number): Promise<MailboxIndexRunRead> {
+  return request<MailboxIndexRunRead>('/api/admin/mailbox-index', {
+    method: 'POST',
+    body: JSON.stringify({ mailbox_account_id: mailboxAccountId }),
+  })
+}
+
+export function getLatestMailboxIndex(): Promise<MailboxIndexRunRead | null> {
+  return request<MailboxIndexRunRead | null>('/api/admin/mailbox-index/latest')
+}
+
+export function getMailboxIndexRun(indexRunId: string): Promise<MailboxIndexRunRead> {
+  return request<MailboxIndexRunRead>(`/api/admin/mailbox-index/${indexRunId}`)
+}
+
+export function listMailboxIndexRuns(limit = 20): Promise<MailboxIndexRunRead[]> {
+  return request<MailboxIndexRunRead[]>(`/api/admin/mailbox-index?limit=${limit}`)
+}
+
+export function cancelMailboxIndex(indexRunId: string): Promise<MailboxIndexRunRead> {
+  return request<MailboxIndexRunRead>(`/api/admin/mailbox-index/${indexRunId}/cancel`, { method: 'POST' })
+}
+
+export function deleteFinishedMailboxIndexRuns(): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>('/api/admin/mailbox-index', { method: 'DELETE' })
+}
+
+export function triggerMailboxDeltaSync(mailboxAccountId?: number): Promise<{ accepted: boolean }> {
+  const query = mailboxAccountId !== undefined ? `?mailbox_account_id=${mailboxAccountId}` : ''
+  return request<{ accepted: boolean }>(`/api/admin/mailbox-index/delta-sync${query}`, { method: 'POST' })
+}
+
 export function createCase(
   title: string,
   seedType: SeedType,
@@ -324,6 +367,13 @@ export function createCase(
   return request<CaseDetail>('/api/cases', {
     method: 'POST',
     body: JSON.stringify({ title, seed_type: seedType, seed_value: seedValue, case_type: caseType }),
+  })
+}
+
+export function mergeCases(caseIds: number[], title: string): Promise<CaseDetail> {
+  return request<CaseDetail>('/api/cases/merge', {
+    method: 'POST',
+    body: JSON.stringify({ case_ids: caseIds, title }),
   })
 }
 
@@ -362,7 +412,13 @@ export function deleteCase(caseId: number): Promise<void> {
 
 export function updateCase(
   caseId: number,
-  payload: { outcome?: string | null; status?: 'open' | 'closed' },
+  payload: {
+    outcome?: string | null
+    status?: 'open' | 'closed'
+    pending_action?: string | null
+    next_review_at?: string | null
+    expected_updated_at?: string
+  },
 ): Promise<CaseDetail> {
   return request<CaseDetail>(`/api/cases/${caseId}`, {
     method: 'PATCH',
@@ -441,10 +497,33 @@ export function analyzeCaseWithAI(caseId: number): Promise<AIAnalyzeResponse> {
   return request<AIAnalyzeResponse>(`/api/ai/cases/${caseId}/analyze`, { method: 'POST' })
 }
 
-export function updateAiSummary(caseId: number, summary: string): Promise<CaseDetail> {
+export function updateAiSummary(
+  caseId: number,
+  summary: string,
+  expectedUpdatedAt?: string,
+): Promise<CaseDetail> {
   return request<CaseDetail>(`/api/cases/${caseId}/ai-summary`, {
     method: 'PATCH',
-    body: JSON.stringify({ summary }),
+    body: JSON.stringify({ summary, expected_updated_at: expectedUpdatedAt }),
+  })
+}
+
+export function getCaseAuditLog(caseId: number): Promise<CaseAuditLogRead[]> {
+  return request<CaseAuditLogRead[]>(`/api/cases/${caseId}/audit-log`)
+}
+
+export function getDashboardStats(): Promise<CaseDashboardStats> {
+  return request<CaseDashboardStats>('/api/cases/dashboard/stats')
+}
+
+export function getCasesByOutcome(outcome: string): Promise<CaseSummary[]> {
+  return request<CaseSummary[]>(`/api/cases/dashboard/by-outcome?outcome=${encodeURIComponent(outcome)}`)
+}
+
+export function renderMarkdownPreview(text: string): Promise<{ html: string }> {
+  return request<{ html: string }>('/api/cases/render-markdown', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
   })
 }
 
@@ -591,8 +670,12 @@ export function updateMailbox(
   })
 }
 
-export function deleteMailbox(mailboxAccountId: number): Promise<void> {
-  return request<void>(`/api/mailboxes/${mailboxAccountId}`, { method: 'DELETE' })
+export function getMailboxDeletionImpact(mailboxAccountId: number): Promise<MailboxDeletionImpact> {
+  return request<MailboxDeletionImpact>(`/api/mailboxes/${mailboxAccountId}/deletion-impact`)
+}
+
+export function deleteMailbox(mailboxAccountId: number): Promise<MailboxDeletionImpact> {
+  return request<MailboxDeletionImpact>(`/api/mailboxes/${mailboxAccountId}`, { method: 'DELETE' })
 }
 
 export function testMailbox(mailboxAccountId: number): Promise<{ email_address: string | null; display_name: string | null }> {
@@ -657,6 +740,20 @@ export function getCurrentUser(): Promise<CurrentUser> {
   return request<CurrentUser>('/api/auth/me')
 }
 
+export function loginLocal(username: string, password: string): Promise<CurrentUser> {
+  return request<CurrentUser>('/api/auth/local-login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return request<void>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  })
+}
+
 export function listUserDirectory(): Promise<UserDirectoryEntry[]> {
   return request<UserDirectoryEntry[]>('/api/users')
 }
@@ -677,6 +774,28 @@ export function updateUser(userId: number, payload: UserUpdatePayload): Promise<
 
 export function listUserMailboxes(userId: number): Promise<UserMailboxAccessEntry[]> {
   return request<UserMailboxAccessEntry[]>(`/api/admin/users/${userId}/mailboxes`)
+}
+
+export function resetUserPassword(userId: number, newPassword: string): Promise<UserRead> {
+  return request<UserRead>(`/api/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ new_password: newPassword }),
+  })
+}
+
+export function getUserDeletionImpact(userId: number): Promise<UserDeletionImpact> {
+  return request<UserDeletionImpact>(`/api/admin/users/${userId}/deletion-impact`)
+}
+
+export function deleteUser(userId: number): Promise<UserDeleteResponse> {
+  return request<UserDeleteResponse>(`/api/admin/users/${userId}`, { method: 'DELETE' })
+}
+
+export function reassignCaseOwner(caseId: number, newOwnerUserId: number): Promise<CaseDetail> {
+  return request<CaseDetail>(`/api/cases/${caseId}/owner`, {
+    method: 'PATCH',
+    body: JSON.stringify({ new_owner_user_id: newOwnerUserId }),
+  })
 }
 
 // --- Notificaciones ---

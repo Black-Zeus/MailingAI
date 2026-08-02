@@ -5,4 +5,5 @@ export interface CurrentUser {
   email_address: string
   display_name: string | null
   role: UserRole
+  must_change_password: boolean
 }

@@ -3,7 +3,17 @@ import type { AIAnalyzeResponse } from './ai'
 export type SeedType = 'conversation_id' | 'cr_keyword' | 'message_id'
 export type CaseType = 'conversation' | 'cr' | 'custom'
 export type DeterminationType = 'hecho_observado' | 'regla' | 'inferencia_ia' | 'validacion_manual'
-export type CaseOutcome = 'con_hallazgos' | 'sin_hallazgos' | 'pendiente' | 'en_proceso' | 'derivado' | 'mas_antecedentes'
+export type CaseOutcome =
+  | 'con_hallazgos'
+  | 'sin_hallazgos'
+  | 'pendiente'
+  | 'en_proceso'
+  | 'derivado'
+  | 'mas_antecedentes'
+  | 'investigado_sin_compromiso'
+  | 'falso_positivo'
+  | 'mitigado'
+  | 'sin_recepcion'
 
 export interface CaseSummary {
   case_id: number
@@ -20,6 +30,11 @@ export interface CaseSummary {
   ai_stale: boolean
   has_own_reply: boolean
   owner_user_id: number | null
+  created_at: string
+  pending_action: string | null
+  next_review_at: string | null
+  previous_owner_label: string | null
+  updated_at: string
 }
 
 export type CaseSharePermission = 'read' | 'edit'
@@ -35,6 +50,7 @@ export interface CaseShareRead {
 export interface CaseNoteRead {
   note_id: number
   body: string
+  body_markdown: string
   created_at: string
 }
 
@@ -99,6 +115,27 @@ export interface CaseDetail extends CaseSummary {
   ai_summary_override: string | null
 }
 
+export interface CaseDashboardStats {
+  total: number
+  open_count: number
+  closed_count: number
+  overdue_review_count: number
+  stale_ai_count: number
+  no_ai_count: number
+  // Clave = CaseOutcome, salvo '(sin definir)' para expedientes sin conclusion asignada.
+  by_outcome: Record<string, number>
+}
+
+export interface CaseAuditLogRead {
+  audit_id: number
+  user_display_name: string | null
+  occurred_at: string
+  field_name: string | null
+  old_value: string | null
+  new_value: string | null
+  description: string
+}
+
 export interface CaseSeedPrefill {
   title: string
   seedType: SeedType
@@ -147,11 +184,15 @@ export const DETERMINATION_LABELS: Record<DeterminationType, string> = {
 
 export const CASE_OUTCOME_LABELS: Record<CaseOutcome, string> = {
   con_hallazgos: 'Con hallazgos',
-  sin_hallazgos: 'Sin hallazgos',
+  sin_hallazgos: 'Sin hallazgos (nada que revisar)',
   pendiente: 'Pendiente de revisión',
   en_proceso: 'En proceso',
   derivado: 'Derivado a',
   mas_antecedentes: 'Se solicitan más antecedentes',
+  investigado_sin_compromiso: 'Investigado — sin compromiso',
+  falso_positivo: 'Falso positivo',
+  mitigado: 'Mitigado / remediado',
+  sin_recepcion: 'Sin recepción del correo',
 }
 
 export const CORRELATION_SOURCE_LABELS: Record<string, string> = {

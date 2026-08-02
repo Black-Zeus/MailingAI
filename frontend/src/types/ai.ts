@@ -1,13 +1,16 @@
+import type { CaseOutcome } from './cases'
+
 export interface AICaseSummary {
   summary: string
   key_participants: string[]
   suggested_priority: 'low' | 'medium' | 'high'
   suggested_next_action: string
+  suggested_outcome: CaseOutcome
 }
 
 export interface AIAnalyzeResponse {
   ai_run_id: number
-  status: 'success' | 'failed' | 'blocked_by_policy'
+  status: 'running' | 'success' | 'failed' | 'blocked_by_policy'
   provider: string
   model: string
   policy: string

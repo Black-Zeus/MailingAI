@@ -22,6 +22,12 @@ export interface MailboxAccessRevokeResponse {
   cases_affected: number
 }
 
+export interface MailboxDeletionImpact {
+  message_count: number
+  cases_deleted: number
+  cases_affected: number
+}
+
 export type MailboxSharePermission = 'read'
 
 export interface MailboxShareRead {
