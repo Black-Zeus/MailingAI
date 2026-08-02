@@ -1,6 +1,6 @@
 # Workflows de MailingAI — detalle por nodo
 
-Documentación de los 10 workflows de esta carpeta: qué hace cada uno y, dentro de cada uno, qué hace cada nodo. Para instrucciones de instalación/importación ver el `README.md` de la raíz del proyecto.
+Documentación de los 16 workflows de esta carpeta: qué hace cada uno y, dentro de cada uno, qué hace cada nodo. Para instrucciones de instalación/importación ver [`docs/INSTALL.md`](../../docs/INSTALL.md).
 
 Convención de nombres: el prefijo numérico indica el orden de uso, no de importación (todos se importan juntos). `00` es un subworkflow interno que llaman `01`, `02`, `03` y `09` — nunca se ejecuta solo. `05` no usa el subworkflow `00`: tiene su propia llamada a Graph porque necesita traer también los adjuntos de cada correo. `06` descubre la estructura de carpetas del buzón. `07` es el orquestador que dispara el backend FastAPI. `08` trae el contenido real de un adjunto puntual, a pedido directo del backend (no pasa por `07`). `09` busca adjuntos de cualquier formato en una o varias carpetas elegidas, con un patrón opcional (regex o texto libre).
 

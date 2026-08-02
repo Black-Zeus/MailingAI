@@ -25,6 +25,21 @@ n8n                -- todo el trabajo periódico/programado y todas las llamadas
 ollama              -- IA local (resumen de expedientes), CPU-only
 ```
 
+## Servicios y puertos
+
+`proxy` (`nginx:1.27.3-alpine`, config en `proxy/nginx.conf`) es el único servicio con puerto publicado al host (`PROXY_PORT`, default `80`):
+
+```text
+http://<host>/                  -> frontend:80        (SPA)
+http://<host>/api/*             -> backend:8000/api/*  (API + callback de login SSO)
+http://<host>/identity/oauth/*  -> identity-broker:8000/oauth/*   (solo el flujo de conectar buzones)
+http://<host>/n8n/*             -> n8n:5678/*          (editor de workflows, protegido con Basic Auth propia)
+```
+
+`identity-broker` solo expone públicamente `/oauth/microsoft/start` y `/oauth/microsoft/callback` — todo lo demás (`/internal/*`, sin autenticación propia) queda deliberadamente fuera del mapa de rutas del proxy, alcanzable solo desde la red interna de Docker. Ningún otro servicio (Postgres, backend, identity-broker, frontend, n8n, Ollama) publica puerto propio; para acceso puntual de desarrollo (`psql`, revisar Ollama) se usa `docker compose exec <servicio> ...` en vez de reabrir un puerto permanente. TLS/HTTPS no está configurado todavía — agregarlo es cuestión de terminar TLS en este mismo `proxy` sin tocar el resto de los servicios.
+
+La carpeta local `share` queda montada dentro del contenedor n8n en `/files`; los gráficos generados se guardan en `share/mailingai/out/` (host) / `/files/mailingai/out/` (n8n).
+
 ## Por qué `identity-broker` es un servicio aparte
 
 Conectar un buzón real requiere guardar tokens OAuth2 de larga duración (`offline_access`) de Microsoft Graph. Aislar ese flujo en un microservicio propio, con su propia base de credenciales, mantiene al `backend` (que ya maneja sesiones de usuario, expedientes, etc.) sin tocar tokens de Graph directamente. El `backend` le pide al broker "dame el token vigente del buzón X" por la red interna (`IDENTITY_BROKER_URL`); nunca ve el `client secret` de Microsoft.
@@ -77,6 +92,26 @@ mailing.*    -- correos indexados, expedientes (cases), mensajes por expediente,
 ```
 
 `identity` modela "quién puede entrar y a qué buzón tiene acceso"; `mailing` modela "qué se indexó y qué expedientes se armaron con eso". Un expediente puede tener mensajes de varios buzones a la vez (se correlacionan por asunto/hilo/participantes), por eso ambos schemas conviven en la misma base en vez de separarse por servicio.
+
+Tablas principales de `mailing`:
+
+```text
+mailing.fetch_runs             -- trazabilidad de cada corrida de fetch (filtros, estado, totales)
+mailing.messages               -- correos normalizados (enviados y relacionados), upsert por message_id
+mailing.message_attachments    -- adjuntos PDF/Word encontrados, upsert por (message_id, attachment_id)
+mailing.mail_folders           -- carpetas/subcarpetas descubiertas, con parent_folder_id y ruta lógica
+mailing.analysis_jobs          -- trabajos creados desde /api/jobs, estado actualizado por n8n
+mailing.cases                  -- expedientes armados por correlación
+mailing.case_messages          -- mensajes correlacionados a un caso, con confianza y origen
+mailing.timeline_events        -- línea de tiempo por caso (hecho observado / regla / inferencia de IA / validación manual)
+mailing.case_audit_log         -- auditoría de ediciones directas del expediente (quién, cuándo, valor viejo/nuevo)
+mailing.ai_runs                -- trazabilidad de cada corrida de IA: proveedor, modelo, política, hash de entrada
+mailing.chart_runs             -- corridas de generación de gráficos
+mailing.mailbox_index_runs     -- progreso de cada reindexación manual completa de un buzón
+
+mailing.v_messages_by_day, v_messages_by_sender, v_conversation_summary,
+mailing.v_cr_attachment_traceability, v_mail_folders_tree, v_case_summary   -- vistas agregadas de lectura
+```
 
 ## Modelo de seguridad y acceso
 
