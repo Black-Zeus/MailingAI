@@ -1,16 +1,24 @@
 import json
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 
 from app.auth.dependencies import CurrentUser
-from app.repositories import access_repository, ai_runs_repository, cases_repository, notifications_repository
-from app.services import notification_email_service
+from app.repositories import (
+    access_repository,
+    ai_runs_repository,
+    cases_repository,
+    notifications_repository,
+    users_repository,
+)
+from app.services import email_templates, markdown_render, notification_email_service
 from app.schemas.ai import AIAnalyzeResponse, AICaseSummary
 from app.schemas.cases import (
     CaseAttachmentRead,
+    CaseAuditLogRead,
+    CaseDashboardStats,
     CaseDetail,
     CaseEvidenceRead,
     CaseMessageRead,
@@ -73,6 +81,21 @@ class CaseAccessDeniedError(Exception):
     permiso 'edit'."""
 
 
+class MergeRequiresMultipleCasesError(Exception):
+    """Fusionar necesita al menos 2 expedientes distintos."""
+
+
+class TargetUserNotFoundError(Exception):
+    """El usuario al que se quiere reasignar el expediente no existe."""
+
+
+class CaseUpdateConflictError(Exception):
+    """Alguien mas guardo un cambio en el expediente entre que este cliente
+    lo cargo y que intento guardar el suyo (bloqueo optimista via
+    updated_at) -- el mensaje ya viene armado en español, listo para
+    mostrarle al usuario tal cual."""
+
+
 def _require_edit(case_core: asyncpg.Record) -> None:
     if not case_core["can_edit"]:
         raise CaseAccessDeniedError("No tiene permiso de edición sobre este expediente.")
@@ -96,6 +119,18 @@ def _ensure_open(case_core: asyncpg.Record) -> None:
 
 async def _mark_ai_stale(pool: asyncpg.Pool, case_id: int) -> None:
     await cases_repository.update_case(pool, case_id, fields={"ai_stale": True})
+
+
+_AUDIT_FIELD_LABELS = {
+    "outcome": "la conclusión",
+    "status": "el estado",
+    "pending_action": "la acción pendiente",
+    "next_review_at": "la próxima revisión",
+}
+
+
+def _audit_str(value: object) -> str | None:
+    return None if value is None else str(value)
 
 
 async def create_empty_case(
@@ -142,24 +177,6 @@ async def create_case(
     case_type: str,
     user: CurrentUser,
 ) -> CaseDetail:
-    if seed_type == "cr_keyword":
-        existing = await cases_repository.find_case_by_external_code(pool, seed_value)
-        if existing is not None:
-            # Ya existe un expediente para este mismo codigo/ticket -- en vez
-            # de duplicarlo, se reutiliza y se refresca la correlacion con lo
-            # que haya nuevo indexado desde que se creo. Si esta cerrado no se
-            # toca (mismo criterio de inmutabilidad de siempre) y se devuelve
-            # tal cual esta.
-            try:
-                refreshed = await refresh_case_correlation(pool, existing["case_id"], user=user)
-            except (CaseClosedError, CaseAccessDeniedError):
-                refreshed = None
-            if refreshed is not None:
-                return refreshed[0]
-            detail = await get_case_detail(pool, existing["case_id"], user=user)
-            if detail is not None:
-                return detail
-
     accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
 
     primary_message_id: str | None = None
@@ -189,19 +206,63 @@ async def create_case(
             seed_messages = [message]
         correlation_source_for_seed = "manual"
 
-    case_record = await cases_repository.insert_case(
-        pool,
-        title=title,
-        case_type=case_type,
-        external_code=external_code,
-        primary_message_id=primary_message_id,
-        owner_user_id=user.user_id,
-    )
-    case_id = case_record["case_id"]
+    # Deduplicacion: primero por external_code (solo cr_keyword, clave exacta
+    # del ticket/codigo), y si no hay nada por ahi, por titulo -- red de
+    # respaldo para conversation_id/message_id, que no tienen ninguna clave
+    # natural en comun con un expediente creado por otro seed_type para el
+    # mismo tema (bug real: un expediente por palabra clave y otro por
+    # conversation_id con el mismo titulo terminaban duplicados, porque uno
+    # tiene external_code y el otro primary_message_id, nunca ambos).
+    existing = None
+    if external_code is not None:
+        existing = await cases_repository.find_case_by_external_code(pool, external_code)
+    if existing is None:
+        existing = await cases_repository.find_open_case_by_title(pool, title)
+
+    case_id: int | None = None
+    preexisting_ids: set[str] = set()
+    if existing is not None:
+        try:
+            refreshed = await refresh_case_correlation(pool, existing["case_id"], user=user)
+        except (CaseClosedError, CaseAccessDeniedError):
+            # Cerrado, o el usuario solo tiene lectura -- no se toca (mismo
+            # criterio de inmutabilidad de siempre): se devuelve tal cual
+            # esta, sin crear nada nuevo ni agregarle los mensajes de esta
+            # busqueda.
+            detail = await get_case_detail(pool, existing["case_id"], user=user)
+            if detail is not None:
+                return detail
+        else:
+            if refreshed is not None:
+                # Acceso de edicion confirmado -- se reutiliza este
+                # expediente: los mensajes de ESTA busqueda se agregan mas
+                # abajo (mismo tramo que arma uno nuevo), en vez de
+                # devolverlo sin los datos de la busqueda actual. Se guarda
+                # que ya tiene ahora (incluido lo que refresh_case_correlation
+                # acaba de agregar por su cuenta) para no volver a timelinear
+                # esos mismos mensajes mas abajo.
+                case_id = existing["case_id"]
+                preexisting_ids = {
+                    m["message_id"] for m in await cases_repository.list_case_messages(pool, case_id)
+                }
+            # refreshed is None: get_case_core no encontro nada visible para
+            # este usuario (expediente ajeno, sin compartir) -- se sigue de
+            # largo y se crea uno nuevo, como ya pasaba antes de este fix.
+
+    if case_id is None:
+        case_record = await cases_repository.insert_case(
+            pool,
+            title=title,
+            case_type=case_type,
+            external_code=external_code,
+            primary_message_id=primary_message_id,
+            owner_user_id=user.user_id,
+        )
+        case_id = case_record["case_id"]
 
     matched_ids: set[str] = set()
 
-    for i, message in enumerate(seed_messages):
+    for message in seed_messages:
         confidence = (
             CONFIDENCE_CONVERSATION
             if correlation_source_for_seed == "conversation_id"
@@ -256,8 +317,16 @@ async def create_case(
                 )
                 matched_ids.add(message["message_id"])
 
-    all_matched = await cases_repository.list_case_messages(pool, case_id)
-    for message in all_matched:
+    # Solo los mensajes que ESTA llamada agrego de verdad -- ni los que el
+    # expediente ya tenia, ni los que refresh_case_correlation ya haya
+    # timelineado por su cuenta unas lineas arriba -- para no duplicar
+    # timeline_events al reutilizar un expediente existente (para uno recien
+    # creado da lo mismo, preexisting_ids queda vacio).
+    truly_new_ids = matched_ids - preexisting_ids
+    newly_matched = [
+        m for m in await cases_repository.list_case_messages(pool, case_id) if m["message_id"] in truly_new_ids
+    ]
+    for message in newly_matched:
         await cases_repository.insert_timeline_event(
             pool,
             case_id=case_id,
@@ -271,7 +340,7 @@ async def create_case(
             confidence=1.0,
         )
 
-    attachments = await cases_repository.find_attachments_for_messages(pool, list(matched_ids))
+    attachments = await cases_repository.find_attachments_for_messages(pool, list(truly_new_ids))
     for attachment in attachments:
         message_subject = attachment["message_subject"] or "(sin asunto)"
         await cases_repository.insert_timeline_event(
@@ -406,6 +475,35 @@ async def refresh_case_correlation(
 
     detail = await get_case_detail(pool, case_id, user=user)
     return detail, len(new_matches)  # type: ignore[return-value]
+
+
+async def merge_cases(pool: asyncpg.Pool, *, case_ids: list[int], title: str, user: CurrentUser) -> CaseDetail:
+    """Fusiona varios expedientes en uno nuevo (con `title`) y borra los
+    origenes -- todo o nada (ver cases_repository.merge_cases). Requiere
+    permiso de edicion sobre TODOS los origenes; si alguno no existe o no es
+    editable para este usuario, no se toca nada.
+    """
+    unique_ids = list(dict.fromkeys(case_ids))
+    if len(unique_ids) < 2:
+        raise MergeRequiresMultipleCasesError("Hacen falta al menos 2 expedientes distintos para fusionar.")
+
+    case_type = "custom"
+    for i, case_id in enumerate(unique_ids):
+        case_core = await cases_repository.get_case_core(
+            pool, case_id, user_id=user.user_id, is_admin=user.is_admin
+        )
+        if case_core is None:
+            raise CaseAccessDeniedError(f"No tiene acceso al expediente #{case_id}.")
+        _require_edit(case_core)
+        if i == 0:
+            case_type = case_core["case_type"]
+
+    new_case_id = await cases_repository.merge_cases(
+        pool, case_ids=unique_ids, title=title, case_type=case_type, owner_user_id=user.user_id
+    )
+    detail = await get_case_detail(pool, new_case_id, user=user)
+    assert detail is not None
+    return detail
 
 
 async def refresh_all_open_cases(pool: asyncpg.Pool, *, user: CurrentUser) -> dict[str, int]:
@@ -556,6 +654,11 @@ def _to_summary(record: asyncpg.Record) -> CaseSummary:
         ai_stale=record["ai_stale"],
         has_own_reply=record["has_own_reply"],
         owner_user_id=record["owner_user_id"],
+        created_at=record["created_at"],
+        pending_action=record["pending_action"],
+        next_review_at=record["next_review_at"],
+        previous_owner_label=record["previous_owner_label"],
+        updated_at=record["updated_at"],
     )
 
 
@@ -656,7 +759,12 @@ async def get_case_detail(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser
             for t in timeline_records
         ],
         notes=[
-            CaseNoteRead(note_id=n["note_id"], body=n["body"], created_at=n["created_at"])
+            CaseNoteRead(
+                note_id=n["note_id"],
+                body=n["body"],
+                body_markdown=markdown_render.html_to_markdown(n["body"]),
+                created_at=n["created_at"],
+            )
             for n in note_records
         ],
         evidence=[
@@ -675,16 +783,49 @@ async def get_case_detail(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser
     )
 
 
-async def update_ai_summary(pool: asyncpg.Pool, case_id: int, summary: str, *, user: CurrentUser) -> CaseDetail | None:
+async def _raise_update_conflict(pool: asyncpg.Pool, case_id: int) -> None:
+    """Arma el mensaje de conflicto con quien lo edito de ultimo, mirando el
+    log de auditoria (mismo que alimenta la seccion "Historial de auditoría"
+    del expediente) -- best effort: si no hay ninguna entrada (ej. el
+    conflicto vino de una edicion muy vieja, previa a que existiera el log),
+    el mensaje queda generico."""
+    recent = await cases_repository.list_audit_log(pool, case_id, limit=1)
+    if recent:
+        who = recent[0]["user_display_name"] or recent[0]["user_email_address"] or "otra persona"
+        raise CaseUpdateConflictError(
+            f'{who} modificó este expediente mientras lo tenías abierto. Recargalo para ver los cambios antes de guardar de nuevo.'
+        )
+    raise CaseUpdateConflictError(
+        "Este expediente se modificó mientras lo tenías abierto. Recargalo para ver los cambios antes de guardar de nuevo."
+    )
+
+
+async def update_ai_summary(
+    pool: asyncpg.Pool,
+    case_id: int,
+    summary: str,
+    *,
+    user: CurrentUser,
+    expected_updated_at: datetime | None = None,
+) -> CaseDetail | None:
     """Guarda la version corregida a mano del resumen de IA -- no toca
-    mailing.ai_runs (el registro original de auditoria queda intacto), solo
-    la que se muestra en la UI/PDF/linea de tiempo. No requiere el expediente
-    abierto: es un ajuste de redaccion, no una reapertura de la revision."""
+    mailing.ai_runs (el registro original de auditoria queda intacta), solo
+    la que se muestra en la UI/PDF/linea de tiempo."""
     case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case is None:
         return None
     _require_edit(case)
-    await cases_repository.update_case(pool, case_id, fields={"ai_summary_override": summary})
+    _ensure_open(case)
+    updated = await cases_repository.update_case(
+        pool, case_id, fields={"ai_summary_override": summary}, expected_updated_at=expected_updated_at
+    )
+    if not updated:
+        if expected_updated_at is not None:
+            await _raise_update_conflict(pool, case_id)
+        return None
+    await cases_repository.insert_audit_entry(
+        pool, case_id=case_id, user_id=user.user_id, description="Editó el resumen de IA"
+    )
     return await get_case_detail(pool, case_id, user=user)
 
 
@@ -697,7 +838,12 @@ async def delete_case(pool: asyncpg.Pool, case_id: int, *, user: CurrentUser) ->
 
 
 async def update_case(
-    pool: asyncpg.Pool, case_id: int, *, fields: dict[str, object], user: CurrentUser
+    pool: asyncpg.Pool,
+    case_id: int,
+    *,
+    fields: dict[str, object],
+    user: CurrentUser,
+    expected_updated_at: datetime | None = None,
 ) -> CaseDetail | None:
     case_core = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     if case_core is None:
@@ -708,7 +854,8 @@ async def update_case(
     next_status = fields.get("status", current_status)
     next_outcome = fields.get("outcome", case_core["outcome"])
 
-    if "outcome" in fields and current_status == "closed" and next_status != "open":
+    edits_requiring_open = {"outcome", "pending_action", "next_review_at"}
+    if edits_requiring_open & fields.keys() and current_status == "closed" and next_status != "open":
         raise CaseClosedError("El expediente esta cerrado. Debe reabrirse antes de poder modificarlo.")
 
     if next_status == "closed" and next_outcome == "sin_hallazgos":
@@ -716,9 +863,33 @@ async def update_case(
             "Este expediente esta marcado 'sin hallazgos' -- no se puede cerrar manualmente."
         )
 
-    updated = await cases_repository.update_case(pool, case_id, fields=fields)
+    updated = await cases_repository.update_case(
+        pool, case_id, fields=fields, expected_updated_at=expected_updated_at
+    )
     if not updated:
+        if expected_updated_at is not None:
+            await _raise_update_conflict(pool, case_id)
         return None
+
+    for field_name, new_value in fields.items():
+        if field_name not in _AUDIT_FIELD_LABELS:
+            continue
+        old_value = case_core[field_name]
+        if old_value == new_value:
+            continue
+        label = _AUDIT_FIELD_LABELS[field_name]
+        old_display = _audit_str(old_value) or "(sin definir)"
+        new_display = _audit_str(new_value) or "(sin definir)"
+        await cases_repository.insert_audit_entry(
+            pool,
+            case_id=case_id,
+            user_id=user.user_id,
+            field_name=field_name,
+            old_value=_audit_str(old_value),
+            new_value=_audit_str(new_value),
+            description=f'Cambió {label} de "{old_display}" a "{new_display}"',
+        )
+
     return await get_case_detail(pool, case_id, user=user)
 
 
@@ -728,13 +899,16 @@ async def add_case_note(pool: asyncpg.Pool, case_id: int, body: str, *, user: Cu
         return None
     _require_edit(case)
     _ensure_open(case)
-    record = await cases_repository.insert_case_note(pool, case_id, body)
+    # Se normaliza a HTML al guardar (no en cada lectura) -- las notas suelen
+    # redactarse con ayuda de IA y pegarse con formato Markdown crudo.
+    html_body = markdown_render.markdown_to_safe_html(body)
+    record = await cases_repository.insert_case_note(pool, case_id, html_body)
     await _mark_ai_stale(pool, case_id)
     # La nota tambien queda como hecho en la linea de tiempo -- para que se
     # vea en orden cronologico junto a los correos y el analisis de IA, no
     # solo en la tabla de notas aparte. Descripcion acotada a una linea (la
     # tabla de notas ya muestra el texto completo con su formato).
-    one_line = "Nota del auditor: " + " ".join(body.split())[:300]
+    one_line = "Nota del auditor: " + markdown_render.html_to_plain_text(html_body)[:300]
     await cases_repository.insert_timeline_event(
         pool,
         case_id=case_id,
@@ -747,7 +921,12 @@ async def add_case_note(pool: asyncpg.Pool, case_id: int, body: str, *, user: Cu
         determination_type="validacion_manual",
         confidence=None,
     )
-    return CaseNoteRead(note_id=record["note_id"], body=record["body"], created_at=record["created_at"])
+    await cases_repository.insert_audit_entry(
+        pool, case_id=case_id, user_id=user.user_id, description="Agregó una nota"
+    )
+    return CaseNoteRead(
+        note_id=record["note_id"], body=record["body"], body_markdown=body, created_at=record["created_at"]
+    )
 
 
 async def add_case_evidence(
@@ -777,8 +956,12 @@ async def add_case_evidence(
         content_type=content_type,
         size_bytes=len(content),
         content=content,
+        created_by_user_id=user.user_id,
     )
     await _mark_ai_stale(pool, case_id)
+    await cases_repository.insert_audit_entry(
+        pool, case_id=case_id, user_id=user.user_id, description=f"Agregó evidencia: {glosa}"
+    )
     return CaseEvidenceRead(
         evidence_id=record["evidence_id"],
         glosa=record["glosa"],
@@ -856,10 +1039,18 @@ async def share_case(
         case_id=case_id,
         created_by_user_id=user.user_id,
     )
+    email_body = email_templates.render_case_shared_email(
+        shared_by=sharer_name,
+        case_title=case["title"],
+        external_code=case["external_code"],
+        case_status=case["status"],
+        permission=permission,
+        shared_at=datetime.now(timezone.utc),
+    )
     await notification_email_service.try_send_email(
         to_email=record["email_address"],
         subject=f'MailingAI — te compartieron el expediente "{case["title"]}"',
-        body=notification_message,
+        body=email_body,
     )
     return CaseShareRead(
         user_id=record["user_id"],
@@ -874,6 +1065,88 @@ async def cascade_revoke_mailbox_access(pool: asyncpg.Pool, *, user_id: int, mai
     return await cases_repository.cascade_revoke_user_mailbox_access(
         pool, user_id=user_id, mailbox_account_id=mailbox_account_id
     )
+
+
+async def get_mailbox_deletion_impact(pool: asyncpg.Pool, mailbox_account_id: int) -> dict[str, int]:
+    return await cases_repository.get_mailbox_deletion_impact(pool, mailbox_account_id)
+
+
+async def delete_mailbox_content(pool: asyncpg.Pool, mailbox_account_id: int, *, mailbox_label: str) -> dict[str, int]:
+    return await cases_repository.cascade_delete_mailbox_content(pool, mailbox_account_id, mailbox_label=mailbox_label)
+
+
+async def list_cases_by_outcome(pool: asyncpg.Pool, *, outcome: str, user: CurrentUser) -> list[CaseSummary]:
+    real_outcome = None if outcome == "none" else outcome
+    records = await cases_repository.list_cases_by_outcome(
+        pool, user_id=user.user_id, is_admin=user.is_admin, outcome=real_outcome
+    )
+    return [_to_summary(r) for r in records]
+
+
+async def get_dashboard_stats(pool: asyncpg.Pool, *, user: CurrentUser) -> CaseDashboardStats:
+    stats = await cases_repository.get_dashboard_stats(pool, user_id=user.user_id, is_admin=user.is_admin)
+    by_outcome_rows = await cases_repository.get_dashboard_stats_by_outcome(
+        pool, user_id=user.user_id, is_admin=user.is_admin
+    )
+    return CaseDashboardStats(
+        total=stats["total"],
+        open_count=stats["open_count"],
+        closed_count=stats["closed_count"],
+        overdue_review_count=stats["overdue_review_count"],
+        stale_ai_count=stats["stale_ai_count"],
+        no_ai_count=stats["no_ai_count"],
+        by_outcome={r["outcome"]: r["case_count"] for r in by_outcome_rows},
+    )
+
+
+async def reassign_case_owner(
+    pool: asyncpg.Pool, case_id: int, *, new_owner_user_id: int, admin: CurrentUser
+) -> CaseDetail | None:
+    """Cambia el dueño de un expediente a mano -- distinto de la reasignación
+    automática que hace delete_user cuando se elimina una cuenta (esta la
+    dispara un admin explícitamente, ej. para corregir un expediente que
+    quedó con previous_owner_label después de esa eliminación)."""
+    case_core = await cases_repository.get_case_core(pool, case_id, user_id=admin.user_id, is_admin=admin.is_admin)
+    if case_core is None:
+        return None
+    new_owner = await users_repository.get_user_by_id(pool, new_owner_user_id)
+    if new_owner is None:
+        raise TargetUserNotFoundError(f"No existe el usuario #{new_owner_user_id}.")
+    updated = await cases_repository.update_case_owner(pool, case_id, new_owner_user_id=new_owner_user_id)
+    if updated is None:
+        return None
+    new_owner_label = new_owner["display_name"] or new_owner["email_address"]
+    await cases_repository.insert_audit_entry(
+        pool,
+        case_id=case_id,
+        user_id=admin.user_id,
+        field_name="owner_user_id",
+        old_value=str(case_core["owner_user_id"]) if case_core["owner_user_id"] is not None else None,
+        new_value=str(new_owner_user_id),
+        description=f'Reasignó el expediente a "{new_owner_label}"',
+    )
+    return await get_case_detail(pool, case_id, user=admin)
+
+
+async def list_case_audit_log(
+    pool: asyncpg.Pool, case_id: int, *, user: CurrentUser
+) -> list[CaseAuditLogRead] | None:
+    case = await cases_repository.get_case_core(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+    if case is None:
+        return None
+    records = await cases_repository.list_audit_log(pool, case_id)
+    return [
+        CaseAuditLogRead(
+            audit_id=r["audit_id"],
+            user_display_name=r["user_display_name"] or r["user_email_address"],
+            occurred_at=r["occurred_at"],
+            field_name=r["field_name"],
+            old_value=r["old_value"],
+            new_value=r["new_value"],
+            description=r["description"],
+        )
+        for r in records
+    ]
 
 
 async def revoke_case_share(pool: asyncpg.Pool, case_id: int, target_user_id: int, *, user: CurrentUser) -> bool:

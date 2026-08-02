@@ -5,8 +5,9 @@ from uuid import UUID
 from pydantic import BaseModel, field_validator
 
 from app.schemas.ai_providers import AIProviderRead
+from app.schemas.case_enums import CaseOutcome
 
-RunStatus = Literal["success", "failed", "blocked_by_policy"]
+RunStatus = Literal["running", "success", "failed", "blocked_by_policy"]
 
 
 class AICaseSummary(BaseModel):
@@ -14,6 +15,9 @@ class AICaseSummary(BaseModel):
     key_participants: list[str] = []
     suggested_priority: Literal["low", "medium", "high"] = "medium"
     suggested_next_action: str = ""
+    # Default "pendiente" -- no rompe si un modelo chico omite el campo
+    # (prompt_version anteriores a case-summary-v6 tampoco lo pedian).
+    suggested_outcome: CaseOutcome = "pendiente"
 
     @field_validator("key_participants", mode="before")
     @classmethod

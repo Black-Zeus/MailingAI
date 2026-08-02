@@ -5,11 +5,11 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.schemas.ai import AIAnalyzeResponse
+from app.schemas.case_enums import CaseOutcome
 
 SeedType = Literal["conversation_id", "cr_keyword", "message_id"]
 CaseType = Literal["conversation", "cr", "custom"]
 DeterminationType = Literal["hecho_observado", "regla", "inferencia_ia", "validacion_manual"]
-CaseOutcome = Literal["con_hallazgos", "sin_hallazgos", "pendiente", "en_proceso", "derivado", "mas_antecedentes"]
 CaseStatus = Literal["open", "closed"]
 
 
@@ -22,6 +22,11 @@ class CaseCreate(BaseModel):
 
 class CaseAddMessage(BaseModel):
     message_id: str = Field(min_length=1)
+
+
+class CaseMergeRequest(BaseModel):
+    case_ids: list[int] = Field(min_length=2)
+    title: str = Field(min_length=1)
 
 
 class CaseAttachmentRead(BaseModel):
@@ -70,6 +75,7 @@ class TimelineEventRead(BaseModel):
 class CaseNoteRead(BaseModel):
     note_id: int
     body: str
+    body_markdown: str
     created_at: datetime
 
 
@@ -101,6 +107,11 @@ class CaseSummary(BaseModel):
     ai_stale: bool = False
     has_own_reply: bool = False
     owner_user_id: int | None = None
+    created_at: datetime
+    pending_action: str | None = None
+    next_review_at: date | None = None
+    previous_owner_label: str | None = None
+    updated_at: datetime
 
 
 class CaseDetail(CaseSummary):
@@ -114,6 +125,27 @@ class CaseDetail(CaseSummary):
 
 class CaseAiSummaryUpdate(BaseModel):
     summary: str = Field(min_length=1)
+    expected_updated_at: datetime | None = None
+
+
+class CaseDashboardStats(BaseModel):
+    total: int
+    open_count: int
+    closed_count: int
+    overdue_review_count: int
+    stale_ai_count: int
+    no_ai_count: int
+    by_outcome: dict[str, int]
+
+
+class CaseAuditLogRead(BaseModel):
+    audit_id: int
+    user_display_name: str | None
+    occurred_at: datetime
+    field_name: str | None
+    old_value: str | None
+    new_value: str | None
+    description: str
 
 
 class CaseRefreshResponse(BaseModel):
@@ -136,9 +168,16 @@ class TimelineEventUpdate(BaseModel):
     determination_type: DeterminationType
 
 
+class CaseOwnerReassignRequest(BaseModel):
+    new_owner_user_id: int
+
+
 class CaseUpdate(BaseModel):
     outcome: CaseOutcome | None = None
     status: CaseStatus | None = None
+    pending_action: str | None = None
+    next_review_at: date | None = None
+    expected_updated_at: datetime | None = None
 
 
 CaseSharePermission = Literal["read", "edit"]

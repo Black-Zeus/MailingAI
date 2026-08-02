@@ -33,20 +33,30 @@ async def ai_health(pool: PoolDep) -> AIHealthResponse:
 
 
 @router.post("/cases/{case_id}/analyze", response_model=AIAnalyzeResponse)
-async def analyze_case(case_id: int, pool: PoolDep, user: CurrentUserDep) -> AIAnalyzeResponse:
+async def analyze_case(
+    case_id: int, pool: PoolDep, user: CurrentUserDep, background_tasks: BackgroundTasks
+) -> AIAnalyzeResponse:
+    """Responde al toque: si hay que llamar de verdad al proveedor de IA
+    (la parte lenta), esa llamada se programa como BackgroundTask y el
+    endpoint devuelve status='running' -- ver gateway.start_case_analysis."""
     try:
-        result = await gateway.analyze_case(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
+        result, finish = await gateway.start_case_analysis(pool, case_id, user_id=user.user_id, is_admin=user.is_admin)
     except gateway.CaseAccessDeniedError as exc:
         raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    if finish is not None:
+        background_tasks.add_task(finish)
     return result
 
 
 @router.post("/batch-analyze", response_model=AIBatchRunRead, status_code=http_status.HTTP_201_CREATED)
-async def start_batch_analyze(pool: PoolDep, background_tasks: BackgroundTasks) -> AIBatchRunRead:
+async def start_batch_analyze(pool: PoolDep, admin: AdminUserDep, background_tasks: BackgroundTasks) -> AIBatchRunRead:
+    """Admin-only: list_pending_case_ids trae expedientes de todo el sistema,
+    sin filtrar por dueño -- no es una operacion que corresponda disparar a
+    un usuario comun sobre expedientes ajenos."""
     batch = await ai_batch_service.start_batch(pool)
-    background_tasks.add_task(ai_batch_service.run_batch, pool, batch.batch_run_id)
+    background_tasks.add_task(ai_batch_service.run_batch, pool, batch.batch_run_id, admin.user_id)
     return batch
 
 

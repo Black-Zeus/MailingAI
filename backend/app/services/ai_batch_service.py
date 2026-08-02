@@ -41,12 +41,18 @@ async def get_latest_batch(pool: asyncpg.Pool) -> AIBatchRunRead | None:
     return _to_read(record) if record else None
 
 
-async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
+async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID, admin_user_id: int) -> None:
     """Corre como BackgroundTask -- procesa cada expediente pendiente uno a la
     vez (nunca en paralelo, para no saturar al proveedor de IA activo) y deja
     el progreso real en mailing.ai_batch_runs para que el frontend lo pueda
     consultar en cualquier momento, sin depender de que la pestana del
     navegador que lo disparo siga abierta.
+
+    list_pending_case_ids trae expedientes de TODO el sistema, sin filtrar
+    por dueño -- por eso este endpoint es admin-only (ver api/ai.py) y
+    analyze_case se llama con is_admin=True: quien dispara el lote ya tiene
+    permiso de admin, no hace falta (ni corresponde) validar dueno caso por
+    caso. admin_user_id queda solo para trazabilidad interna.
     """
     case_ids = await ai_batch_repository.list_pending_case_ids(pool)
     await ai_batch_repository.mark_batch_running(pool, batch_run_id)
@@ -55,7 +61,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
     failed = 0
     for case_id in case_ids:
         try:
-            result = await gateway.analyze_case(pool, case_id)
+            result = await gateway.analyze_case(pool, case_id, user_id=admin_user_id, is_admin=True)
             if result is not None and result.status == "success":
                 succeeded += 1
             else:

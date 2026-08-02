@@ -1,0 +1,77 @@
+{
+  "id": "maiw0015reviewremind",
+  "name": "14 - MailingAI - Recordatorios de proxima revision (cron)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd01",
+      "name": "Schedule: Diario 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.case_id, c.owner_user_id, c.title, c.next_review_at\nFROM mailing.cases c\nWHERE c.status = 'open'\n  AND c.next_review_at IS NOT NULL\n  AND c.next_review_at <= CURRENT_DATE\n  AND c.owner_user_id IS NOT NULL\n  AND NOT EXISTS (\n    SELECT 1 FROM identity.notifications n\n    WHERE n.case_id = c.case_id AND n.kind = 'case_review_due' AND n.read_at IS NULL\n  );",
+        "options": {}
+      },
+      "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd02",
+      "name": "Postgres: Expedientes con revision vencida",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO identity.notifications (user_id, kind, message, case_id)\nVALUES ($1, 'case_review_due', $2, $3)\nRETURNING notification_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.owner_user_id, 'La revisión del expediente \"' + $json.title + '\" venció el ' + String($json.next_review_at).slice(0, 10) + '.', $json.case_id] }}"
+        }
+      },
+      "id": "dddddddd-dddd-4ddd-8ddd-dddddddddd03",
+      "name": "Postgres: Insertar notificacion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: Diario 08:00": {
+      "main": [[{ "node": "Postgres: Expedientes con revision vencida", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Expedientes con revision vencida": {
+      "main": [[{ "node": "Postgres: Insertar notificacion", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

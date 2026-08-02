@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi import status as http_status
 from fastapi.responses import Response
 
-from app.auth.dependencies import CurrentUserDep
+from app.auth.dependencies import AdminUserDep, CurrentUserDep
 from app.charts import (
     HistogramBucket,
     HistogramRequest,
@@ -20,13 +20,17 @@ from app.repositories import cases_repository
 from app.schemas.cases import (
     CaseAddMessage,
     CaseAiSummaryUpdate,
+    CaseAuditLogRead,
     CaseBatchCreate,
     CaseBatchRunRead,
     CaseBulkRefreshResponse,
     CaseCreate,
+    CaseDashboardStats,
     CaseDetail,
     CaseEvidenceRead,
+    CaseMergeRequest,
     CaseNoteCreate,
+    CaseOwnerReassignRequest,
     CaseNoteRead,
     CaseRefreshResponse,
     CaseShareCreate,
@@ -58,6 +62,18 @@ async def create_case(payload: CaseCreate, pool: PoolDep, user: CurrentUserDep) 
         case_type=payload.case_type,
         user=user,
     )
+
+
+@router.post("/cases/merge", response_model=CaseDetail, status_code=http_status.HTTP_201_CREATED)
+async def merge_cases(payload: CaseMergeRequest, pool: PoolDep, user: CurrentUserDep) -> CaseDetail:
+    try:
+        return await cases_service.merge_cases(
+            pool, case_ids=payload.case_ids, title=payload.title, user=user
+        )
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    except cases_service.MergeRequiresMultipleCasesError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/cases", response_model=list[CaseSummary])
@@ -126,6 +142,16 @@ async def delete_case(case_id: int, pool: PoolDep, user: CurrentUserDep) -> None
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
 
 
+@router.get("/cases/dashboard/stats", response_model=CaseDashboardStats)
+async def get_cases_dashboard_stats(pool: PoolDep, user: CurrentUserDep) -> CaseDashboardStats:
+    return await cases_service.get_dashboard_stats(pool, user=user)
+
+
+@router.get("/cases/dashboard/by-outcome", response_model=list[CaseSummary])
+async def get_cases_by_outcome(pool: PoolDep, user: CurrentUserDep, outcome: str = Query(...)) -> list[CaseSummary]:
+    return await cases_service.list_cases_by_outcome(pool, outcome=outcome, user=user)
+
+
 @router.get("/cases/{case_id}", response_model=CaseDetail)
 async def get_case(case_id: int, pool: PoolDep, user: CurrentUserDep) -> CaseDetail:
     case = await cases_service.get_case_detail(pool, case_id, user=user)
@@ -165,17 +191,50 @@ async def get_case_chart(
 
 @router.patch("/cases/{case_id}", response_model=CaseDetail)
 async def update_case(case_id: int, payload: CaseUpdate, pool: PoolDep, user: CurrentUserDep) -> CaseDetail:
+    fields = payload.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
     try:
         case = await cases_service.update_case(
-            pool, case_id, fields=payload.model_dump(exclude_unset=True), user=user
+            pool, case_id, fields=fields, user=user, expected_updated_at=payload.expected_updated_at
         )
     except (cases_service.CaseClosedError, cases_service.CaseNotEligibleForAIError) as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except cases_service.CaseAccessDeniedError as exc:
         raise _forbidden(exc) from exc
+    except cases_service.CaseUpdateConflictError as exc:
+        # 412 (no 409): distinto de CaseClosedError/CaseNotEligibleForAIError
+        # arriba -- el frontend necesita poder distinguir "conflicto de
+        # edicion concurrente" (bloqueo optimista) de "el expediente esta
+        # cerrado" para saber si mostrar el modal de recargar o no.
+        raise HTTPException(status_code=http_status.HTTP_412_PRECONDITION_FAILED, detail=str(exc)) from exc
     if case is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return case
+
+
+@router.patch("/cases/{case_id}/owner", response_model=CaseDetail)
+async def reassign_case_owner(
+    case_id: int, payload: CaseOwnerReassignRequest, pool: PoolDep, admin: AdminUserDep
+) -> CaseDetail:
+    """Reasignación manual de dueño -- admin-only, distinta de compartir
+    (que puede hacerla el dueño). Pensada sobre todo para corregir expedientes
+    que quedaron con previous_owner_label tras eliminar un usuario."""
+    try:
+        case = await cases_service.reassign_case_owner(
+            pool, case_id, new_owner_user_id=payload.new_owner_user_id, admin=admin
+        )
+    except cases_service.TargetUserNotFoundError as exc:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if case is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return case
+
+
+@router.get("/cases/{case_id}/audit-log", response_model=list[CaseAuditLogRead])
+async def get_case_audit_log(case_id: int, pool: PoolDep, user: CurrentUserDep) -> list[CaseAuditLogRead]:
+    entries = await cases_service.list_case_audit_log(pool, case_id, user=user)
+    if entries is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return entries
 
 
 @router.post("/cases/{case_id}/notes", response_model=CaseNoteRead, status_code=http_status.HTTP_201_CREATED)
@@ -246,9 +305,15 @@ async def update_case_ai_summary(
     case_id: int, payload: CaseAiSummaryUpdate, pool: PoolDep, user: CurrentUserDep
 ) -> CaseDetail:
     try:
-        case = await cases_service.update_ai_summary(pool, case_id, payload.summary, user=user)
+        case = await cases_service.update_ai_summary(
+            pool, case_id, payload.summary, user=user, expected_updated_at=payload.expected_updated_at
+        )
+    except cases_service.CaseClosedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except cases_service.CaseAccessDeniedError as exc:
         raise _forbidden(exc) from exc
+    except cases_service.CaseUpdateConflictError as exc:
+        raise HTTPException(status_code=http_status.HTTP_412_PRECONDITION_FAILED, detail=str(exc)) from exc
     if case is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return case

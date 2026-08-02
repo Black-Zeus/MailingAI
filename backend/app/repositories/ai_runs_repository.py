@@ -17,7 +17,7 @@ async def insert_ai_run(
     output_json: dict[str, Any] | None,
     status: str,
     error_message: str | None,
-    duration_ms: int,
+    duration_ms: int | None,
 ) -> asyncpg.Record:
     query = """
         INSERT INTO mailing.ai_runs
@@ -40,6 +40,54 @@ async def insert_ai_run(
             error_message,
             duration_ms,
         )
+
+
+async def update_ai_run(
+    pool: asyncpg.Pool,
+    ai_run_id: int,
+    *,
+    status: str,
+    output_json: dict[str, Any] | None,
+    error_message: str | None,
+    duration_ms: int,
+) -> None:
+    """Actualiza la fila que start_case_analysis ya habia insertado en
+    'running' -- se llama al terminar la llamada al proveedor de IA (exito,
+    fallo, o error de validacion del JSON devuelto). Una sola fila por
+    corrida real, igual que cuando todo era sincronico."""
+    query = """
+        UPDATE mailing.ai_runs
+        SET status = $2, output_json = $3::jsonb, error_message = $4, duration_ms = $5
+        WHERE ai_run_id = $1;
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(
+            query,
+            ai_run_id,
+            status,
+            json.dumps(output_json) if output_json is not None else None,
+            error_message,
+            duration_ms,
+        )
+
+
+async def fail_orphaned_ai_runs(pool: asyncpg.Pool) -> int:
+    """Marca como 'failed' cualquier corrida que haya quedado 'running'.
+
+    Se llama al arrancar el backend: si hay una fila asi, es porque el
+    proceso que la estaba terminando (BackgroundTasks) murio junto con un
+    reinicio/redeploy del contenedor -- nadie mas la va a terminar nunca.
+    """
+    query = """
+        UPDATE mailing.ai_runs
+        SET status = 'failed',
+            error_message = 'Interrumpida por un reinicio del backend antes de terminar.'
+        WHERE status = 'running'
+        RETURNING ai_run_id;
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query)
+    return len(rows)
 
 
 async def get_latest_ai_run_by_case(pool: asyncpg.Pool, case_id: int) -> asyncpg.Record | None:
