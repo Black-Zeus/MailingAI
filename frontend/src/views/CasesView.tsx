@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 import {
   ApiError,
   addCaseEvidence,
@@ -11,19 +11,23 @@ import {
   deleteCase,
   exportCasePdfBlob,
   getCase,
+  getCaseAuditLog,
   getCaseEvidenceUrl,
   getJob,
   getLatestAIBatchAnalyze,
   getLatestCaseBatchCreate,
   getCaseChartUrl,
   listCases,
+  mergeCases,
   listJobs,
   listMailboxes,
   listMessages,
   refreshCase,
   refreshOpenCases,
   listCaseShares,
+  reassignCaseOwner,
   removeCaseMessage,
+  renderMarkdownPreview,
   retraceMessageAttachments,
   revokeCaseShare,
   sendCaseEmail,
@@ -34,17 +38,45 @@ import {
   updateCase,
   updateTimelineEvent,
 } from '../api/client'
-import type { CaseBatchRunRead, CaseDetail, CaseOutcome, CaseSeedPrefill, CaseShareRead, CaseSummary, CaseType, SeedType } from '../types/cases'
+import type { CaseAuditLogRead, CaseBatchRunRead, CaseDetail, CaseOutcome, CaseSeedPrefill, CaseShareRead, CaseSummary, CaseType, SeedType } from '../types/cases'
 import type { JobRead } from '../types/jobs'
 import type { MessageListItem } from '../types/messages'
 import { CASE_OUTCOME_LABELS, DETERMINATION_LABELS } from '../types/cases'
 import type { AIBatchRunRead } from '../types/ai'
 import type { MailboxAccountRead } from '../types/mailboxes'
+import { KpiCard } from '../components/KpiCard'
 import { PRIORITY_LABELS } from '../types/ai'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { ShareModal } from '../components/ShareModal'
 import { AttachmentItem } from '../components/AttachmentItem'
-import { MessageBodyModal, type MessageBodyModalState } from '../components/MessageBodyModal'
+import { MessageBodyModal, MessageBodyView, type MessageBodyModalState } from '../components/MessageBodyModal'
+import { ActionButton } from '../components/ActionButton'
+import { MarkdownHelpModal } from '../components/MarkdownHelpModal'
+import { ReassignOwnerModal } from '../components/ReassignOwnerModal'
+import {
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  Check,
+  Eye,
+  ExternalLink,
+  FileDown,
+  HelpCircle,
+  Inbox,
+  UserCog,
+  Lock,
+  Mail,
+  Paperclip,
+  Pencil,
+  Plus,
+  Save,
+  Search,
+  Share2,
+  Trash2,
+  Unlock,
+  Upload,
+  X,
+} from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { formatDateTime, groupTimelineEvents, stripCorreoSuffix } from '../utils/timeline'
@@ -71,9 +103,11 @@ function formatPhaseProgress(count: number, total: number): string {
 interface CasesViewProps {
   prefill: CaseSeedPrefill | null
   onPrefillConsumed: () => void
+  openCaseId?: number | null
+  onOpenCaseIdConsumed?: () => void
 }
 
-export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
+export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseIdConsumed }: CasesViewProps) {
   const { showToast } = useToast()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -82,6 +116,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const [caseShares, setCaseShares] = useState<CaseShareRead[]>([])
   const [sharingCase, setSharingCase] = useState(false)
   const [revokingCaseShareUserId, setRevokingCaseShareUserId] = useState<number | null>(null)
+  const [reassignOwnerTarget, setReassignOwnerTarget] = useState<CaseSummary | null>(null)
+  const [reassigningOwner, setReassigningOwner] = useState(false)
+  const [conflictModal, setConflictModal] = useState<{ caseId: number; message: string } | null>(null)
+  const [reloadingConflictedCase, setReloadingConflictedCase] = useState(false)
 
   async function openShareCaseModal(c: CaseSummary) {
     setShareCaseTarget(c)
@@ -104,6 +142,38 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
       showToast(err instanceof ApiError ? err.message : 'No se pudo compartir el expediente.', true)
     } finally {
       setSharingCase(false)
+    }
+  }
+
+  async function handleReloadConflictedCase() {
+    if (!conflictModal) return
+    const { caseId } = conflictModal
+    setReloadingConflictedCase(true)
+    try {
+      const fresh = await getCase(caseId)
+      setDetails((prev) => ({ ...prev, [caseId]: fresh }))
+      await refreshCases()
+      setConflictModal(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo recargar el expediente.', true)
+    } finally {
+      setReloadingConflictedCase(false)
+    }
+  }
+
+  async function handleReassignOwnerConfirm(newOwnerUserId: number) {
+    if (!reassignOwnerTarget) return
+    setReassigningOwner(true)
+    try {
+      const updated = await reassignCaseOwner(reassignOwnerTarget.case_id, newOwnerUserId)
+      setDetails((prev) => ({ ...prev, [reassignOwnerTarget.case_id]: updated }))
+      await refreshCases()
+      showToast('Dueño del expediente reasignado.')
+      setReassignOwnerTarget(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo reasignar el expediente.', true)
+    } finally {
+      setReassigningOwner(false)
     }
   }
 
@@ -155,6 +225,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const [mailboxDateTo, setMailboxDateTo] = useState<Record<number, string>>({})
   const [mailboxJobs, setMailboxJobs] = useState<Record<number, JobRead[]>>({})
   const mailboxPollRefs = useRef<Record<number, number>>({})
+  const aiAnalysisPollRefs = useRef<Record<number, number>>({})
   const [mailboxAccounts, setMailboxAccounts] = useState<MailboxAccountRead[]>([])
   const [mailboxSearchAccountId, setMailboxSearchAccountId] = useState<Record<number, number>>({})
   const [deleteTarget, setDeleteTarget] = useState<CaseSummary | null>(null)
@@ -175,8 +246,14 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const [addingEvidenceId, setAddingEvidenceId] = useState<number | null>(null)
   const [notesOpenIds, setNotesOpenIds] = useState<Set<number>>(new Set())
   const [evidenceOpenIds, setEvidenceOpenIds] = useState<Set<number>>(new Set())
+  const [auditLogOpenIds, setAuditLogOpenIds] = useState<Set<number>>(new Set())
+  const [auditLogs, setAuditLogs] = useState<Record<number, CaseAuditLogRead[]>>({})
+  const [loadingAuditLogId, setLoadingAuditLogId] = useState<number | null>(null)
   const [outcomeDraft, setOutcomeDraft] = useState<Record<number, CaseOutcome | ''>>({})
+  const [pendingActionDraft, setPendingActionDraft] = useState<Record<number, string>>({})
+  const [nextReviewDraft, setNextReviewDraft] = useState<Record<number, string>>({})
   const [savingOutcomeId, setSavingOutcomeId] = useState<number | null>(null)
+  const [savingFollowUpId, setSavingFollowUpId] = useState<number | null>(null)
   const [sendEmailTarget, setSendEmailTarget] = useState<number | null>(null)
   const [sendEmailForm, setSendEmailForm] = useState<{
     to: string
@@ -188,6 +265,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     files: File[]
   }>({ to: '', cc: '', subject: '', body: '', mailboxAccountId: null, attachPdf: true, files: [] })
   const [sendingEmail, setSendingEmail] = useState(false)
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false)
+  const [mdHelpOpen, setMdHelpOpen] = useState(false)
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState('')
+  const [loadingEmailPreview, setLoadingEmailPreview] = useState(false)
 
   function openBodyModal(message: {
     subject: string | null
@@ -260,6 +341,30 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     })
   }
 
+  async function toggleAuditLog(caseId: number) {
+    const willOpen = !auditLogOpenIds.has(caseId)
+    setAuditLogOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+      }
+      return next
+    })
+    if (willOpen && !auditLogs[caseId]) {
+      setLoadingAuditLogId(caseId)
+      try {
+        const entries = await getCaseAuditLog(caseId)
+        setAuditLogs((prev) => ({ ...prev, [caseId]: entries }))
+      } catch (err) {
+        showToast(err instanceof ApiError ? err.message : 'No se pudo cargar el historial de auditoría.', true)
+      } finally {
+        setLoadingAuditLogId(null)
+      }
+    }
+  }
+
   const [clearModalOpen, setClearModalOpen] = useState(false)
   const [aiConfirmOpen, setAiConfirmOpen] = useState(false)
   const [clearScope, setClearScope] = useState<'all' | 'open' | 'closed'>('all')
@@ -279,7 +384,20 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const [bulkMailboxAccountId, setBulkMailboxAccountId] = useState<number | ''>('')
   const [bulkDateFrom, setBulkDateFrom] = useState('')
   const [bulkDateTo, setBulkDateTo] = useState('')
-  useBodyScrollLock(bulkOpen || formOpen || sendEmailTarget !== null)
+
+  const [searchText, setSearchText] = useState('')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'closed'>('all')
+  const [filterOutcome, setFilterOutcome] = useState<'all' | CaseOutcome>('all')
+  const [filterCaseType, setFilterCaseType] = useState<'all' | CaseType>('all')
+  const [sortBy, setSortBy] = useState<'created_at' | 'title' | 'message_count' | 'last_message_at'>('created_at')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<number>>(new Set())
+  const [mergeModalOpen, setMergeModalOpen] = useState(false)
+  const [mergeTitle, setMergeTitle] = useState('')
+  const [merging, setMerging] = useState(false)
+
+  useBodyScrollLock(bulkOpen || formOpen || sendEmailTarget !== null || mergeModalOpen)
 
   const [associatingMail, setAssociatingMail] = useState(false)
   const [formSearchMailbox, setFormSearchMailbox] = useState(false)
@@ -306,6 +424,27 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   useEffect(() => {
     refreshCases()
   }, [])
+
+  useEffect(() => {
+    if (openCaseId == null || !cases) return
+    clearCaseFilters()
+    setOpenCaseIds((prev) => new Set(prev).add(openCaseId))
+    if (!details[openCaseId]) {
+      getCase(openCaseId)
+        .then((detail) => {
+          setDetails((prev) => ({ ...prev, [openCaseId]: detail }))
+          setOutcomeDraft((prev) => ({ ...prev, [openCaseId]: detail.outcome ?? '' }))
+          setPendingActionDraft((prev) => ({ ...prev, [openCaseId]: detail.pending_action ?? '' }))
+          setNextReviewDraft((prev) => ({ ...prev, [openCaseId]: detail.next_review_at ?? '' }))
+        })
+        .catch(() => {})
+    }
+    window.setTimeout(() => {
+      document.getElementById(`case-card-${openCaseId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
+    onOpenCaseIdConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCaseId, cases])
 
   function stopAiBatchPolling() {
     if (aiBatchPollRef.current !== null) {
@@ -406,6 +545,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   useEffect(() => {
     return () => {
       Object.values(mailboxPollRefs.current).forEach((handle) => window.clearInterval(handle))
+      Object.values(aiAnalysisPollRefs.current).forEach((handle) => window.clearInterval(handle))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -471,6 +611,14 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
         const detail = await getCase(caseId)
         setDetails((prev) => ({ ...prev, [caseId]: detail }))
         setOutcomeDraft((prev) => ({ ...prev, [caseId]: detail.outcome ?? '' }))
+        setPendingActionDraft((prev) => ({ ...prev, [caseId]: detail.pending_action ?? '' }))
+        setNextReviewDraft((prev) => ({ ...prev, [caseId]: detail.next_review_at ?? '' }))
+        if (detail.latest_ai_run?.status === 'running') {
+          // Retoma el polling si el analisis de IA quedo corriendo de una
+          // visita anterior -- el estado vive en el backend (mailing.ai_runs),
+          // no se pierde al navegar a otra pantalla y volver.
+          startAiAnalysisPoll(caseId)
+        }
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'No se pudo cargar el caso.')
       }
@@ -496,14 +644,42 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   async function handleSaveOutcome(caseId: number) {
     setSavingOutcomeId(caseId)
     try {
-      const updated = await updateCase(caseId, { outcome: outcomeDraft[caseId] || null })
+      const updated = await updateCase(caseId, {
+        outcome: outcomeDraft[caseId] || null,
+        expected_updated_at: details[caseId]?.updated_at,
+      })
       setDetails((prev) => ({ ...prev, [caseId]: updated }))
       await refreshCases()
       showToast('Conclusión del expediente guardada')
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo guardar la conclusión.', true)
+      if (err instanceof ApiError && err.status === 412) {
+        setConflictModal({ caseId, message: err.message })
+      } else {
+        showToast(err instanceof ApiError ? err.message : 'No se pudo guardar la conclusión.', true)
+      }
     } finally {
       setSavingOutcomeId(null)
+    }
+  }
+
+  async function handleSaveFollowUp(caseId: number) {
+    setSavingFollowUpId(caseId)
+    try {
+      const updated = await updateCase(caseId, {
+        pending_action: pendingActionDraft[caseId]?.trim() || null,
+        next_review_at: nextReviewDraft[caseId] || null,
+        expected_updated_at: details[caseId]?.updated_at,
+      })
+      setDetails((prev) => ({ ...prev, [caseId]: updated }))
+      showToast('Seguimiento del expediente guardado')
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 412) {
+        setConflictModal({ caseId, message: err.message })
+      } else {
+        showToast(err instanceof ApiError ? err.message : 'No se pudo guardar el seguimiento.', true)
+      }
+    } finally {
+      setSavingFollowUpId(null)
     }
   }
 
@@ -591,6 +767,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     setAnalyzingId(caseId)
     try {
       const result = await analyzeCaseWithAI(caseId)
+      if (result.status === 'running') {
+        // La llamada al proveedor de IA sigue corriendo en el backend --
+        // se empieza a consultar el estado real en vez de dar el analisis
+        // por terminado aca (ver startAiAnalysisPoll).
+        startAiAnalysisPoll(caseId)
+        return
+      }
       if (result.status !== 'success') {
         showToast(result.error_message || `El análisis terminó en estado "${result.status}".`, true)
       } else {
@@ -620,12 +803,16 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     if (!trimmed) return
     setSavingAiSummaryId(caseId)
     try {
-      const detail = await updateAiSummary(caseId, trimmed)
+      const detail = await updateAiSummary(caseId, trimmed, details[caseId]?.updated_at)
       setDetails((prev) => ({ ...prev, [caseId]: detail }))
       setEditingAiSummaryId(null)
       showToast('Resumen de IA actualizado')
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo actualizar el resumen.', true)
+      if (err instanceof ApiError && err.status === 412) {
+        setConflictModal({ caseId, message: err.message })
+      } else {
+        showToast(err instanceof ApiError ? err.message : 'No se pudo actualizar el resumen.', true)
+      }
     } finally {
       setSavingAiSummaryId(null)
     }
@@ -641,11 +828,17 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     const defaultMailboxId =
       mailboxAccounts.find((m) => m.enabled && m.mailbox_account_id === lastMessage?.mailbox_account_id)
         ?.mailbox_account_id ?? mailboxAccounts.find((m) => m.enabled)?.mailbox_account_id ?? null
+    // Precarga el cuerpo con la ultima nota del auditor, en Markdown (mas
+    // simple de leer/editar que HTML crudo) -- se convierte a HTML recien al
+    // enviar o al pedir la vista previa (ver handleSendEmail / handlePreviewEmail).
+    const latestNote = detail?.notes.length
+      ? [...detail.notes].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+      : null
     setSendEmailForm({
       to: Array.from(toSet).join('; '),
       cc: Array.from(ccSet).join('; '),
       subject: lastMessage?.subject ? `RE: ${lastMessage.subject}` : `Expediente ${detail?.title ?? ''}`,
-      body: '',
+      body: latestNote?.body_markdown ?? '',
       mailboxAccountId: defaultMailboxId,
       attachPdf: true,
       files: [],
@@ -655,6 +848,20 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
 
   function closeSendEmailModal() {
     setSendEmailTarget(null)
+    setEmailPreviewOpen(false)
+  }
+
+  async function handlePreviewEmail() {
+    setLoadingEmailPreview(true)
+    try {
+      const { html } = await renderMarkdownPreview(sendEmailForm.body)
+      setEmailPreviewHtml(html)
+      setEmailPreviewOpen(true)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo generar la vista previa.', true)
+    } finally {
+      setLoadingEmailPreview(false)
+    }
   }
 
   async function handleSendEmail() {
@@ -719,6 +926,39 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
       }
       return next
     })
+  }
+
+  function stopAiAnalysisPoll(caseId: number) {
+    const handle = aiAnalysisPollRefs.current[caseId]
+    if (handle !== undefined) {
+      window.clearInterval(handle)
+      delete aiAnalysisPollRefs.current[caseId]
+    }
+  }
+
+  function startAiAnalysisPoll(caseId: number) {
+    stopAiAnalysisPoll(caseId)
+    const poll = async () => {
+      try {
+        const detail = await getCase(caseId)
+        setDetails((prev) => ({ ...prev, [caseId]: detail }))
+        if (detail.latest_ai_run?.status !== 'running') {
+          stopAiAnalysisPoll(caseId)
+          if (detail.latest_ai_run?.status === 'success') {
+            showToast('Análisis de IA completado')
+          } else if (detail.latest_ai_run) {
+            showToast(
+              detail.latest_ai_run.error_message || `El análisis terminó en estado "${detail.latest_ai_run.status}".`,
+              true,
+            )
+          }
+        }
+      } catch {
+        // se reintenta en el siguiente tick
+      }
+    }
+    poll()
+    aiAnalysisPollRefs.current[caseId] = window.setInterval(poll, 4000)
   }
 
   function stopMailboxPoll(caseId: number) {
@@ -942,6 +1182,38 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
     }
   }
 
+  function toggleCaseSelected(caseId: number, e: MouseEvent) {
+    e.stopPropagation()
+    setSelectedCaseIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) next.delete(caseId)
+      else next.add(caseId)
+      return next
+    })
+  }
+
+  function openMergeModal() {
+    setMergeTitle('')
+    setMergeModalOpen(true)
+  }
+
+  async function handleConfirmMerge() {
+    const title = mergeTitle.trim()
+    if (!title || selectedCaseIds.size < 2) return
+    setMerging(true)
+    try {
+      const merged = await mergeCases([...selectedCaseIds], title)
+      showToast(`Expedientes fusionados en "${merged.title}" (#${merged.case_id}).`)
+      setMergeModalOpen(false)
+      setSelectedCaseIds(new Set())
+      await refreshCases()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo fusionar los expedientes.', true)
+    } finally {
+      setMerging(false)
+    }
+  }
+
   async function handleBulkCreate() {
     const keywords = parseBulkKeywords()
     if (keywords.length === 0) return
@@ -1013,6 +1285,59 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
   const closed = cases?.filter((c) => c.status === 'closed').length ?? 0
   const totalMessages = cases?.reduce((sum, c) => sum + c.message_count, 0) ?? 0
 
+  const filtersActive =
+    searchText.trim() !== '' || filterStatus !== 'all' || filterOutcome !== 'all' || filterCaseType !== 'all'
+
+  const visibleCases = useMemo(() => {
+    if (!cases) return null
+    const text = searchText.trim().toLowerCase()
+    const filtered = cases.filter((c) => {
+      if (filterStatus !== 'all' && c.status !== filterStatus) return false
+      if (filterOutcome !== 'all' && c.outcome !== filterOutcome) return false
+      if (filterCaseType !== 'all' && c.case_type !== filterCaseType) return false
+      if (text) {
+        const haystack = `${c.title} ${c.external_code ?? ''}`.toLowerCase()
+        if (!haystack.includes(text)) return false
+      }
+      return true
+    })
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'title':
+          return a.title.localeCompare(b.title) * dir
+        case 'message_count':
+          return (a.message_count - b.message_count) * dir
+        case 'last_message_at':
+          return (
+            (a.last_message_at ? new Date(a.last_message_at).getTime() : 0) -
+            (b.last_message_at ? new Date(b.last_message_at).getTime() : 0)
+          ) * dir
+        case 'created_at':
+        default:
+          return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
+      }
+    })
+  }, [cases, searchText, filterStatus, filterOutcome, filterCaseType, sortBy, sortDir])
+
+  // Mismo criterio que usa el backend para elegir que expedientes entran al
+  // lote (mailing.cases sin un ai_runs exitoso) -- se calcula aca para poder
+  // avisar ANTES de lanzarlo si hay cerrados en el medio (el analisis de IA
+  // no corre sobre expedientes cerrados, quedarian contados como "fallidos"
+  // sin ser un error real).
+  const aiPendingCounts = useMemo(() => {
+    const pending = (cases ?? []).filter((c) => !c.has_successful_ai_run)
+    const closed = pending.filter((c) => c.status === 'closed').length
+    return { total: pending.length, closed, open: pending.length - closed }
+  }, [cases])
+
+  function clearCaseFilters() {
+    setSearchText('')
+    setFilterStatus('all')
+    setFilterOutcome('all')
+    setFilterCaseType('all')
+  }
+
   return (
     <section>
       <div className="hero">
@@ -1033,16 +1358,19 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
           >
             {associatingMail ? 'Asociando correos…' : '🔗 Asociar correos'}
           </button>
-          <button
-            type="button"
-            className="btn btn-labeled"
-            onClick={() => setAiConfirmOpen(true)}
-            disabled={(activeAiBatch !== null && activeAiBatch.status !== 'success' && activeAiBatch.status !== 'failed') || cases === null}
-          >
-            {activeAiBatch && (activeAiBatch.status === 'queued' || activeAiBatch.status === 'running')
-              ? `Procesando con IA… (${activeAiBatch.processed_cases}/${activeAiBatch.total_cases})`
-              : '🤖 Procesar todo con IA'}
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn btn-labeled"
+              onClick={() => setAiConfirmOpen(true)}
+              disabled={(activeAiBatch !== null && activeAiBatch.status !== 'success' && activeAiBatch.status !== 'failed') || cases === null}
+              title="Analiza todos los expedientes del sistema que aún no tienen un análisis exitoso — no solo los tuyos"
+            >
+              {activeAiBatch && (activeAiBatch.status === 'queued' || activeAiBatch.status === 'running')
+                ? `Procesando con IA… (${activeAiBatch.processed_cases}/${activeAiBatch.total_cases})`
+                : '🤖 Procesar todo con IA'}
+            </button>
+          )}
           <button type="button" className="btn btn-labeled" onClick={() => setBulkOpen((v) => !v)}>
             {activeCaseBatch && (activeCaseBatch.status === 'queued' || activeCaseBatch.status === 'running')
               ? `Creando… (${activeCaseBatch.processed_keywords}/${activeCaseBatch.total_keywords})`
@@ -1053,6 +1381,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
           <button type="button" className="btn primary btn-labeled" onClick={() => setFormOpen((v) => !v)}>
             {formOpen ? '✕ Cerrar formulario' : '＋ Nuevo expediente'}
           </button>
+          {selectedCaseIds.size >= 2 && (
+            <button type="button" className="btn primary btn-labeled" onClick={openMergeModal}>
+              ⛙ Fusionar ({selectedCaseIds.size})
+            </button>
+          )}
         </div>
       </div>
 
@@ -1090,22 +1423,10 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
       )}
 
       <div className="kpis">
-        <div className="kpi">
-          <span>Expedientes</span>
-          <strong>{total}</strong>
-        </div>
-        <div className="kpi">
-          <span>Abiertos</span>
-          <strong style={{ color: 'var(--warning)' }}>{open}</strong>
-        </div>
-        <div className="kpi">
-          <span>Cerrados</span>
-          <strong style={{ color: 'var(--success)' }}>{closed}</strong>
-        </div>
-        <div className="kpi">
-          <span>Mensajes correlacionados</span>
-          <strong style={{ color: 'var(--accent-2)' }}>{totalMessages}</strong>
-        </div>
+        <KpiCard label="Expedientes" value={total} />
+        <KpiCard label="Abiertos" value={open} color="var(--warning)" />
+        <KpiCard label="Cerrados" value={closed} color="var(--success)" />
+        <KpiCard label="Mensajes correlacionados" value={totalMessages} color="var(--accent-2)" />
       </div>
 
       <div
@@ -1359,10 +1680,59 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
         </div>
       </div>
 
+      <div className="toolbar">
+        <input
+          type="text"
+          placeholder="Buscar por título o código..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          style={{ minWidth: 220 }}
+        />
+        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}>
+          <option value="all">Cualquier estado</option>
+          <option value="open">Abierto</option>
+          <option value="closed">Cerrado</option>
+        </select>
+        <select value={filterOutcome} onChange={(e) => setFilterOutcome(e.target.value as typeof filterOutcome)}>
+          <option value="all">Cualquier resultado</option>
+          {(Object.keys(CASE_OUTCOME_LABELS) as CaseOutcome[]).map((o) => (
+            <option key={o} value={o}>
+              {CASE_OUTCOME_LABELS[o]}
+            </option>
+          ))}
+        </select>
+        <select value={filterCaseType} onChange={(e) => setFilterCaseType(e.target.value as typeof filterCaseType)}>
+          <option value="all">Cualquier tipo</option>
+          <option value="conversation">Conversación</option>
+          <option value="cr">CR</option>
+          <option value="custom">Manual</option>
+        </select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}>
+          <option value="created_at">Ordenar por fecha de creación</option>
+          <option value="title">Ordenar por nombre</option>
+          <option value="last_message_at">Ordenar por última actividad</option>
+          <option value="message_count">Ordenar por cantidad de mensajes</option>
+        </select>
+        <ActionButton
+          icon={sortDir === 'asc' ? ArrowUp : ArrowDown}
+          label={sortDir === 'asc' ? 'Ascendente' : 'Descendente'}
+          onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+        />
+        {filtersActive && (
+          <button type="button" className="btn small btn-labeled" onClick={clearCaseFilters}>
+            ✕ Limpiar filtros
+          </button>
+        )}
+      </div>
+
       <div className="panel">
         <div className="panel-head">
           <h3>Resultados</h3>
-          <span>{total} {total === 1 ? 'expediente' : 'expedientes'}</span>
+          <span>
+            {filtersActive
+              ? `${visibleCases?.length ?? 0} de ${total} expediente(s)`
+              : `${total} ${total === 1 ? 'expediente' : 'expedientes'}`}
+          </span>
         </div>
         <div className="panel-body case-list">
           {cases !== null && cases.length === 0 && (
@@ -1371,24 +1741,41 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
               <p>Crea uno nuevo a partir de un hilo, un código CR, o un mensaje puntual.</p>
             </div>
           )}
-          {cases?.map((c) => {
+          {cases !== null && cases.length > 0 && visibleCases?.length === 0 && (
+            <div className="empty-view">
+              <strong>Ningún expediente coincide con los filtros.</strong>
+              <p>Probá ajustar la búsqueda o limpiar los filtros.</p>
+            </div>
+          )}
+          {visibleCases?.map((c) => {
             const isOpen = openCaseIds.has(c.case_id)
             const detail = details[c.case_id]
             const latestAiRun = detail?.latest_ai_run
             const aiResult = latestAiRun?.result
             const isClosed = c.status === 'closed'
             const isSinHallazgos = c.outcome === 'sin_hallazgos'
+            const aiRunning = analyzingId === c.case_id || latestAiRun?.status === 'running'
             return (
-              <article className={`case-card${isOpen ? ' open' : ''}`} key={c.case_id}>
+              <article id={`case-card-${c.case_id}`} className={`case-card${isOpen ? ' open' : ''}`} key={c.case_id}>
                 <div className="case-summary" onClick={() => toggleCase(c.case_id)}>
-                  <div>
-                    <h4>{c.title}</h4>
-                    <div className="case-meta">
-                      <span>{c.message_count} mensajes</span>
-                      <span>
-                        {formatDateTime(c.first_message_at)} → {formatDateTime(c.last_message_at)}
-                      </span>
-                      {c.external_code && <span>Código: {c.external_code}</span>}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedCaseIds.has(c.case_id)}
+                      onClick={(e) => toggleCaseSelected(c.case_id, e)}
+                      onChange={() => {}}
+                      style={{ marginTop: 4 }}
+                      aria-label={`Seleccionar expediente ${c.title}`}
+                    />
+                    <div>
+                      <h4>{c.title}</h4>
+                      <div className="case-meta">
+                        <span>{c.message_count} mensajes</span>
+                        <span>
+                          {formatDateTime(c.first_message_at)} → {formatDateTime(c.last_message_at)}
+                        </span>
+                        {c.external_code && <span>Código: {c.external_code}</span>}
+                      </div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1406,11 +1793,11 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                         className={`badge ${
                           c.outcome === 'con_hallazgos'
                             ? 'failed'
-                            : c.outcome === 'sin_hallazgos'
+                            : c.outcome === 'sin_hallazgos' || c.outcome === 'investigado_sin_compromiso'
                               ? 'success'
                               : c.outcome === 'derivado' || c.outcome === 'mas_antecedentes'
                                 ? 'queued'
-                                : c.outcome === 'en_proceso'
+                                : c.outcome === 'en_proceso' || c.outcome === 'mitigado'
                                   ? 'running'
                                   : 'cancelled'
                         }`}
@@ -1424,98 +1811,78 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                     )}
                     {!c.has_successful_ai_run && <span className="badge cancelled">Sin analizar</span>}
                     <span className={`badge ${c.status}`}>{c.status === 'open' ? 'Abierto' : 'Cerrado'}</span>
+                    {c.previous_owner_label && (
+                      <span className="badge queued" title="Reasignado automáticamente al eliminarse la cuenta del dueño original">
+                        Antes de: {c.previous_owner_label}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {isOpen && (
                   <div className="case-detail">
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
-                        onClick={() => handleRefreshCorrelation(c.case_id)}
-                        disabled={refreshingId === c.case_id || isClosed}
-                        data-tooltip={refreshingId === c.case_id ? 'Buscando correos relacionados…' : 'Buscar correos relacionados'}
-                        aria-label="Buscar correos relacionados"
-                      >
-                        {refreshingId === c.case_id ? '…' : '🔍'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
-                        onClick={() => toggleMailboxSearch(c.case_id, c.external_code)}
+                      <ActionButton
+                        icon={Search}
+                        label={refreshingId === c.case_id ? 'Buscando correos relacionados…' : 'Buscar correos relacionados'}
+                        loading={refreshingId === c.case_id}
                         disabled={isClosed}
-                        data-tooltip={mailboxSearchOpenIds.has(c.case_id) ? 'Cerrar búsqueda en el buzón' : 'Buscar en el buzón (Graph)'}
-                        aria-label="Buscar en el buzón (Graph)"
-                      >
-                        📥
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
+                        onClick={() => handleRefreshCorrelation(c.case_id)}
+                      />
+                      <ActionButton
+                        icon={Inbox}
+                        label={mailboxSearchOpenIds.has(c.case_id) ? 'Cerrar búsqueda en el buzón' : 'Buscar en el buzón (Graph)'}
+                        variant={mailboxSearchOpenIds.has(c.case_id) ? 'active' : 'default'}
+                        disabled={isClosed}
+                        onClick={() => toggleMailboxSearch(c.case_id, c.external_code)}
+                      />
+                      <ActionButton
+                        icon={Bot}
+                        label={aiRunning ? 'Procesando con IA…' : 'Analizar con IA'}
+                        loading={aiRunning}
+                        disabled={isClosed}
                         onClick={() => handleAnalyze(c.case_id)}
-                        disabled={analyzingId === c.case_id || isClosed || isSinHallazgos}
-                        data-tooltip={analyzingId === c.case_id ? 'Analizando con IA…' : 'Analizar con IA'}
-                        aria-label="Analizar con IA"
-                      >
-                        {analyzingId === c.case_id ? '…' : '🤖'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
-                        disabled={exportingCaseId === c.case_id}
+                      />
+                      <ActionButton
+                        icon={FileDown}
+                        label={exportingCaseId === c.case_id ? 'Generando PDF…' : 'Exportar expediente (PDF)'}
+                        loading={exportingCaseId === c.case_id}
                         onClick={() => handleExportCase(c.case_id, c.title)}
-                        data-tooltip={exportingCaseId === c.case_id ? 'Generando PDF…' : 'Exportar expediente (PDF)'}
-                        aria-label="Exportar expediente (PDF)"
-                      >
-                        {exportingCaseId === c.case_id ? '…' : '📄'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
+                      />
+                      <ActionButton
+                        icon={Mail}
+                        label="Enviar correo"
                         disabled={!detail || detail.messages.length === 0}
                         onClick={() => openSendEmailModal(c.case_id)}
-                        data-tooltip="Enviar correo"
-                        aria-label="Enviar correo"
-                      >
-                        ✉
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
-                        disabled={togglingStatusId === c.case_id || (!isClosed && isSinHallazgos)}
-                        onClick={() => handleToggleStatus(c.case_id, c.status === 'open' ? 'closed' : 'open')}
-                        data-tooltip={
+                      />
+                      <ActionButton
+                        icon={c.status === 'open' ? Lock : Unlock}
+                        label={
                           togglingStatusId === c.case_id
                             ? 'Guardando…'
                             : c.status === 'open'
                               ? 'Cerrar expediente'
                               : 'Reabrir expediente'
                         }
-                        aria-label={c.status === 'open' ? 'Cerrar expediente' : 'Reabrir expediente'}
-                      >
-                        {togglingStatusId === c.case_id ? '…' : c.status === 'open' ? '🔒' : '🔓'}
-                      </button>
+                        loading={togglingStatusId === c.case_id}
+                        onClick={() => handleToggleStatus(c.case_id, c.status === 'open' ? 'closed' : 'open')}
+                      />
                       {(isAdmin || c.owner_user_id === user?.user_id) && (
-                        <button
-                          type="button"
-                          className="btn small icon-btn"
-                          onClick={() => openShareCaseModal(c)}
-                          data-tooltip="Compartir"
-                          aria-label="Compartir"
-                        >
-                          🔗
-                        </button>
+                        <ActionButton icon={Share2} label="Compartir" onClick={() => openShareCaseModal(c)} />
                       )}
-                      <button
-                        type="button"
-                        className="btn small danger icon-btn"
-                        onClick={() => setDeleteTarget(c)}
+                      {isAdmin && (
+                        <ActionButton
+                          icon={UserCog}
+                          label="Reasignar dueño"
+                          onClick={() => setReassignOwnerTarget(c)}
+                        />
+                      )}
+                      <ActionButton
+                        icon={Trash2}
+                        label="Eliminar expediente"
+                        variant="danger"
                         style={{ marginLeft: 'auto' }}
-                        data-tooltip="Eliminar expediente"
-                        aria-label="Eliminar expediente"
-                      >
-                        🗑
-                      </button>
+                        onClick={() => setDeleteTarget(c)}
+                      />
                     </div>
                     {mailboxSearchOpenIds.has(c.case_id) && (
                       <div className="add-message-search" style={{ marginTop: 10 }}>
@@ -1581,20 +1948,17 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                 ))}
                             </select>
                           </div>
-                          <button
-                            type="button"
-                            className="btn small primary icon-btn"
+                          <ActionButton
+                            icon={Search}
+                            label="Buscar"
+                            variant="primary"
                             disabled={
                               !(mailboxQuery[c.case_id] ?? '').trim() ||
                               !mailboxSearchAccountId[c.case_id] ||
                               (mailboxJobs[c.case_id] ?? []).some((j) => j.status === 'queued' || j.status === 'running')
                             }
                             onClick={() => handleSearchMailbox(c.case_id)}
-                            data-tooltip="Buscar"
-                            aria-label="Buscar"
-                          >
-                            🔍
-                          </button>
+                          />
                         </div>
                         {!mailboxDateFrom[c.case_id] && !mailboxDateTo[c.case_id] && (
                           <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
@@ -1656,21 +2020,23 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             <option value="">Sin conclusión definida</option>
                             <option value="pendiente">Pendiente de revisión</option>
                             <option value="en_proceso">En proceso</option>
-                            <option value="sin_hallazgos">Sin hallazgos</option>
+                            <option value="sin_hallazgos">Sin hallazgos (nada que revisar)</option>
+                            <option value="investigado_sin_compromiso">Investigado — sin compromiso</option>
+                            <option value="falso_positivo">Falso positivo</option>
                             <option value="con_hallazgos">Con hallazgos</option>
+                            <option value="mitigado">Mitigado / remediado</option>
                             <option value="derivado">Derivado a</option>
                             <option value="mas_antecedentes">Se solicitan más antecedentes</option>
+                            <option value="sin_recepcion">Sin recepción del correo</option>
                           </select>
-                          <button
-                            type="button"
-                            className="btn small primary icon-btn"
-                            disabled={savingOutcomeId === c.case_id || isClosed}
+                          <ActionButton
+                            icon={Save}
+                            label={savingOutcomeId === c.case_id ? 'Guardando…' : 'Guardar conclusión'}
+                            variant="primary"
+                            loading={savingOutcomeId === c.case_id}
+                            disabled={isClosed}
                             onClick={() => handleSaveOutcome(c.case_id)}
-                            data-tooltip={savingOutcomeId === c.case_id ? 'Guardando…' : 'Guardar conclusión'}
-                            aria-label="Guardar conclusión"
-                          >
-                            {savingOutcomeId === c.case_id ? '…' : '💾'}
-                          </button>
+                          />
                         </div>
                       </div>
 
@@ -1686,26 +2052,19 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             style={{ maxWidth: 280 }}
                             disabled={isClosed}
                           />
-                          <button
-                            type="button"
-                            className="btn small icon-btn"
+                          <ActionButton
+                            icon={Search}
+                            label={addMessageSearching === c.case_id ? 'Buscando…' : 'Buscar'}
+                            loading={addMessageSearching === c.case_id}
+                            disabled={isClosed}
                             onClick={() => handleSearchMessageToAdd(c.case_id)}
-                            disabled={addMessageSearching === c.case_id || isClosed}
-                            data-tooltip={addMessageSearching === c.case_id ? 'Buscando…' : 'Buscar'}
-                            aria-label="Buscar"
-                          >
-                            {addMessageSearching === c.case_id ? '…' : '🔍'}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn small icon-btn"
-                            onClick={() => handleClearMessageSearch(c.case_id)}
+                          />
+                          <ActionButton
+                            icon={X}
+                            label="Limpiar"
                             disabled={!addMessageQuery[c.case_id] && !addMessageResults[c.case_id]}
-                            data-tooltip="Limpiar"
-                            aria-label="Limpiar"
-                          >
-                            ✕
-                          </button>
+                            onClick={() => handleClearMessageSearch(c.case_id)}
+                          />
                         </div>
                         {addMessageResults[c.case_id] && addMessageResults[c.case_id].length === 0 && (
                           <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>
@@ -1725,27 +2084,65 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                       {m.from_name || m.from_address || '—'} · {formatDateTime(m.sent_datetime)}
                                     </span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
-                                    disabled={alreadyLinked || addingMessageId === m.message_id || isClosed}
-                                    onClick={() => handleAddMessageToCase(c.case_id, m.message_id)}
-                                    data-tooltip={
+                                  <ActionButton
+                                    icon={Plus}
+                                    label={
                                       alreadyLinked
                                         ? 'Ya está en el expediente'
                                         : addingMessageId === m.message_id
                                           ? 'Agregando…'
                                           : 'Agregar'
                                     }
-                                    aria-label="Agregar"
-                                  >
-                                    {addingMessageId === m.message_id ? '…' : '＋'}
-                                  </button>
+                                    loading={addingMessageId === m.message_id}
+                                    disabled={alreadyLinked || isClosed}
+                                    onClick={() => handleAddMessageToCase(c.case_id, m.message_id)}
+                                  />
                                 </li>
                               )
                             })}
                           </ul>
                         )}
+                      </div>
+                    </div>
+
+                    <div className="ai-result">
+                      <h5 style={{ margin: '0 0 8px' }}>📋 Seguimiento del expediente</h5>
+                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label htmlFor={`case-pending-action-${c.case_id}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            Acciones pendientes
+                            <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
+                          </label>
+                          <textarea
+                            id={`case-pending-action-${c.case_id}`}
+                            placeholder="Qué falta hacer sobre este expediente… (admite formato Markdown, se convierte a HTML en el PDF exportado)"
+                            value={pendingActionDraft[c.case_id] ?? ''}
+                            onChange={(e) => setPendingActionDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
+                            rows={4}
+                            style={{ width: '100%', resize: 'vertical' }}
+                            disabled={isClosed}
+                          />
+                        </div>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label htmlFor={`case-next-review-${c.case_id}`}>Próxima revisión</label>
+                          <input
+                            id={`case-next-review-${c.case_id}`}
+                            type="date"
+                            value={nextReviewDraft[c.case_id] ?? ''}
+                            onChange={(e) => setNextReviewDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
+                            disabled={isClosed}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <ActionButton
+                          icon={Save}
+                          label={savingFollowUpId === c.case_id ? 'Guardando…' : 'Guardar seguimiento'}
+                          variant="primary"
+                          loading={savingFollowUpId === c.case_id}
+                          disabled={isClosed}
+                          onClick={() => handleSaveFollowUp(c.case_id)}
+                        />
                       </div>
                     </div>
 
@@ -1759,8 +2156,9 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                       </button>
                       {notesOpenIds.has(c.case_id) && (
                         <>
-                          <label htmlFor={`case-new-note-${c.case_id}`} style={{ marginTop: 10, display: 'block' }}>
+                          <label htmlFor={`case-new-note-${c.case_id}`} style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
                             Notas del auditor (texto libre, separado del resumen de IA)
+                            <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
                           </label>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                             <textarea
@@ -1772,16 +2170,14 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               style={{ flex: 1, resize: 'vertical' }}
                               disabled={isClosed}
                             />
-                            <button
-                              type="button"
-                              className="btn small primary icon-btn"
-                              disabled={addingNoteId === c.case_id || !(newNoteDraft[c.case_id] ?? '').trim() || isClosed}
+                            <ActionButton
+                              icon={Save}
+                              label={addingNoteId === c.case_id ? 'Agregando…' : 'Agregar nota'}
+                              variant="primary"
+                              loading={addingNoteId === c.case_id}
+                              disabled={!(newNoteDraft[c.case_id] ?? '').trim() || isClosed}
                               onClick={() => handleAddNote(c.case_id)}
-                              data-tooltip={addingNoteId === c.case_id ? 'Agregando…' : 'Agregar nota'}
-                              aria-label="Agregar nota"
-                            >
-                              {addingNoteId === c.case_id ? '…' : '💾'}
-                            </button>
+                            />
                           </div>
                           {detail && detail.notes.length > 0 && (
                             <div className="panel table-wrap" style={{ marginTop: 12 }}>
@@ -1800,7 +2196,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                       <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
                                         {formatDateTime(note.created_at)}
                                       </td>
-                                      <td style={{ whiteSpace: 'pre-wrap' }}>{note.body}</td>
+                                      <td className="md-content" dangerouslySetInnerHTML={{ __html: note.body }} />
                                     </tr>
                                   ))}
                               </tbody>
@@ -1842,21 +2238,18 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               }
                               disabled={isClosed}
                             />
-                            <button
-                              type="button"
-                              className="btn small primary icon-btn"
+                            <ActionButton
+                              icon={Upload}
+                              label={addingEvidenceId === c.case_id ? 'Agregando…' : 'Agregar evidencia'}
+                              variant="primary"
+                              loading={addingEvidenceId === c.case_id}
                               disabled={
-                                addingEvidenceId === c.case_id ||
                                 !(newEvidenceGlosa[c.case_id] ?? '').trim() ||
                                 !newEvidenceFile[c.case_id] ||
                                 isClosed
                               }
                               onClick={() => handleAddEvidence(c.case_id)}
-                              data-tooltip={addingEvidenceId === c.case_id ? 'Agregando…' : 'Agregar evidencia'}
-                              aria-label="Agregar evidencia"
-                            >
-                              {addingEvidenceId === c.case_id ? '…' : '💾'}
-                            </button>
+                            />
                           </div>
                           {detail && detail.evidence.length > 0 && (
                             <div className="panel table-wrap" style={{ marginTop: 12 }}>
@@ -1896,8 +2289,55 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                       )}
                     </div>
 
+                    <div className="add-message-search">
+                      <button
+                        type="button"
+                        className="btn small btn-labeled"
+                        onClick={() => toggleAuditLog(c.case_id)}
+                      >
+                        {auditLogOpenIds.has(c.case_id)
+                          ? '🕘 Ocultar historial de auditoría ▾'
+                          : `🕘 Historial de auditoría (${auditLogs[c.case_id]?.length ?? '…'}) ▸`}
+                      </button>
+                      {auditLogOpenIds.has(c.case_id) && (
+                        <>
+                          {loadingAuditLogId === c.case_id && (
+                            <p style={{ color: 'var(--muted)', marginTop: 10 }}>Cargando historial…</p>
+                          )}
+                          {loadingAuditLogId !== c.case_id && (auditLogs[c.case_id]?.length ?? 0) === 0 && (
+                            <p style={{ color: 'var(--muted)', marginTop: 10 }}>Sin cambios registrados todavía.</p>
+                          )}
+                          {loadingAuditLogId !== c.case_id && (auditLogs[c.case_id]?.length ?? 0) > 0 && (
+                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th style={{ width: 160 }}>Fecha</th>
+                                    <th style={{ width: 180 }}>Usuario</th>
+                                    <th>Cambio</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {auditLogs[c.case_id]!.map((entry) => (
+                                    <tr key={entry.audit_id}>
+                                      <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                                        {formatDateTime(entry.occurred_at)}
+                                      </td>
+                                      <td>{entry.user_display_name ?? '—'}</td>
+                                      <td>{entry.description}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
                     {aiResult && (
                       <div className="ai-result">
+                        <h5 style={{ margin: '0 0 8px' }}>🤖 Análisis de IA</h5>
                         {editingAiSummaryId === c.case_id ? (
                           <>
                             <textarea
@@ -1907,26 +2347,19 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               style={{ width: '100%', resize: 'vertical' }}
                             />
                             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                disabled={savingAiSummaryId === c.case_id || !aiSummaryDraft.trim()}
+                              <ActionButton
+                                icon={Save}
+                                label={savingAiSummaryId === c.case_id ? 'Guardando…' : 'Guardar'}
+                                loading={savingAiSummaryId === c.case_id}
+                                disabled={!aiSummaryDraft.trim()}
                                 onClick={() => handleSaveAiSummary(c.case_id)}
-                                data-tooltip={savingAiSummaryId === c.case_id ? 'Guardando…' : 'Guardar'}
-                                aria-label="Guardar"
-                              >
-                                {savingAiSummaryId === c.case_id ? '…' : '💾'}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn small ghost icon-btn"
+                              />
+                              <ActionButton
+                                icon={X}
+                                label="Cancelar"
                                 disabled={savingAiSummaryId === c.case_id}
                                 onClick={cancelEditAiSummary}
-                                data-tooltip="Cancelar"
-                                aria-label="Cancelar"
-                              >
-                                ✕
-                              </button>
+                              />
                             </div>
                           </>
                         ) : (
@@ -1935,21 +2368,30 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                             {detail?.ai_summary_override && (
                               <p style={{ color: 'var(--muted)', fontSize: '0.85em' }}>Editado por el auditor</p>
                             )}
-                            <button
-                              type="button"
-                              className="btn small ghost icon-btn"
+                            <ActionButton
+                              icon={Pencil}
+                              label="Editar resumen"
+                              disabled={isClosed}
                               onClick={() => startEditAiSummary(c.case_id, detail?.ai_summary_override || aiResult.summary)}
-                              data-tooltip="Editar resumen"
-                              aria-label="Editar resumen"
-                            >
-                              ✎
-                            </button>
+                            />
                           </>
                         )}
                         <p>
                           <strong>Prioridad sugerida:</strong> {PRIORITY_LABELS[aiResult.suggested_priority]}
                           {' · '}
                           <strong>Próxima acción:</strong> {aiResult.suggested_next_action}
+                        </p>
+                        <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <strong>Conclusión sugerida:</strong> {CASE_OUTCOME_LABELS[aiResult.suggested_outcome]}
+                          <ActionButton
+                            icon={Check}
+                            label="Usar esta conclusión"
+                            size="sm"
+                            disabled={isClosed}
+                            onClick={() =>
+                              setOutcomeDraft((prev) => ({ ...prev, [c.case_id]: aiResult.suggested_outcome }))
+                            }
+                          />
                         </p>
                         {latestAiRun?.analyzed_at && (
                           <p style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
@@ -1958,7 +2400,12 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                         )}
                       </div>
                     )}
-                    {!aiResult && latestAiRun && latestAiRun.status !== 'success' && (
+                    {!aiResult && latestAiRun?.status === 'running' && (
+                      <p style={{ color: 'var(--muted)', marginTop: 8 }}>
+                        Procesando con IA desde {formatDateTime(latestAiRun.analyzed_at)}…
+                      </p>
+                    )}
+                    {!aiResult && latestAiRun && latestAiRun.status !== 'success' && latestAiRun.status !== 'running' && (
                       <p style={{ color: 'var(--muted)', marginTop: 8 }}>
                         Último intento de análisis ({formatDateTime(latestAiRun.analyzed_at)}) terminó en "{latestAiRun.status}": {latestAiRun.error_message}
                       </p>
@@ -2021,43 +2468,28 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               <p>{event.actor && `De: ${event.actor}`}</p>
                               {eventMessage && (eventMessage.body_content || eventMessage.body_preview) && (
                                 <div style={{ marginTop: 6 }}>
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
-                                    onClick={() => openBodyModal(eventMessage)}
-                                    data-tooltip="Ver cuerpo"
-                                    aria-label="Ver cuerpo"
-                                  >
-                                    👁
-                                  </button>
+                                  <ActionButton icon={Eye} label="Ver cuerpo" onClick={() => openBodyModal(eventMessage)} />
                                   {eventMessage.web_link && (
-                                    <a
+                                    <ActionButton
+                                      icon={ExternalLink}
+                                      label="Ver correo"
                                       href={eventMessage.web_link}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="btn small icon-btn"
                                       style={{ marginLeft: 6 }}
-                                      data-tooltip="Ver correo"
-                                      aria-label="Ver correo"
-                                    >
-                                      🔗
-                                    </a>
+                                    />
                                   )}
                                 </div>
                               )}
                               {eventMessage && eventMessage.has_attachments && eventMessage.attachments.length === 0 && (
                                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
                                   <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
-                                    disabled={retracingMessageId === eventMessage.message_id}
+                                  <ActionButton
+                                    icon={Paperclip}
+                                    label={retracingMessageId === eventMessage.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                    loading={retracingMessageId === eventMessage.message_id}
                                     onClick={() => handleRetraceAttachments(c.case_id, eventMessage.message_id)}
-                                    data-tooltip={retracingMessageId === eventMessage.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
-                                    aria-label="Recuperar adjuntos"
-                                  >
-                                    {retracingMessageId === eventMessage.message_id ? '…' : '📎'}
-                                  </button>
+                                  />
                                 </div>
                               )}
                               {children.length > 0 && (
@@ -2083,16 +2515,12 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                           <span>📎 {stripCorreoSuffix(child.description)}</span>
                                         )}
                                         {child.determination_type !== 'validacion_manual' && (
-                                          <button
-                                            type="button"
-                                            className="btn small icon-btn"
+                                          <ActionButton
+                                            icon={Check}
+                                            label="Validar"
                                             disabled={isClosed}
                                             onClick={() => validateEvent(c.case_id, child.event_id)}
-                                            data-tooltip="Validar"
-                                            aria-label="Validar"
-                                          >
-                                            ✓
-                                          </button>
+                                          />
                                         )}
                                       </li>
                                     )
@@ -2101,16 +2529,12 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                               )}
                               {event.determination_type !== 'validacion_manual' && (
                                 <div className="event-actions">
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
+                                  <ActionButton
+                                    icon={Check}
+                                    label="Marcar como validado manualmente"
                                     disabled={isClosed}
                                     onClick={() => validateEvent(c.case_id, event.event_id)}
-                                    data-tooltip="Marcar como validado manualmente"
-                                    aria-label="Marcar como validado manualmente"
-                                  >
-                                    ✓
-                                  </button>
+                                  />
                                 </div>
                               )}
                             </div>
@@ -2153,16 +2577,12 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                       {m.has_attachments && m.attachments.length === 0 && (
                                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                           <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
-                                          <button
-                                            type="button"
-                                            className="btn small icon-btn"
-                                            disabled={retracingMessageId === m.message_id}
+                                          <ActionButton
+                                            icon={Paperclip}
+                                            label={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            loading={retracingMessageId === m.message_id}
                                             onClick={() => handleRetraceAttachments(c.case_id, m.message_id)}
-                                            data-tooltip={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
-                                            aria-label="Recuperar adjuntos"
-                                          >
-                                            {retracingMessageId === m.message_id ? '…' : '📎'}
-                                          </button>
+                                          />
                                         </div>
                                       )}
                                       {m.attachments.length > 0 && (
@@ -2186,33 +2606,17 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                     <td>
                                       <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
                                         {(m.body_content || m.body_preview) ? (
-                                          <button
-                                            type="button"
-                                            className="btn small icon-btn"
-                                            onClick={() => openBodyModal(m)}
-                                            data-tooltip="Ver cuerpo"
-                                            aria-label="Ver cuerpo"
-                                          >
-                                            👁
-                                          </button>
+                                          <ActionButton icon={Eye} label="Ver cuerpo" onClick={() => openBodyModal(m)} />
                                         ) : (
                                           <span style={{ color: 'var(--muted)' }}>Sin contenido</span>
                                         )}
                                         {m.web_link && (
-                                          <a
-                                            href={m.web_link}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="btn small icon-btn"
-                                            data-tooltip="Ver correo"
-                                            aria-label="Ver correo"
-                                          >
-                                            🔗
-                                          </a>
+                                          <ActionButton icon={ExternalLink} label="Ver correo" href={m.web_link} target="_blank" rel="noreferrer" />
                                         )}
-                                        <button
-                                          type="button"
-                                          className="btn small danger icon-btn"
+                                        <ActionButton
+                                          icon={X}
+                                          label="Quitar"
+                                          variant="danger"
                                           disabled={isClosed}
                                           onClick={() =>
                                             setRemoveMessageTarget({
@@ -2221,11 +2625,7 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                                               subject: m.subject || '(sin asunto)',
                                             })
                                           }
-                                          data-tooltip="Quitar"
-                                          aria-label="Quitar"
-                                        >
-                                          ✕
-                                        </button>
+                                        />
                                       </div>
                                     </td>
                                   </tr>
@@ -2271,7 +2671,13 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
       <ConfirmModal
         open={aiConfirmOpen}
         title="Procesar todo con IA"
-        description="Esta acción ejecuta el análisis de IA sobre todos los expedientes que todavía no tienen un análisis exitoso. El expediente no se cierra automáticamente — el resumen queda disponible para revisión y edición del auditor. Dependiendo de la cantidad de expedientes puede tardar varios minutos."
+        description={
+          aiPendingCounts.closed > 0 && aiPendingCounts.open === 0
+            ? `Los ${aiPendingCounts.closed} expediente(s) sin análisis exitoso están todos cerrados. El análisis de IA no se ejecuta sobre expedientes cerrados, así que no hay ningún expediente abierto pendiente por procesar — reábrelos primero si querés incluirlos.`
+            : aiPendingCounts.closed > 0
+              ? `Hay ${aiPendingCounts.closed} expediente(s) cerrado(s) entre los que todavía no tienen un análisis exitoso. El análisis de IA no se puede ejecutar sobre expedientes cerrados — esta acción solo afectará a los ${aiPendingCounts.open} expediente(s) abierto(s) pendientes (los cerrados se omiten). El expediente no se cierra automáticamente — el resumen queda disponible para revisión y edición del auditor. ¿Continuar de todas formas?`
+              : 'Esta acción ejecuta el análisis de IA sobre todos los expedientes que todavía no tienen un análisis exitoso. El expediente no se cierra automáticamente — el resumen queda disponible para revisión y edición del auditor. Dependiendo de la cantidad de expedientes puede tardar varios minutos.'
+        }
         confirmLabel="Procesar con IA"
         confirmIcon="🤖"
         confirmDanger={false}
@@ -2304,6 +2710,28 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
         onShare={handleShareCaseConfirm}
         onRevoke={handleRevokeCaseShare}
         onClose={() => setShareCaseTarget(null)}
+      />
+
+      <ConfirmModal
+        open={conflictModal !== null}
+        title="Este expediente cambió mientras lo tenías abierto"
+        description={conflictModal?.message ?? ''}
+        confirmLabel="Recargar expediente"
+        confirmingLabel="Recargando…"
+        confirmIcon="🔄"
+        confirmDanger={false}
+        confirming={reloadingConflictedCase}
+        onCancel={() => setConflictModal(null)}
+        onConfirm={handleReloadConflictedCase}
+      />
+
+      <ReassignOwnerModal
+        open={reassignOwnerTarget !== null}
+        caseTitle={reassignOwnerTarget?.title ?? ''}
+        previousOwnerLabel={reassignOwnerTarget?.previous_owner_label ?? null}
+        reassigning={reassigningOwner}
+        onConfirm={handleReassignOwnerConfirm}
+        onClose={() => setReassignOwnerTarget(null)}
       />
 
       <ConfirmModal
@@ -2364,12 +2792,16 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
                 />
               </div>
               <div className="field full">
-                <label htmlFor="sendEmailBody">Cuerpo</label>
+                <label htmlFor="sendEmailBody" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Cuerpo (Markdown — se precarga con la última nota del auditor, se convierte a HTML al enviar)
+                  <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
+                </label>
                 <textarea
                   id="sendEmailBody"
                   rows={8}
                   value={sendEmailForm.body}
                   onChange={(e) => setSendEmailForm((prev) => ({ ...prev, body: e.target.value }))}
+                  style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                 />
               </div>
               <div className="field">
@@ -2418,8 +2850,96 @@ export function CasesView({ prefill, onPrefillConsumed }: CasesViewProps) {
             <button type="button" className="btn small btn-labeled" disabled={sendingEmail} onClick={closeSendEmailModal}>
               ✕ Cancelar
             </button>
+            <button
+              type="button"
+              className="btn small btn-labeled"
+              disabled={!sendEmailForm.body.trim() || loadingEmailPreview}
+              onClick={handlePreviewEmail}
+            >
+              {loadingEmailPreview ? 'Generando…' : '👁 Vista previa'}
+            </button>
             <button type="button" className="btn small primary btn-labeled" disabled={sendingEmail} onClick={handleSendEmail}>
               {sendingEmail ? 'Enviando…' : '✉ Enviar'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <MarkdownHelpModal open={mdHelpOpen} onClose={() => setMdHelpOpen(false)} />
+
+      <div className={`modal-backdrop${emailPreviewOpen ? ' open' : ''}`}>
+        <div className="modal wide">
+          <div className="modal-body">
+            <h3>Vista previa del correo</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr', gap: '4px 10px', marginBottom: 10, fontSize: 13 }}>
+              <strong>Para</strong>
+              <span>{sendEmailForm.to || '—'}</span>
+              {sendEmailForm.cc && (
+                <>
+                  <strong>CC</strong>
+                  <span>{sendEmailForm.cc}</span>
+                </>
+              )}
+              <strong>Asunto</strong>
+              <span>{sendEmailForm.subject || '—'}</span>
+            </div>
+            <MessageBodyView content={emailPreviewHtml} contentType="html" />
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" onClick={() => setEmailPreviewOpen(false)}>
+              ✕ Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`modal-backdrop${mergeModalOpen ? ' open' : ''}`}>
+        <div className="modal" style={{ width: 'min(560px, 95vw)' }}>
+          <div className="modal-body">
+            <h3>Fusionar expedientes</h3>
+            <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
+              Se crea un expediente nuevo con todos los correos, notas, evidencia y línea de tiempo de los{' '}
+              {selectedCaseIds.size} expedientes seleccionados. <strong>Los expedientes origen se eliminan</strong> —
+              queda un registro de la fusión en la línea de tiempo del expediente nuevo.
+            </p>
+            <div className="form-grid" style={{ marginTop: 14 }}>
+              <div className="field full">
+                <label htmlFor="merge-title">Nombre del expediente final</label>
+                <input
+                  id="merge-title"
+                  type="text"
+                  autoFocus
+                  placeholder="ej. GFCH-260702220"
+                  value={mergeTitle}
+                  onChange={(e) => setMergeTitle(e.target.value)}
+                />
+              </div>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 14, marginBottom: 6 }}>
+              Se van a fusionar:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+              {cases
+                ?.filter((c) => selectedCaseIds.has(c.case_id))
+                .map((c) => (
+                  <li key={c.case_id}>
+                    {c.title}
+                    {c.external_code ? ` (${c.external_code})` : ''}
+                  </li>
+                ))}
+            </ul>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" disabled={merging} onClick={() => setMergeModalOpen(false)}>
+              ✕ Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn small primary btn-labeled"
+              disabled={merging || !mergeTitle.trim()}
+              onClick={handleConfirmMerge}
+            >
+              {merging ? 'Fusionando…' : '⛙ Fusionar'}
             </button>
           </div>
         </div>
