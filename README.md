@@ -2,7 +2,7 @@
 
 Stack local (lab) para analizar el buzón de correo real vía Microsoft Graph API usando n8n: revisar Enviados, recuperar series de correos parametrizadas, recuperar correos relacionados por hilo, generar histogramas/línea de tiempo de actividad, y trazabilidad de adjuntos "CR".
 
-Definición completa del proyecto (alcance, decisiones de arquitectura, qué está implementado y qué falta): [`PROYECTO.md`](PROYECTO.md).
+Definición completa del proyecto (alcance, decisiones de arquitectura, qué está implementado): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Las imágenes usan versiones específicas. No se usa `latest` salvo que se cambie manualmente en `.env`.
 
@@ -244,7 +244,7 @@ docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entryp
 
 ## 5. Trabajos de análisis (`/api/jobs`)
 
-Desde las Fases 1 y 3 de [`PLAN.md`](PLAN.md), el backend expone trabajos asíncronos respaldados en `mailing.analysis_jobs`, y crearlos dispara automáticamente el workflow correspondiente en n8n (webhook interno, sin que el backend espere a que termine):
+El backend expone trabajos asíncronos respaldados en `mailing.analysis_jobs`, y crearlos dispara automáticamente el workflow correspondiente en n8n (webhook interno, sin que el backend espere a que termine):
 
 ```powershell
 curl -X POST http://<host>/api/jobs `
@@ -281,7 +281,7 @@ docker compose exec -T backend pytest -q
 
 ## 6. Mensajes y carpetas (`/api/messages`, `/api/mail-folders`, `/api/conversations`)
 
-Desde la Fase 4 de [`PLAN.md`](PLAN.md), el backend expone lectura directa de lo que ya trajeron los workflows (no dispara nada nuevo contra Graph, solo consulta Postgres):
+El backend expone lectura directa de lo que ya trajeron los workflows (no dispara nada nuevo contra Graph, solo consulta Postgres):
 
 ```powershell
 curl "http://<host>/api/messages?limit=20&subject_contains=CR"
@@ -296,7 +296,7 @@ curl "http://<host>/api/mail-folders"
 
 ## 7. Casos y línea de tiempo (`/api/cases`)
 
-Desde la Fase 5 de [`PLAN.md`](PLAN.md), el backend arma "expedientes" correlacionando mensajes ya guardados en Postgres — no llama a Graph ni pasa por n8n (es lógica pura sobre datos, ver justificación de arquitectura en `PLAN.md` sección 5). Es sincrónico: `POST /api/cases` responde con el caso ya armado, no crea un job.
+El backend arma "expedientes" correlacionando mensajes ya guardados en Postgres — no llama a Graph ni pasa por n8n (es lógica pura sobre datos, ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Es sincrónico: `POST /api/cases` responde con el caso ya armado, no crea un job.
 
 ```powershell
 curl -X POST http://<host>/api/cases `
@@ -328,7 +328,7 @@ Ambos endpoints responden `image/png` directamente (sin acceso a base de datos n
 
 ## 9. Inteligencia artificial (`/api/ai`)
 
-Desde la Fase 6 de [`PLAN.md`](PLAN.md), el backend puede pedirle a un modelo de IA local (Ollama) que resuma un caso ya armado (Fase 5). Política `local_only` por defecto: solo corren proveedores locales, nunca uno externo, salvo que cambies `AI_DEFAULT_POLICY`/`AI_ENABLED_PROVIDERS` en `.env` a propósito.
+El backend puede pedirle a un modelo de IA local (Ollama) que resuma un caso ya armado. Política `local_only` por defecto: solo corren proveedores locales, nunca uno externo, salvo que cambies `AI_DEFAULT_POLICY`/`AI_ENABLED_PROVIDERS` en `.env` a propósito.
 
 ```powershell
 curl http://<host>/api/ai/health

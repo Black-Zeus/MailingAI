@@ -76,7 +76,7 @@ mailing.*    -- correos indexados, expedientes (cases), mensajes por expediente,
                 trabajos de análisis (jobs), vistas agregadas (v_case_summary, etc.)
 ```
 
-`identity` modela "quién puede entrar y a qué buzón tiene acceso"; `mailing` modela "qué se indexó y qué expedientes se armaron con eso". Un expediente puede tener mensajes de varios buzones a la vez (se correlacionan por asunto/hilo/participantes, ver `PLAN.md` sección 5), por eso ambos schemas conviven en la misma base en vez de separarse por servicio.
+`identity` modela "quién puede entrar y a qué buzón tiene acceso"; `mailing` modela "qué se indexó y qué expedientes se armaron con eso". Un expediente puede tener mensajes de varios buzones a la vez (se correlacionan por asunto/hilo/participantes), por eso ambos schemas conviven en la misma base en vez de separarse por servicio.
 
 ## Modelo de seguridad y acceso
 

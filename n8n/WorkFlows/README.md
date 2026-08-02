@@ -2,7 +2,7 @@
 
 Documentación de los 10 workflows de esta carpeta: qué hace cada uno y, dentro de cada uno, qué hace cada nodo. Para instrucciones de instalación/importación ver el `README.md` de la raíz del proyecto.
 
-Convención de nombres: el prefijo numérico indica el orden de uso, no de importación (todos se importan juntos). `00` es un subworkflow interno que llaman `01`, `02`, `03` y `09` — nunca se ejecuta solo. `05` no usa el subworkflow `00`: tiene su propia llamada a Graph porque necesita traer también los adjuntos de cada correo. `06` descubre la estructura de carpetas del buzón (Fase 4 de `PLAN.md`). `07` es el orquestador que dispara el backend FastAPI (Fase 3 de `PLAN.md`). `08` trae el contenido real de un adjunto puntual, a pedido directo del backend (no pasa por `07`). `09` busca adjuntos de cualquier formato en una o varias carpetas elegidas, con un patrón opcional (regex o texto libre).
+Convención de nombres: el prefijo numérico indica el orden de uso, no de importación (todos se importan juntos). `00` es un subworkflow interno que llaman `01`, `02`, `03` y `09` — nunca se ejecuta solo. `05` no usa el subworkflow `00`: tiene su propia llamada a Graph porque necesita traer también los adjuntos de cada correo. `06` descubre la estructura de carpetas del buzón. `07` es el orquestador que dispara el backend FastAPI. `08` trae el contenido real de un adjunto puntual, a pedido directo del backend (no pasa por `07`). `09` busca adjuntos de cualquier formato en una o varias carpetas elegidas, con un patrón opcional (regex o texto libre).
 
 ```text
 00 - Graph Fetch (subworkflow, uso interno)   <- llamado por 01, 02, 03, 09 (indirectamente via 07)
@@ -80,7 +80,7 @@ Con esta sintaxis, n8n evalúa un solo array de JavaScript — el contenido de c
 
 ### 7. Paginación real de Graph (`@odata.nextLink`) vía la opción nativa del nodo HTTP Request
 
-Desde la Fase 4, los nodos `HTTP Request` que listan mensajes o carpetas (`Graph: List Messages` en `00`, `Graph: List Sent With Attachments` en `05`, y los tres niveles de `Graph: List Level N Folders` en `06`) usan la paginación **incorporada** del nodo, no una reconstrucción manual del `@odata.nextLink` (que `master.md` prohíbe explícitamente). La forma correcta de configurarla, verificada contra el código fuente del nodo (`HttpRequest/V3/Description.js`) porque la UI no deja copiar el JSON crudo fácilmente:
+Los nodos `HTTP Request` que listan mensajes o carpetas (`Graph: List Messages` en `00`, `Graph: List Sent With Attachments` en `05`, y los tres niveles de `Graph: List Level N Folders` en `06`) usan la paginación **incorporada** del nodo, no una reconstrucción manual del `@odata.nextLink`. La forma correcta de configurarla, verificada contra el código fuente del nodo (`HttpRequest/V3/Description.js`) porque la UI no deja copiar el JSON crudo fácilmente:
 
 ```json
 "options": {
@@ -103,7 +103,7 @@ Notas sobre esta configuración:
 - `paginationCompleteWhen: "responseIsEmpty"` (el default) **no sirve** para Graph: cuando no hay más páginas, el body no viene vacío, simplemente no trae `@odata.nextLink`. Hay que usar `"other"` con `completeExpression` verificando la ausencia del campo.
 - `limitPagesFetched: true` + `maxRequests: 20` es un techo de seguridad (hasta 2000 items con `$top=100`, o más si el job pide un `$top` menor) para no encadenar peticiones indefinidamente ante un dato inesperado — no es un requisito de Graph, es una decisión de este proyecto.
 - Cambio de comportamiento importante para quien use `top` como parámetro de un job: **antes de la Fase 4, `top` era un techo duro sobre el total de resultados. Ahora es el tamaño de página**, y la paginación sigue trayendo páginas siguientes hasta agotar los resultados o `maxRequests`. Verificado en vivo: un job `fetch_sent_items` con `top=5` y un rango de fechas amplio trajo **100 mensajes reales** (20 páginas de 5), no 5.
-- Se agregó también `retryOnFail: true, maxTries: 3, waitBetweenTries: 2000` a estos mismos nodos (reintentos controlados ante error transitorio/429, pedido por `master.md` sección 9) — es una mitigación básica, no un manejo completo de rate limiting con backoff exponencial ni checkpoint de página.
+- Se agregó también `retryOnFail: true, maxTries: 3, waitBetweenTries: 2000` a estos mismos nodos (reintentos controlados ante error transitorio/429) — es una mitigación básica, no un manejo completo de rate limiting con backoff exponencial ni checkpoint de página.
 
 ### 8. `mailing.messages.folder_id` se resuelve con una subquery para no romper la FK si la carpeta no fue descubierta todavía
 
@@ -512,7 +512,7 @@ SELECT * FROM mailing.v_cr_attachment_traceability WHERE matches_naming_conventi
 
 Archivo: `06-mailingai-discover-mail-folders.json`
 
-Descubre la estructura de carpetas/subcarpetas del buzón (Fase 4 de `PLAN.md`) y la guarda en `mailing.mail_folders`, con `parent_folder_id` y ruta lógica (`folder_path`, ej. `Bandeja de entrada / Clientes / GoldFields`). Sin este workflow, `mailing.messages.folder_id` nunca se resuelve a nada útil (ver Nota técnica 8) y el endpoint `/api/mail-folders` devuelve una lista vacía.
+Descubre la estructura de carpetas/subcarpetas del buzón y la guarda en `mailing.mail_folders`, con `parent_folder_id` y ruta lógica (`folder_path`, ej. `Bandeja de entrada / Clientes / GoldFields`). Sin este workflow, `mailing.messages.folder_id` nunca se resuelve a nada útil (ver Nota técnica 8) y el endpoint `/api/mail-folders` devuelve una lista vacía.
 
 No tiene parámetros — a diferencia de `01`-`05`, descubrir carpetas no depende de fechas ni filtros, siempre recorre todo el árbol.
 

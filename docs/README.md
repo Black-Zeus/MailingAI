@@ -1,6 +1,6 @@
 # Documentación de MailingAI
 
-Índice de referencia rápida. La documentación exhaustiva y siempre actualizada del proyecto sigue viviendo en la raíz del repo ([`README.md`](../README.md), [`PROYECTO.md`](../PROYECTO.md), [`PLAN.md`](../PLAN.md), [`n8n/WorkFlows/README.md`](../n8n/WorkFlows/README.md)) — estos documentos son una puerta de entrada curada, no un reemplazo.
+Índice de referencia rápida. La documentación exhaustiva y siempre actualizada del proyecto sigue viviendo en la raíz del repo ([`README.md`](../README.md), [`n8n/WorkFlows/README.md`](../n8n/WorkFlows/README.md)) — estos documentos son una puerta de entrada curada, no un reemplazo.
 
 | Documento | Para qué sirve |
 |---|---|
