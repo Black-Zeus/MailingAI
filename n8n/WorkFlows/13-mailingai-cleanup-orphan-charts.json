@@ -1,0 +1,59 @@
+{
+  "id": "maiw0014cleancharts",
+  "name": "13 - MailingAI - Limpieza de graficos huerfanos (cron)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+      "name": "Schedule: Cada hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM mailing.chart_runs\nWHERE output_file IS NOT NULL\n  AND generated_at < now() - interval '2 hours'\n  AND chart_id NOT IN (\n    SELECT chart_id FROM mailing.analysis_jobs WHERE chart_id IS NOT NULL\n  )\nRETURNING output_file;",
+        "options": {}
+      },
+      "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+      "name": "Postgres: Borrar chart_runs huerfanos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Solo llegan filas que Postgres ya determino huerfanas (sin trabajo que\n// las referencie, con mas de 2 horas de generadas). Antes de borrar nada,\n// se valida que la ruta matchee EXACTAMENTE el patron que el propio\n// workflow 04 usa para escribir estos PNG -- asi nunca se llama a\n// fs.unlinkSync con una ruta inesperada. n8n no trae aca el nodo\n// \"Execute Command\" (deshabilitado por seguridad), asi que el borrado se\n// hace con fs directo -- requiere NODE_FUNCTION_ALLOW_BUILTIN=fs en el\n// servicio n8n de docker-compose.yml.\nconst fs = require('fs')\nconst PATTERN = /^\\/files\\/mailingai\\/out\\/[A-Za-z0-9_.-]+\\.png$/\nconst results = []\nfor (const item of $input.all()) {\n  const path = item.json.output_file\n  if (!PATTERN.test(path)) {\n    results.push({ json: { output_file: path, deleted: false, reason: 'ruta no matchea el patron esperado' } })\n    continue\n  }\n  try {\n    fs.unlinkSync(path)\n    results.push({ json: { output_file: path, deleted: true } })\n  } catch (err) {\n    // ENOENT (el archivo ya no existe) no es un error real para este job de\n    // limpieza -- la fila en Postgres ya quedo borrada de todas formas.\n    results.push({ json: { output_file: path, deleted: err.code === 'ENOENT', reason: err.code } })\n  }\n}\nreturn results"
+      },
+      "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03",
+      "name": "Code: Validar y borrar PNG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 0]
+    }
+  ],
+  "connections": {
+    "Schedule: Cada hora": {
+      "main": [[{ "node": "Postgres: Borrar chart_runs huerfanos", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Borrar chart_runs huerfanos": {
+      "main": [[{ "node": "Code: Validar y borrar PNG", "type": "main", "index": 0 }]]
+    }
+  }
+}

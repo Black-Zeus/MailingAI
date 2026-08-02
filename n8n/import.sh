@@ -95,7 +95,7 @@ if [ "$SKIP_WORKFLOWS" -eq 0 ]; then
 
   echo ""
   echo "Publicando workflows (necesario para que se puedan invocar entre si via Execute Workflow y para que los webhooks queden activos) ..."
-  for id in maiw0001subworkflow maiw0002sentitems00 maiw0003msgseries00 maiw0004related0000 maiw0005charts00000 maiw0006crattach000 maiw0007executejob00 maiw0008folders000 maiw0009download00 maiw0010search000 maiw0011retrace000 maiw0012errorhandl0 maiw0013sendemail00; do
+  for id in maiw0001subworkflow maiw0002sentitems00 maiw0003msgseries00 maiw0004related0000 maiw0005charts00000 maiw0006crattach000 maiw0007executejob00 maiw0008folders000 maiw0009download00 maiw0010search000 maiw0011retrace000 maiw0012errorhandl0 maiw0013sendemail00 maiw0014cleancharts maiw0015reviewremind maiw0016mailboxdelta; do
     if ! n8n publish:workflow --id="$id"; then
       echo "AVISO: no se pudo publicar $id (¿se importo correctamente?)" >&2
     fi

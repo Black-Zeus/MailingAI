@@ -218,6 +218,12 @@
           ]
         },
         "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          },
           "pagination": {
             "pagination": {
               "paginationMode": "responseContainsNextURL",
@@ -354,6 +360,12 @@
           ]
         },
         "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          },
           "pagination": {
             "pagination": {
               "paginationMode": "responseContainsNextURL",

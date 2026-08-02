@@ -1,0 +1,238 @@
+{
+  "id": "maiw0016mailboxdelta",
+  "name": "15 - MailingAI - Sincronizacion delta de buzones (cron)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 6,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff1",
+      "name": "Schedule: Diario 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mailbox-delta-sync",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff5",
+      "name": "Webhook: Forzar sincronizacion",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 250],
+      "webhookId": "maiw0016mailboxdelta-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true } }}",
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff6",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [250, 250]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $json.body?.mailbox_account_id || null }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffffa",
+      "name": "Set: Normalizar parametros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [125, 125]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ma.mailbox_account_id,\n       ma.label,\n       COALESCE(ma.last_synced_at, '2000-01-01'::timestamptz) AS date_from,\n       now() AS date_to\nFROM identity.mailbox_accounts ma\nWHERE ma.enabled = true\n  AND ($1::bigint IS NULL OR ma.mailbox_account_id = $1)\n  AND NOT EXISTS (\n    SELECT 1 FROM mailing.mailbox_index_runs r WHERE r.status IN ('queued', 'running')\n  );",
+        "options": {
+          "queryReplacement": "={{ [$json.mailbox_account_id] }}"
+        }
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff2",
+      "name": "Postgres: Buzones a sincronizar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "maiw0003msgseries00",
+          "cachedResultName": "02 - MailingAI - Fetch Message Series (parametrizado)"
+        },
+        "workflowInputs": {
+          "value": {
+            "folder": "",
+            "from_address": "",
+            "subject_contains": "",
+            "date_from": "={{ $json.date_from }}",
+            "date_to": "={{ $json.date_to }}",
+            "top": 200,
+            "mailbox_account_id": "={{ $json.mailbox_account_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff3",
+      "name": "Execute: 02 Fetch Message Series",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE identity.mailbox_accounts\nSET last_synced_at = $1\nWHERE mailbox_account_id = $2\nRETURNING mailbox_account_id, last_synced_at;",
+        "options": {
+          "queryReplacement": "={{ [$('Postgres: Buzones a sincronizar').item.json.date_to, $('Postgres: Buzones a sincronizar').item.json.mailbox_account_id] }}"
+        }
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff4",
+      "name": "Postgres: Actualizar last_synced_at",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [750, 0],
+      "credentials": {
+        "postgres": {
+          "id": "cred0001postgres000",
+          "name": "MailingAI Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "name": "mailbox_account_id",
+              "type": "number",
+              "value": "={{ $('Postgres: Buzones a sincronizar').item.json.mailbox_account_id }}"
+            },
+            {
+              "name": "label",
+              "type": "string",
+              "value": "={{ $('Postgres: Buzones a sincronizar').item.json.label }}"
+            },
+            {
+              "name": "new_messages",
+              "type": "number",
+              "value": "={{ $json.total_messages || 0 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff7",
+      "name": "Set: Detalle por buzon",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [750, 250]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "details",
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff8",
+      "name": "Aggregate: Detalle de la corrida",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1000, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/internal/mailbox-delta-sync-notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { details: $json.details } }}",
+        "options": {}
+      },
+      "id": "ffffffff-ffff-4fff-8fff-fffffffffff9",
+      "name": "Backend: Notificar sincronizacion completada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 250]
+    }
+  ],
+  "connections": {
+    "Schedule: Diario 06:00": {
+      "main": [[{ "node": "Set: Normalizar parametros", "type": "main", "index": 0 }]]
+    },
+    "Webhook: Forzar sincronizacion": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Respond to Webhook": {
+      "main": [[{ "node": "Set: Normalizar parametros", "type": "main", "index": 0 }]]
+    },
+    "Set: Normalizar parametros": {
+      "main": [[{ "node": "Postgres: Buzones a sincronizar", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Buzones a sincronizar": {
+      "main": [[{ "node": "Execute: 02 Fetch Message Series", "type": "main", "index": 0 }]]
+    },
+    "Execute: 02 Fetch Message Series": {
+      "main": [[
+        { "node": "Postgres: Actualizar last_synced_at", "type": "main", "index": 0 },
+        { "node": "Set: Detalle por buzon", "type": "main", "index": 0 }
+      ]]
+    },
+    "Set: Detalle por buzon": {
+      "main": [[{ "node": "Aggregate: Detalle de la corrida", "type": "main", "index": 0 }]]
+    },
+    "Aggregate: Detalle de la corrida": {
+      "main": [[{ "node": "Backend: Notificar sincronizacion completada", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "maiw0012errorhandl0"
+  },
+  "pinData": {}
+}

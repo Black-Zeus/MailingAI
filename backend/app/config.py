@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     n8n_webhook_download_url: str = "http://n8n:5678/webhook/download-attachment"
     n8n_webhook_retrace_url: str = "http://n8n:5678/webhook/retrace-attachments"
     n8n_webhook_send_email_url: str = "http://n8n:5678/webhook/send-case-email"
+    n8n_webhook_mailbox_delta_sync_url: str = "http://n8n:5678/webhook/mailbox-delta-sync"
     webhook_shared_secret: str = ""
     webhook_shared_secret_header: str = "X-MailingAI-Secret"
 

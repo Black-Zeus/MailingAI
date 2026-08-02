@@ -130,6 +130,7 @@
       "name": "Split Out Messages",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
+      "alwaysOutputData": true,
       "position": [
         500,
         0

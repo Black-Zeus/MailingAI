@@ -176,7 +176,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = $1, total_messages = $2 WHERE run_id = $3 RETURNING run_id;",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = $1, total_messages = $2 WHERE run_id = $3 RETURNING run_id, total_messages;",
         "options": {
           "queryReplacement": "={{ [$now.toISO(), $json.fetched_count, $('Postgres: Insert fetch_runs').item.json.run_id] }}"
         }

@@ -36,6 +36,9 @@ const WORKFLOW_IDS = [
   'maiw0011retrace000',
   'maiw0012errorhandl0',
   'maiw0013sendemail00',
+  'maiw0014cleancharts',
+  'maiw0015reviewremind',
+  'maiw0016mailboxdelta',
 ];
 
 // Los workflows 07, 08, 10 y 12 son los unicos con webhook propio del proyecto:
@@ -44,14 +47,19 @@ const WORKFLOW_IDS = [
 // para que sus webhooks queden registrados. El 11 (Error Trigger, sin webhook)
 // tambien se activa por las dudas -- no hay confirmacion documentada de que
 // n8n dispare un errorWorkflow inactivo, y activarlo de mas no tiene costo.
-// Los demas (00-06, 09) se mantienen inactive a proposito: se disparan a mano
-// o via Execute Workflow, no tienen trigger propio.
+// Los workflows 13/14/15 (Schedule Trigger, sin webhook) tambien necesitan
+// active=true -- si no, el cron nunca dispara aunque el workflow este
+// publicado. Los demas (00-06, 09) se mantienen inactive a proposito: se
+// disparan a mano o via Execute Workflow, no tienen trigger propio.
 const WORKFLOW_IDS_TO_ACTIVATE = [
   'maiw0007executejob00',
   'maiw0009download00',
   'maiw0011retrace000',
   'maiw0012errorhandl0',
   'maiw0013sendemail00',
+  'maiw0014cleancharts',
+  'maiw0015reviewremind',
+  'maiw0016mailboxdelta',
 ];
 
 async function main() {

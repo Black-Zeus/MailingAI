@@ -32,7 +32,41 @@ async def trigger_analysis_job(job_id: str, job_type: str, parameters: dict[str,
     except httpx.HTTPError as exc:
         logger.exception("No se pudo disparar el workflow de n8n para el job %s", job_id)
         raise JobTriggerError(
-            f"No se pudo contactar a n8n para iniciar el job: {exc}"
+            f"No se pudo iniciar el trabajo en segundo plano: {exc}"
+        ) from exc
+
+
+class MailboxDeltaSyncTriggerError(Exception):
+    pass
+
+
+async def trigger_mailbox_delta_sync(mailbox_account_id: int | None = None) -> None:
+    """Dispara a mano el workflow de n8n que normalmente corre solo, una vez al
+    dia por Schedule Trigger (ver n8n/WorkFlows/15-mailingai-mailbox-delta-sync.json).
+    Fire-and-forget como trigger_analysis_job: el fetch real contra Graph puede
+    tardar, asi que no se espera a que termine -- el webhook responde
+    'accepted' apenas arranca (ver nodo 'Respond to Webhook' del workflow).
+
+    Sin mailbox_account_id sincroniza TODOS los buzones habilitados (igual que
+    la corrida automatica diaria). Con mailbox_account_id, el workflow filtra
+    la seleccion a ese unico buzon -- usado por el boton "Sincronizar" de la
+    fila de un buzon puntual en Configuracion, para no esperar a que se
+    sincronicen los demas.
+    """
+    settings = get_settings()
+    headers = {settings.webhook_shared_secret_header: settings.webhook_shared_secret}
+    payload = {"mailbox_account_id": mailbox_account_id} if mailbox_account_id is not None else {}
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                settings.n8n_webhook_mailbox_delta_sync_url, json=payload, headers=headers
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.exception("No se pudo disparar la sincronizacion delta de buzones")
+        raise MailboxDeltaSyncTriggerError(
+            f"No se pudo forzar la sincronización (ejecución en segundo plano no disponible en este momento): {exc}"
         ) from exc
 
 
@@ -60,8 +94,8 @@ async def download_attachment(message_id: str, attachment_id: str) -> dict[str, 
     except httpx.HTTPError as exc:
         logger.exception("No se pudo descargar el adjunto %s del mensaje %s", attachment_id, message_id)
         raise AttachmentDownloadError(
-            "No se pudo obtener el adjunto desde Microsoft Graph. Verifica que n8n esté "
-            "corriendo y que la credencial de Graph siga conectada."
+            "No se pudo obtener el adjunto desde Microsoft Graph. Verifica que la conexión "
+            "del buzón siga activa (puede requerir reconectar la cuenta en Configuración → Buzones)."
         ) from exc
 
     data = response.json()
@@ -97,8 +131,8 @@ async def retrace_message_attachments(message_id: str) -> int:
     except httpx.HTTPError as exc:
         logger.exception("No se pudo retrazar los adjuntos del mensaje %s", message_id)
         raise AttachmentRetraceError(
-            "No se pudo consultar los adjuntos desde Microsoft Graph. Verifica que n8n esté "
-            "corriendo y que la credencial de Graph siga conectada."
+            "No se pudo consultar los adjuntos desde Microsoft Graph. Verifica que la conexión "
+            "del buzón siga activa (puede requerir reconectar la cuenta en Configuración → Buzones)."
         ) from exc
 
     data = response.json()
@@ -143,7 +177,6 @@ async def send_case_email(
     except httpx.HTTPError as exc:
         logger.exception("No se pudo enviar el correo del expediente")
         raise SendEmailError(
-            "No se pudo enviar el correo vía Microsoft Graph. Verifica que n8n esté corriendo "
-            "y que el buzón tenga el permiso Mail.Send autorizado (puede requerir reconectar la "
-            "cuenta en Configuración → Buzones)."
+            "No se pudo enviar el correo vía Microsoft Graph. Verifica que el buzón tenga el "
+            "permiso de envío autorizado (puede requerir reconectar la cuenta en Configuración → Buzones)."
         ) from exc
