@@ -13,9 +13,12 @@ import {
 import type { MailFolderNode, MessageDetail, MessageListItem } from '../types/messages'
 import type { CaseSeedPrefill, CaseSummary } from '../types/cases'
 import type { MailboxAccountRead } from '../types/mailboxes'
+import { KpiCard } from '../components/KpiCard'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { AttachmentItem } from '../components/AttachmentItem'
 import { MessageBodyModal, type MessageBodyModalState } from '../components/MessageBodyModal'
+import { ActionButton } from '../components/ActionButton'
+import { Copy, Eye, ExternalLink, FolderPlus, Paperclip, Plus } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { ATTACHMENT_PATTERN_PRESETS } from '../constants/attachmentPatterns'
 import { toEndOfDayISO, toStartOfDayISO } from '../utils/dates'
@@ -295,22 +298,17 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
       </div>
 
       <div className="kpis">
-        <div className="kpi">
-          <span>Total real (con estos filtros)</span>
-          <strong>{total ?? 0}</strong>
-        </div>
-        <div className="kpi">
-          <span>Con adjuntos (de lo cargado)</span>
-          <strong style={{ color: 'var(--accent-2)' }}>
-            {messages?.filter((m) => m.has_attachments).length ?? 0}
-          </strong>
-        </div>
-        <div className="kpi">
-          <span>Sin adjuntos (de lo cargado)</span>
-          <strong style={{ color: 'var(--muted)' }}>
-            {messages?.filter((m) => !m.has_attachments).length ?? 0}
-          </strong>
-        </div>
+        <KpiCard label="Total real (con estos filtros)" value={total ?? 0} />
+        <KpiCard
+          label="Con adjuntos (de lo cargado)"
+          value={messages?.filter((m) => m.has_attachments).length ?? 0}
+          color="var(--accent-2)"
+        />
+        <KpiCard
+          label="Sin adjuntos (de lo cargado)"
+          value={messages?.filter((m) => !m.has_attachments).length ?? 0}
+          color="var(--muted)"
+        />
       </div>
       <div className="panel" style={{ padding: 21, marginBottom: 20 }}>
         <div
@@ -562,15 +560,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                               {detail.conversation_id ? (
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                   <span className="mono">{detail.conversation_id}</span>
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
-                                    onClick={() => copyConversationId(detail.conversation_id!)}
-                                    data-tooltip="Copiar"
-                                    aria-label="Copiar"
-                                  >
-                                    📋
-                                  </button>
+                                  <ActionButton icon={Copy} label="Copiar" onClick={() => copyConversationId(detail.conversation_id!)} />
                                 </span>
                               ) : (
                                 '—'
@@ -588,16 +578,12 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                                 <dd>
                                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                     <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
-                                    <button
-                                      type="button"
-                                      className="btn small icon-btn"
-                                      disabled={retracingMessageId === detail.message_id}
+                                    <ActionButton
+                                      icon={Paperclip}
+                                      label={retracingMessageId === detail.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                      loading={retracingMessageId === detail.message_id}
                                       onClick={() => handleRetraceAttachments(detail.message_id)}
-                                      data-tooltip={retracingMessageId === detail.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
-                                      aria-label="Recuperar adjuntos"
-                                    >
-                                      {retracingMessageId === detail.message_id ? '…' : '📎'}
-                                    </button>
+                                    />
                                   </div>
                                 </dd>
                               </>
@@ -629,37 +615,12 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                         {detail && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
                             {(detail.body_content || detail.body_preview) && (
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                onClick={() => openBodyModal(detail)}
-                                data-tooltip="Ver cuerpo"
-                                aria-label="Ver cuerpo"
-                              >
-                                👁
-                              </button>
+                              <ActionButton icon={Eye} label="Ver cuerpo" onClick={() => openBodyModal(detail)} />
                             )}
                             {detail.web_link && (
-                              <a
-                                href={detail.web_link}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="btn small icon-btn"
-                                data-tooltip="Abrir en Outlook"
-                                aria-label="Abrir en Outlook"
-                              >
-                                🔗
-                              </a>
+                              <ActionButton icon={ExternalLink} label="Abrir en Outlook" href={detail.web_link} target="_blank" rel="noreferrer" />
                             )}
-                            <button
-                              type="button"
-                              className="btn small icon-btn"
-                              onClick={() => sendToNewCase(message)}
-                              data-tooltip="Enviar a nuevo expediente"
-                              aria-label="Enviar a nuevo expediente"
-                            >
-                              🆕
-                            </button>
+                            <ActionButton icon={FolderPlus} label="Enviar a nuevo expediente" onClick={() => sendToNewCase(message)} />
                             <select
                               value={targetCaseId}
                               onChange={(e) => setTargetCaseId(e.target.value)}
@@ -672,16 +633,13 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                                 </option>
                               ))}
                             </select>
-                            <button
-                              type="button"
-                              className="btn small icon-btn"
-                              disabled={!targetCaseId || sendingId === message.message_id}
+                            <ActionButton
+                              icon={Plus}
+                              label={sendingId === message.message_id ? 'Agregando…' : 'Agregar al expediente'}
+                              loading={sendingId === message.message_id}
+                              disabled={!targetCaseId}
                               onClick={() => sendToExistingCase(message.message_id)}
-                              data-tooltip={sendingId === message.message_id ? 'Agregando…' : 'Agregar al expediente'}
-                              aria-label="Agregar al expediente"
-                            >
-                              {sendingId === message.message_id ? '…' : '＋'}
-                            </button>
+                            />
                           </div>
                         )}
                       </div>

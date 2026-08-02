@@ -18,10 +18,25 @@ import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, type JobParameters, type JobRead } 
 import type { MailFolderNode, MessageListItem } from '../types/messages'
 import type { CaseSeedPrefill } from '../types/cases'
 import type { MailboxAccountRead } from '../types/mailboxes'
+import { KpiCard } from '../components/KpiCard'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { AttachmentItem } from '../components/AttachmentItem'
 import { FolderTree } from '../components/FolderTree'
 import { MessageBodyModal, type MessageBodyModalState } from '../components/MessageBodyModal'
+import { ActionButton } from '../components/ActionButton'
+import {
+  AlertTriangle,
+  ClipboardList,
+  Eye,
+  FolderPlus,
+  Info,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  Sprout,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 
 const POLL_INTERVAL_MS = 5000
@@ -562,22 +577,10 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
       </div>
 
       <div className="kpis">
-        <div className="kpi">
-          <span>Total</span>
-          <strong>{totalJobs}</strong>
-        </div>
-        <div className="kpi">
-          <span>Procesados</span>
-          <strong style={{ color: 'var(--success)' }}>{processedJobs}</strong>
-        </div>
-        <div className="kpi">
-          <span>Errores</span>
-          <strong style={{ color: 'var(--danger)' }}>{errorJobs}</strong>
-        </div>
-        <div className="kpi">
-          <span>Pendientes</span>
-          <strong style={{ color: 'var(--warning)' }}>{pendingJobs}</strong>
-        </div>
+        <KpiCard label="Total" value={totalJobs} />
+        <KpiCard label="Procesados" value={processedJobs} color="var(--success)" />
+        <KpiCard label="Errores" value={errorJobs} color="var(--danger)" />
+        <KpiCard label="Pendientes" value={pendingJobs} color="var(--warning)" />
       </div>
 
       <div className="toolbar">
@@ -635,75 +638,51 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                       <span className={statusClassName(job.status)}>{JOB_STATUS_LABELS[job.status]}</span>
-                      <button
-                        type="button"
-                        className="btn small icon-btn"
+                      <ActionButton
+                        icon={Info}
+                        label={openParamsId === job.job_id ? 'Ocultar parámetros' : 'Ver parámetros'}
+                        variant={openParamsId === job.job_id ? 'active' : 'default'}
                         onClick={() => setOpenParamsId(openParamsId === job.job_id ? null : job.job_id)}
-                        data-tooltip={openParamsId === job.job_id ? 'Ocultar parámetros' : 'Ver parámetros'}
-                        aria-label="Ver parámetros"
-                      >
-                        ℹ
-                      </button>
+                      />
                       {(job.status === 'queued' || job.status === 'running') && (
-                        <button
-                          type="button"
-                          className="btn small danger icon-btn"
-                          onClick={() => handleCancel(job.job_id)}
-                          disabled={cancelingId === job.job_id}
-                          data-tooltip={
+                        <ActionButton
+                          icon={X}
+                          label={
                             cancelingId === job.job_id
                               ? 'Cancelando…'
                               : 'Cancelar — la búsqueda en curso termina igual, pero el resultado se descarta'
                           }
-                          aria-label="Cancelar"
-                        >
-                          {cancelingId === job.job_id ? '…' : '✕'}
-                        </button>
+                          variant="danger"
+                          loading={cancelingId === job.job_id}
+                          onClick={() => handleCancel(job.job_id)}
+                        />
                       )}
                       {job.status === 'failed' && (
-                        <button
-                          type="button"
-                          className="btn small danger icon-btn"
+                        <ActionButton
+                          icon={AlertTriangle}
+                          label={openErrorId === job.job_id ? 'Ocultar error' : 'Ver error'}
+                          variant="danger"
                           onClick={() => setOpenErrorId(openErrorId === job.job_id ? null : job.job_id)}
-                          data-tooltip={openErrorId === job.job_id ? 'Ocultar error' : 'Ver error'}
-                          aria-label="Ver error"
-                        >
-                          ⚠
-                        </button>
+                        />
                       )}
                       {job.status === 'failed' && (
-                        <button
-                          type="button"
-                          className="btn small icon-btn"
+                        <ActionButton
+                          icon={RefreshCw}
+                          label={retryingId === job.job_id ? 'Reintentando…' : 'Reintentar'}
+                          loading={retryingId === job.job_id}
                           onClick={() => handleRetry(job.job_id)}
-                          disabled={retryingId === job.job_id}
-                          data-tooltip={retryingId === job.job_id ? 'Reintentando…' : 'Reintentar'}
-                          aria-label="Reintentar"
-                        >
-                          {retryingId === job.job_id ? '…' : '↻'}
-                        </button>
+                        />
                       )}
                       {job.status === 'success' && (
-                        <button
-                          type="button"
-                          className="btn small icon-btn"
+                        <ActionButton
+                          icon={ClipboardList}
+                          label={openResultsId === job.job_id ? 'Ocultar resultados' : 'Ver resultados'}
+                          variant={openResultsId === job.job_id ? 'active' : 'default'}
                           onClick={() => toggleResults(job.job_id, job.job_type)}
-                          data-tooltip={openResultsId === job.job_id ? 'Ocultar resultados' : 'Ver resultados'}
-                          aria-label="Ver resultados"
-                        >
-                          📋
-                        </button>
+                        />
                       )}
                       {job.status !== 'queued' && job.status !== 'running' && (
-                        <button
-                          type="button"
-                          className="btn small danger icon-btn"
-                          onClick={() => setDeleteTarget(job)}
-                          data-tooltip="Eliminar"
-                          aria-label="Eliminar"
-                        >
-                          🗑
-                        </button>
+                        <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => setDeleteTarget(job)} />
                       )}
                     </div>
                     {job.retry_of_job_id && (
@@ -831,32 +810,24 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                               </span>
                               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                 {hasNaturalCaseSeed(job) && (
-                                  <button
-                                    type="button"
-                                    className="btn small icon-btn"
+                                  <ActionButton
+                                    icon={FolderPlus}
+                                    label="Crear expediente con estos resultados"
                                     onClick={() => seedCaseFromJob(job)}
-                                    data-tooltip="Crear expediente con estos resultados"
-                                    aria-label="Crear expediente con estos resultados"
-                                  >
-                                    🆕
-                                  </button>
+                                  />
                                 )}
-                                <button
-                                  type="button"
-                                  className="btn small primary icon-btn"
-                                  disabled={
-                                    (selectedByJob[job.job_id]?.size ?? 0) === 0 || creatingBatchId === job.job_id
-                                  }
-                                  onClick={() => createCasesForSelected(job)}
-                                  data-tooltip={
+                                <ActionButton
+                                  icon={Plus}
+                                  label={
                                     creatingBatchId === job.job_id
                                       ? `Creando ${batchProgress?.done ?? 0}/${batchProgress?.total ?? 0}…`
                                       : `Crear expedientes separados (${selectedByJob[job.job_id]?.size ?? 0})`
                                   }
-                                  aria-label="Crear expedientes separados"
-                                >
-                                  {creatingBatchId === job.job_id ? '…' : '＋'}
-                                </button>
+                                  variant="primary"
+                                  loading={creatingBatchId === job.job_id}
+                                  disabled={(selectedByJob[job.job_id]?.size ?? 0) === 0}
+                                  onClick={() => createCasesForSelected(job)}
+                                />
                               </div>
                             </div>
                             {getFilteredResults(job.job_id).length === 0 &&
@@ -911,16 +882,12 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                       {m.has_attachments && m.attachments.length === 0 && (
                                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                                           <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
-                                          <button
-                                            type="button"
-                                            className="btn small icon-btn"
-                                            disabled={retracingMessageId === m.message_id}
+                                          <ActionButton
+                                            icon={Paperclip}
+                                            label={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
+                                            loading={retracingMessageId === m.message_id}
                                             onClick={() => handleRetraceAttachments(job.job_id, m.message_id)}
-                                            data-tooltip={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
-                                            aria-label="Recuperar adjuntos"
-                                          >
-                                            {retracingMessageId === m.message_id ? '…' : '📎'}
-                                          </button>
+                                          />
                                         </div>
                                       )}
                                       {m.attachments.length > 0 && (
@@ -943,25 +910,13 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                     </td>
                                     <td>
                                       <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
-                                        <button
-                                          type="button"
-                                          className="btn small icon-btn"
-                                          disabled={loadingBodyId === m.message_id}
+                                        <ActionButton
+                                          icon={Eye}
+                                          label="Ver cuerpo"
+                                          loading={loadingBodyId === m.message_id}
                                           onClick={() => handleViewBody(m.message_id)}
-                                          data-tooltip={loadingBodyId === m.message_id ? 'Cargando…' : 'Ver cuerpo'}
-                                          aria-label="Ver cuerpo"
-                                        >
-                                          {loadingBodyId === m.message_id ? '…' : '👁'}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="btn small icon-btn"
-                                          onClick={() => seedCaseFromMessage(m)}
-                                          data-tooltip="Usar como semilla"
-                                          aria-label="Usar como semilla"
-                                        >
-                                          🌱
-                                        </button>
+                                        />
+                                        <ActionButton icon={Sprout} label="Usar como semilla" onClick={() => seedCaseFromMessage(m)} />
                                       </div>
                                     </td>
                                   </tr>

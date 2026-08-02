@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ApiError, listAttachments } from '../api/client'
+import { ApiError, deleteAttachment, listAttachments } from '../api/client'
 import type { AttachmentListItem } from '../types/messages'
 import { AttachmentItem } from '../components/AttachmentItem'
+import { ConfirmModal } from '../components/ConfirmModal'
+import { ActionButton } from '../components/ActionButton'
+import { Trash2 } from 'lucide-react'
 import { toEndOfDayISO, toStartOfDayISO } from '../utils/dates'
+import { KpiCard } from '../components/KpiCard'
+import { useToast } from '../context/ToastContext'
 
 function formatDateTime(value: string | null): string {
   if (!value) return '—'
@@ -28,10 +33,13 @@ const EMPTY_FILTERS: FilterState = {
 }
 
 export function AttachmentsView() {
+  const { showToast } = useToast()
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS)
   const [attachments, setAttachments] = useState<AttachmentListItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AttachmentListItem | null>(null)
+  const [deletingAttachment, setDeletingAttachment] = useState(false)
 
   async function runSearch() {
     setLoading(true)
@@ -59,6 +67,27 @@ export function AttachmentsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return
+    setDeletingAttachment(true)
+    try {
+      await deleteAttachment(deleteTarget.message_id, deleteTarget.attachment_id)
+      setAttachments((prev) =>
+        prev
+          ? prev.filter(
+              (a) => !(a.message_id === deleteTarget.message_id && a.attachment_id === deleteTarget.attachment_id),
+            )
+          : prev,
+      )
+      showToast('Adjunto eliminado del índice')
+      setDeleteTarget(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar el adjunto.', true)
+    } finally {
+      setDeletingAttachment(false)
+    }
+  }
+
   const total = attachments?.length ?? 0
   const hashed = attachments?.filter((a) => a.content_sha256).length ?? 0
   const linked = attachments?.filter((a) => a.linked_to_case).length ?? 0
@@ -76,18 +105,9 @@ export function AttachmentsView() {
       </div>
 
       <div className="kpis">
-        <div className="kpi">
-          <span>Adjuntos listados</span>
-          <strong>{total}</strong>
-        </div>
-        <div className="kpi">
-          <span>Con hash verificado</span>
-          <strong style={{ color: 'var(--accent)' }}>{hashed}</strong>
-        </div>
-        <div className="kpi">
-          <span>Vinculados a expediente</span>
-          <strong style={{ color: 'var(--accent-2)' }}>{linked}</strong>
-        </div>
+        <KpiCard label="Adjuntos listados" value={total} />
+        <KpiCard label="Con hash verificado" value={hashed} color="var(--accent)" />
+        <KpiCard label="Vinculados a expediente" value={linked} color="var(--accent-2)" />
       </div>
       {attachments && attachments.length >= 200 && (
         <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: -14, marginBottom: 16 }}>
@@ -157,12 +177,13 @@ export function AttachmentsView() {
               <th>Fecha</th>
               <th>Carpeta</th>
               <th>Expediente</th>
+              <th style={{ width: 60 }}></th>
             </tr>
           </thead>
           <tbody>
             {attachments !== null && attachments.length === 0 && !loading && (
               <tr>
-                <td colSpan={7} className="empty-view">
+                <td colSpan={8} className="empty-view">
                   No hay adjuntos para estos filtros.
                 </td>
               </tr>
@@ -189,11 +210,29 @@ export function AttachmentsView() {
                 <td>{formatDateTime(a.message_sent_datetime)}</td>
                 <td>{a.folder_path || '—'}</td>
                 <td>{a.linked_to_case ? '✓' : '—'}</td>
+                <td>
+                  <ActionButton icon={Trash2} label="Eliminar del índice" variant="danger" onClick={() => setDeleteTarget(a)} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title="Eliminar adjunto del índice"
+        description={
+          deleteTarget
+            ? `Se elimina el registro de "${deleteTarget.file_name}" de la app. El correo y el archivo real en el buzón no se ven afectados — si el mensaje se vuelve a indexar, el adjunto puede reaparecer.`
+            : ''
+        }
+        confirmLabel="Eliminar del índice"
+        confirmingLabel="Eliminando…"
+        confirming={deletingAttachment}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </section>
   )
 }

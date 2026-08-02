@@ -3,6 +3,8 @@ import { listUserDirectory } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { useBodyScrollLock } from '../utils/modalScrollLock'
 import type { UserDirectoryEntry } from '../types/users'
+import { ActionButton } from './ActionButton'
+import { X } from 'lucide-react'
 
 export interface ShareEntry {
   user_id: number
@@ -150,16 +152,13 @@ export function ShareModal({
                       <td>{s.display_name || s.email_address}</td>
                       <td>{s.permission === 'edit' ? 'Lectura y edición' : 'Solo lectura'}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn small danger icon-btn"
-                          disabled={revokingUserId === s.user_id}
-                          data-tooltip="Quitar"
-                          aria-label="Quitar"
+                        <ActionButton
+                          icon={X}
+                          label="Quitar"
+                          variant="danger"
+                          loading={revokingUserId === s.user_id}
                           onClick={() => onRevoke(s.user_id)}
-                        >
-                          {revokingUserId === s.user_id ? '…' : '✕'}
-                        </button>
+                        />
                       </td>
                     </tr>
                   ))}

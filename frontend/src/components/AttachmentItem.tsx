@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, downloadAttachmentBlob } from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { ActionButton } from './ActionButton'
+import { Download, Eye, KeyRound } from 'lucide-react'
 
 interface AttachmentItemProps {
   messageId: string
@@ -130,16 +132,13 @@ export function AttachmentItem({
         {sizeBytes !== null && ` (${formatBytes(sizeBytes)})`}
         {matchesNamingConvention && ' · patrón CR'}
         {matchesSearchPattern === false && ' · no coincide con la búsqueda'}
-        <button
-          type="button"
-          className="btn small icon-btn"
+        <ActionButton
+          icon={blobUrl ? Eye : Download}
+          label={loading ? 'Descargando…' : blobUrl ? 'Abrir' : 'Descargar'}
+          size="sm"
+          loading={loading}
           onClick={handleClick}
-          disabled={loading}
-          data-tooltip={loading ? 'Descargando…' : blobUrl ? 'Abrir' : 'Descargar'}
-          aria-label={blobUrl ? 'Abrir' : 'Descargar'}
-        >
-          {loading ? '…' : blobUrl ? '👁' : '⬇'}
-        </button>
+        />
         {hash && (
           <button
             type="button"
@@ -147,9 +146,9 @@ export function AttachmentItem({
             onClick={copyHash}
             data-tooltip={`Copiar hash — SHA-256: ${hash}`}
             aria-label="Copiar hash SHA-256"
-            style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10 }}
+            style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 4 }}
           >
-            🔒 {hash.slice(0, 8)}…
+            <KeyRound size={11} /> {hash.slice(0, 8)}…
           </button>
         )}
       </span>
