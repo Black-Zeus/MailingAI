@@ -2,6 +2,9 @@
 # Los .example.json de referencia si se agregan quedan excluidos de esta regla.
 n8n/credentials/*.json
 
+# Basic Auth del proxy nginx para /n8n/ (ver README, seccion del proxy).
+proxy/.htpasswd
+
 # Credenciales sueltas fuera de la convencion n8n/credentials/ (ver PLAN.md, Fase 0).
 .cred.dev
 
