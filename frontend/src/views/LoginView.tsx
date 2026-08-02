@@ -1,4 +1,6 @@
+import { useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { ApiError } from '../api/client'
 
 const ERROR_MESSAGES: Record<string, string> = {
   not_authorized: 'Tu cuenta todavía no fue habilitada. Pídele a un administrador que te dé de alta.',
@@ -6,10 +8,28 @@ const ERROR_MESSAGES: Record<string, string> = {
 }
 
 export function LoginView() {
-  const { login } = useAuth()
+  const { login, loginLocal } = useAuth()
   const params = new URLSearchParams(window.location.search)
   const errorCode = params.get('login_error')
-  const errorMessage = errorCode ? ERROR_MESSAGES[errorCode] ?? 'No se pudo iniciar sesión.' : null
+  const ssoErrorMessage = errorCode ? ERROR_MESSAGES[errorCode] ?? 'No se pudo iniciar sesión.' : null
+
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [loggingIn, setLoggingIn] = useState(false)
+
+  async function handleLocalLogin(e: FormEvent) {
+    e.preventDefault()
+    setLocalError(null)
+    setLoggingIn(true)
+    try {
+      await loginLocal(username, password)
+    } catch (err) {
+      setLocalError(err instanceof ApiError ? err.message : 'No se pudo iniciar sesión.')
+    } finally {
+      setLoggingIn(false)
+    }
+  }
 
   return (
     <div className="login-screen">
@@ -22,7 +42,42 @@ export function LoginView() {
         <button type="button" className="btn primary btn-labeled" onClick={login}>
           🔑 Ingresar con Microsoft
         </button>
-        {errorMessage && <div className="login-error">{errorMessage}</div>}
+        {ssoErrorMessage && <div className="login-error">{ssoErrorMessage}</div>}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+          <span style={{ color: 'var(--muted)', fontSize: 12 }}>o con una cuenta local</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+        </div>
+
+        <form onSubmit={handleLocalLogin} style={{ textAlign: 'left' }}>
+          <div className="field">
+            <label htmlFor="local-username">Usuario</label>
+            <input
+              id="local-username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="local-password">Contraseña</label>
+            <input
+              id="local-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          <button type="submit" className="btn btn-labeled" style={{ width: '100%' }} disabled={loggingIn}>
+            {loggingIn ? 'Ingresando…' : '👤 Ingresar'}
+          </button>
+          {localError && <div className="login-error">{localError}</div>}
+        </form>
       </div>
     </div>
   )

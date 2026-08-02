@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { clearMailboxOwner, listMailboxes, listUserMailboxes, revokeMailboxShare, shareMailbox } from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { ActionButton } from './ActionButton'
+import { Undo2, X } from 'lucide-react'
 import type { UserRead, UserMailboxAccessEntry } from '../types/users'
 import type { MailboxAccountRead } from '../types/mailboxes'
 
@@ -208,27 +210,20 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
                         </td>
                         <td>
                           {isPendingRemoval ? (
-                            <button
-                              type="button"
-                              className="btn small icon-btn"
+                            <ActionButton
+                              icon={Undo2}
+                              label="Deshacer"
                               disabled={saving}
-                              data-tooltip="Deshacer"
-                              aria-label="Deshacer"
                               onClick={() => handleUndoRemove(a.mailbox_account_id)}
-                            >
-                              ↺
-                            </button>
+                            />
                           ) : (
-                            <button
-                              type="button"
-                              className="btn small danger icon-btn"
+                            <ActionButton
+                              icon={X}
+                              label={a.relation === 'owner' ? 'Liberar buzón' : 'Quitar acceso'}
+                              variant="danger"
                               disabled={saving}
-                              data-tooltip={a.relation === 'owner' ? 'Liberar buzón' : 'Quitar acceso'}
-                              aria-label={a.relation === 'owner' ? 'Liberar buzón' : 'Quitar acceso'}
                               onClick={() => handleStageRemove(a)}
-                            >
-                              ✕
-                            </button>
+                            />
                           )}
                         </td>
                       </tr>
@@ -245,16 +240,7 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
                         </span>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn small icon-btn"
-                          disabled={saving}
-                          data-tooltip="Quitar de la lista"
-                          aria-label="Quitar de la lista"
-                          onClick={() => handleUndoAdd(m.mailbox_account_id)}
-                        >
-                          ✕
-                        </button>
+                        <ActionButton icon={X} label="Quitar de la lista" disabled={saving} onClick={() => handleUndoAdd(m.mailbox_account_id)} />
                       </td>
                     </tr>
                   ))}

@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { getCurrentUser, login, logout as apiLogout } from '../api/client'
+import { getCurrentUser, login, loginLocal, logout as apiLogout } from '../api/client'
 import type { CurrentUser } from '../types/auth'
 
 interface AuthContextValue {
   user: CurrentUser | null
   loading: boolean
   login: () => void
+  loginLocal: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -39,8 +40,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const handleLoginLocal = useCallback(async (username: string, password: string) => {
+    const current = await loginLocal(username, password)
+    setUser(current)
+  }, [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, loginLocal: handleLoginLocal, logout, refresh }}>
+      {children}
+    </AuthContext.Provider>
   )
 }
 
