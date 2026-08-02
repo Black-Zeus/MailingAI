@@ -6,39 +6,44 @@ Definición completa del proyecto (alcance, decisiones de arquitectura, qué est
 
 Las imágenes usan versiones específicas. No se usa `latest` salvo que se cambie manualmente en `.env`.
 
+> En todo este documento, `<host>` es la IP o el dominio del servidor donde corre el stack (`localhost` solo si accedes desde la misma máquina donde corre Docker).
+
 ## Uso
+
+Antes de levantar el stack por primera vez, crea la Basic Auth del proxy para `/n8n/` (ver sección "Punto de entrada único" más abajo):
+
+```powershell
+# con htpasswd (paquete apache2-utils / httpd-tools)
+htpasswd -c proxy/.htpasswd admin
+# sin htpasswd (Git Bash/WSL, requiere openssl)
+printf "admin:$(openssl passwd -apr1 TU_CLAVE)\n" > proxy/.htpasswd
+```
 
 ```powershell
 docker compose up -d
 ```
 
-Luego abre n8n:
+Todo el stack queda detrás de un único punto de entrada:
 
 ```text
-http://localhost:5680
-```
-
-Backend FastAPI (generador de gráficos + trabajos de análisis):
-
-```text
-http://localhost:8001/health
-```
-
-Frontend (panel completo — Nueva consulta, Trabajos, Expedientes, Mensajes, Configuración):
-
-```text
-http://localhost:5173
+http://<host>/              -> frontend (panel completo)
+http://<host>/api/health    -> backend
+http://<host>/n8n/          -> n8n (pide la Basic Auth creada arriba)
 ```
 
 ## Servicios
 
 ```text
-postgres  -> mailingai_postgres  (localhost:5433, interno postgres:5432)
-backend   -> mailingai_backend   (localhost:8001, interno backend:8000)
-frontend  -> mailingai_frontend  (localhost:5173, interno frontend:80)
-n8n       -> mailingai_n8n       (localhost:5680, interno n8n:5678)
-ollama    -> mailingai_ollama    (localhost:11435, interno ollama:11434)
+proxy            -> mailingai_proxy            (<host>:80, unico puerto publicado)
+postgres          -> mailingai_postgres         (interno postgres:5432, sin puerto publico)
+backend           -> mailingai_backend          (interno backend:8000, sin puerto publico)
+identity-broker   -> mailingai_identity_broker  (interno identity-broker:8000, sin puerto publico)
+frontend          -> mailingai_frontend         (interno frontend:80, sin puerto publico)
+n8n               -> mailingai_n8n              (interno n8n:5678, sin puerto publico)
+ollama            -> mailingai_ollama           (interno ollama:11434, sin puerto publico)
 ```
+
+Ningún servicio salvo `proxy` publica puerto al host — todos se alcanzan solo por la red interna `mailingai_internal`. Para acceso puntual de desarrollo (`psql`, revisar Ollama, etc.) usa `docker compose exec <servicio> ...` en vez de reabrir un puerto permanente.
 
 `ollama` (Fase 6, IA) baja el modelo la primera vez que se le pide (no viene precargado en la imagen). Si es la primera vez que levantas el stack:
 
@@ -47,6 +52,23 @@ docker compose exec ollama ollama pull qwen2.5:3b
 ```
 
 Red interna compartida: `mailingai_internal`.
+
+## Punto de entrada único (proxy)
+
+`proxy` (`nginx:1.27.3-alpine`, config en `proxy/nginx.conf`) es el único servicio con puerto publicado al host (`PROXY_PORT`, default `80`). Enmascara todo detrás de un solo origen:
+
+```text
+http://<host>/              -> frontend:80        (SPA)
+http://<host>/api/*         -> backend:8000/api/*  (API + callback de login SSO)
+http://<host>/identity/oauth/*  -> identity-broker:8000/oauth/*   (solo el flujo de conectar buzones)
+http://<host>/n8n/*         -> n8n:5678/*          (editor de workflows, protegido con Basic Auth)
+```
+
+`identity-broker` solo expone públicamente `/oauth/microsoft/start` y `/oauth/microsoft/callback` — todo lo demás (`/internal/*`, sin autenticación propia) queda deliberadamente fuera del mapa de rutas del proxy, alcanzable solo desde la red interna de Docker (así lo usa el backend hoy vía `IDENTITY_BROKER_URL`).
+
+**Antes de levantar `proxy`**, generá `proxy/.htpasswd` (credenciales propias para entrar a `/n8n/`, separadas del login de la app — ver comando en "Uso" arriba). El archivo queda fuera de git (`.gitignore`).
+
+TLS/HTTPS no está configurado todavía (queda para cuando haya dominio real) — agregarlo más adelante es solo cuestión de terminar TLS en este mismo `proxy` (ej. con certbot) sin tocar el resto de los servicios, que ya no publican nada directamente.
 
 ## Carpeta compartida
 
@@ -63,11 +85,13 @@ n8n necesita una App Registration en tu tenant de Microsoft Entra ID (Azure AD) 
 
 1. Portal Azure → **Microsoft Entra ID → App registrations → New registration**.
 2. Tipo de cuenta: según si el buzón es solo de tu tenant (single-tenant) o quieres soportar varios. **Si es single-tenant** (lo más común), la credencial de n8n tiene que pegarle a un endpoint de OAuth2 específico de tu tenant (`/{tenantId}/oauth2/v2.0/authorize`), no al genérico `/common` — ver sección 2, la credencial ya viene armada así.
-3. **Redirect URI** (tipo Web):
+3. **Redirect URI** (tipo Web) — esta misma App Registration la usan **tres** servicios distintos (n8n, backend, identity-broker), cada uno con su propio Redirect URI. Agrega los tres:
    ```text
-   http://localhost:5680/rest/oauth2-credential/callback
+   http://<host>/n8n/rest/oauth2-credential/callback
+   http://<host>/api/auth/microsoft/callback
+   http://<host>/identity/oauth/microsoft/callback
    ```
-   Si accedes a n8n desde otra URL/host, ajusta este valor y también `N8N_EDITOR_BASE_URL`/`WEBHOOK_URL` en `.env`.
+   (el segundo es el login SSO de usuarios de la app — ver sección 11 más abajo; el tercero lo usa `identity-broker` al conectar un buzón nuevo desde Configuración → Buzones). Si accedes desde otra URL/host, ajusta `BACKEND_PUBLIC_URL`, `IDENTITY_BROKER_PUBLIC_URL`, `N8N_EDITOR_BASE_URL`/`WEBHOOK_URL` en `.env` y agrega el Redirect URI correspondiente (podés dejar los anteriores registrados, no hace falta borrarlos).
 4. **API permissions → Microsoft Graph → Delegated permissions**, agrega:
    ```text
    Mail.Read
@@ -116,7 +140,7 @@ Pasos:
    ./scripts/import-n8n.sh
    ```
    Esta vez importa las 3 credenciales y los 8 workflows.
-4. Entra a n8n (`http://localhost:5680`) → **Credentials → MailingAI Graph OAuth2 → Connect my account**. Este paso es manual sí o sí: OAuth2 necesita que completes el consentimiento en el navegador con tu cuenta real, no se puede automatizar desde un script.
+4. Entra a n8n (`http://<host>/n8n/`, pide la Basic Auth de `proxy/.htpasswd` — ver sección "Punto de entrada único") → **Credentials → MailingAI Graph OAuth2 → Connect my account**. Este paso es manual sí o sí: OAuth2 necesita que completes el consentimiento en el navegador con tu cuenta real, no se puede automatizar desde un script.
 
 Estas credenciales **no** se guardan en `.env`: los archivos en `n8n/credentials/*.json` quedan ignorados por git (`.gitignore`) y, una vez importados, el `clientSecret`/password quedan cifrados dentro de la base de datos de n8n.
 
@@ -215,6 +239,7 @@ docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entryp
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0005_mailing_case_batch_runs_owner.sql
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0006_identity_notifications.sql
 docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0007_identity_mailbox_notification_sender.sql
+docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entrypoint-initdb.d/20260729_0008_mailing_mailbox_index_runs.sql
 ```
 
 ## 5. Trabajos de análisis (`/api/jobs`)
@@ -222,14 +247,14 @@ docker compose exec -T postgres psql -U mailingai -d mailingai -f /docker-entryp
 Desde las Fases 1 y 3 de [`PLAN.md`](PLAN.md), el backend expone trabajos asíncronos respaldados en `mailing.analysis_jobs`, y crearlos dispara automáticamente el workflow correspondiente en n8n (webhook interno, sin que el backend espere a que termine):
 
 ```powershell
-curl -X POST http://localhost:8001/api/jobs `
+curl -X POST http://<host>/api/jobs `
   -H "Content-Type: application/json" `
   -d '{\"job_type\":\"fetch_sent_items\",\"parameters\":{\"date_from\":\"2026-06-01\",\"date_to\":\"2026-06-30\",\"top\":50}}'
 
-curl http://localhost:8001/api/jobs/<job_id>
-curl "http://localhost:8001/api/jobs?limit=10&status=queued"
-curl -X POST http://localhost:8001/api/jobs/<job_id>/retry
-curl http://localhost:8001/api/jobs/<job_id>/messages
+curl http://<host>/api/jobs/<job_id>
+curl "http://<host>/api/jobs?limit=10&status=queued"
+curl -X POST http://<host>/api/jobs/<job_id>/retry
+curl http://<host>/api/jobs/<job_id>/messages
 ```
 
 `POST /api/jobs/{id}/retry` crea un job **nuevo** con los mismos `job_type`/`parameters` que uno fallido (no edita el original) y dispara el webhook de nuevo. Solo funciona sobre un job en `failed` (`409` en cualquier otro estado). El nuevo job queda enlazado al original vía `retry_of_job_id`.
@@ -259,13 +284,13 @@ docker compose exec -T backend pytest -q
 Desde la Fase 4 de [`PLAN.md`](PLAN.md), el backend expone lectura directa de lo que ya trajeron los workflows (no dispara nada nuevo contra Graph, solo consulta Postgres):
 
 ```powershell
-curl "http://localhost:8001/api/messages?limit=20&subject_contains=CR"
-curl "http://localhost:8001/api/messages/<message_id>"
-curl "http://localhost:8001/api/conversations/<conversation_id>"
-curl "http://localhost:8001/api/mail-folders"
+curl "http://<host>/api/messages?limit=20&subject_contains=CR"
+curl "http://<host>/api/messages/<message_id>"
+curl "http://<host>/api/conversations/<conversation_id>"
+curl "http://<host>/api/mail-folders"
 ```
 
-`/api/messages` filtra por `folder_id`, `date_from`/`date_to`, `from_address` (contiene), `subject_contains` (contiene), `conversation_id`, `is_sent`, con `limit`/`offset`. `/api/mail-folders` devuelve el árbol completo (carpetas anidadas con `children`); requiere haber corrido el job `discover_mail_folders` al menos una vez — si no, devuelve una lista vacía. El frontend (`http://localhost:5173`) ya incluye una vista de resultados con estos filtros y detalle expandible por mensaje (participantes, adjuntos, ubicación).
+`/api/messages` filtra por `folder_id`, `date_from`/`date_to`, `from_address` (contiene), `subject_contains` (contiene), `conversation_id`, `is_sent`, con `limit`/`offset`. `/api/mail-folders` devuelve el árbol completo (carpetas anidadas con `children`); requiere haber corrido el job `discover_mail_folders` al menos una vez — si no, devuelve una lista vacía. El frontend (`http://<host>/`) ya incluye una vista de resultados con estos filtros y detalle expandible por mensaje (participantes, adjuntos, ubicación).
 
 `GET /api/messages/{message_id}/attachments/{attachment_id}/download` trae el **contenido real** del adjunto (no solo el nombre/tamaño ya indexado) — llama de forma síncrona al workflow `08` de n8n, que a su vez llama a Graph. Formatos rastreados: `pdf`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `csv`, `txt`. En el frontend, cada adjunto tiene un botón "Descargar" que pasa a "Abrir" una vez descargado (PDF se ve en un modal in-app, el resto usa la descarga normal del navegador).
 
@@ -274,13 +299,13 @@ curl "http://localhost:8001/api/mail-folders"
 Desde la Fase 5 de [`PLAN.md`](PLAN.md), el backend arma "expedientes" correlacionando mensajes ya guardados en Postgres — no llama a Graph ni pasa por n8n (es lógica pura sobre datos, ver justificación de arquitectura en `PLAN.md` sección 5). Es sincrónico: `POST /api/cases` responde con el caso ya armado, no crea un job.
 
 ```powershell
-curl -X POST http://localhost:8001/api/cases `
+curl -X POST http://<host>/api/cases `
   -H "Content-Type: application/json" `
   -d '{\"title\":\"Mi caso\",\"seed_type\":\"conversation_id\",\"seed_value\":\"<conversation_id de un mensaje ya guardado>\",\"case_type\":\"conversation\"}'
 
-curl http://localhost:8001/api/cases
-curl http://localhost:8001/api/cases/<case_id>
-curl -X PATCH http://localhost:8001/api/timeline-events/<event_id> -H "Content-Type: application/json" -d '{\"determination_type\":\"validacion_manual\"}'
+curl http://<host>/api/cases
+curl http://<host>/api/cases/<case_id>
+curl -X PATCH http://<host>/api/timeline-events/<event_id> -H "Content-Type: application/json" -d '{\"determination_type\":\"validacion_manual\"}'
 ```
 
 `seed_type` acepta `conversation_id` (todos los mensajes del hilo, confianza 1.0), `cr_keyword` (asunto o nombre de adjunto que contiene la palabra/código, confianza 0.7) o `message_id` (un mensaje puntual como semilla). Además de la correlación exacta, siempre corre una heurística secundaria: mensajes con el mismo asunto normalizado (sin `RE:`/`FWD:`) y al menos un participante en común, dentro de ±30 días del mensaje semilla (confianza 0.4) — así aparecen mensajes relacionados aunque no compartan `conversation_id`. La línea de tiempo resultante distingue `hecho_observado` (siempre, por ahora), `regla`, `inferencia_ia` (Fase 6) y `validacion_manual` (vía el `PATCH`).
@@ -288,12 +313,12 @@ curl -X PATCH http://localhost:8001/api/timeline-events/<event_id> -H "Content-T
 ## 8. Probar el backend de gráficos de forma aislada
 
 ```powershell
-curl -X POST http://localhost:8001/charts/timeline `
+curl -X POST http://<host>/charts/timeline `
   -H "Content-Type: application/json" `
   -d '{\"title\":\"Prueba\",\"points\":[{\"date\":\"2026-07-01\",\"count\":3},{\"date\":\"2026-07-02\",\"count\":7}]}' `
   --output prueba-timeline.png
 
-curl -X POST http://localhost:8001/charts/histogram `
+curl -X POST http://<host>/charts/histogram `
   -H "Content-Type: application/json" `
   -d '{\"title\":\"Prueba\",\"buckets\":[{\"label\":\"alice@example.com\",\"count\":5},{\"label\":\"bob@example.com\",\"count\":2}]}' `
   --output prueba-histograma.png
@@ -306,8 +331,8 @@ Ambos endpoints responden `image/png` directamente (sin acceso a base de datos n
 Desde la Fase 6 de [`PLAN.md`](PLAN.md), el backend puede pedirle a un modelo de IA local (Ollama) que resuma un caso ya armado (Fase 5). Política `local_only` por defecto: solo corren proveedores locales, nunca uno externo, salvo que cambies `AI_DEFAULT_POLICY`/`AI_ENABLED_PROVIDERS` en `.env` a propósito.
 
 ```powershell
-curl http://localhost:8001/api/ai/health
-curl -X POST http://localhost:8001/api/ai/cases/<case_id>/analyze
+curl http://<host>/api/ai/health
+curl -X POST http://<host>/api/ai/cases/<case_id>/analyze
 ```
 
 `GET /api/ai/health` muestra la política activa y si cada proveedor habilitado responde. `POST /api/ai/cases/{id}/analyze` arma el resumen a partir de los mensajes correlacionados del caso (asunto, remitente enmascarado, fecha, vista previa acotada — nunca el cuerpo completo ni adjuntos), lo valida contra un esquema fijo, lo guarda en `mailing.ai_runs` (con `input_hash`, nunca el contenido real), y si sale bien agrega un evento a la línea de tiempo del caso con `determination_type='inferencia_ia'`.
@@ -317,10 +342,10 @@ El modelo por defecto es `qwen2.5:3b` (~1.9GB, CPU-only, tarda unos 20-40 segund
 ## 10. Estado del sistema y limpieza de historial
 
 ```powershell
-curl http://localhost:8001/api/system/status
-curl http://localhost:8001/api/system/stats
-curl -X DELETE "http://localhost:8001/api/jobs?scope=failed"
-curl -X DELETE "http://localhost:8001/api/cases?scope=closed"
+curl http://<host>/api/system/status
+curl http://<host>/api/system/stats
+curl -X DELETE "http://<host>/api/jobs?scope=failed"
+curl -X DELETE "http://<host>/api/cases?scope=closed"
 ```
 
 `GET /api/system/status` verifica backend/Postgres/n8n (`/healthz`)/Ollama en un solo llamado — lo usa el panel lateral del frontend. `GET /api/system/stats` devuelve conteos reales (mensajes, adjuntos, conversaciones, casos) — lo usa la vista "Nueva consulta".
@@ -329,15 +354,14 @@ curl -X DELETE "http://localhost:8001/api/cases?scope=closed"
 
 ## 11. Seguridad y acceso multiusuario (login, sesiones, expedientes/buzones compartidos)
 
-El sistema exige sesión iniciada para usar cualquier endpoint de negocio. Login vía SSO Microsoft/Entra ID (mismo tenant que ya usa `identity-broker` para conectar buzones, sección 1) — sin usuario/contraseña local, sin auto-registro: un admin tiene que dar de alta el email de cada persona antes de que pueda entrar.
+El sistema exige sesión iniciada para usar cualquier endpoint de negocio. Dos métodos de login, sin auto-registro en ninguno de los dos — un admin siempre tiene que dar de alta la cuenta antes de que la persona pueda entrar:
 
-### Azure AD: segundo Redirect URI
+- **SSO Microsoft/Entra ID** (mismo tenant que ya usa `identity-broker` para conectar buzones, sección 1): el admin da de alta el email, la cuenta queda "pendiente de primer login" hasta que esa persona entra con esa cuenta real de Microsoft.
+- **Cuenta local (usuario/contraseña)**: alta exclusiva por un admin (`POST /api/admin/users` con `auth_method: "local"`), que fija usuario y una contraseña temporal — la cuenta queda activa de inmediato, pero forzada a cambiar esa contraseña en el primer login (`must_change_password`). Pensada para personas sin cuenta en el tenant de Microsoft. El admin puede resetear la contraseña en cualquier momento (`POST /api/admin/users/{id}/reset-password`) — vuelve a forzar el cambio y cierra las sesiones activas de esa cuenta.
 
-Además del Redirect URI de n8n (sección 1), agrega uno nuevo a la misma App Registration para el login de usuarios del backend:
+### Azure AD: Redirect URI del login de usuarios
 
-```text
-http://localhost:8001/api/auth/microsoft/callback
-```
+El login SSO de usuarios de la app usa el segundo de los tres Redirect URI ya listados en la sección 1 (`http://<host>/api/auth/microsoft/callback`) — misma App Registration, nada nuevo que agregar acá.
 
 Scope delegado usado por este flujo: `openid profile email User.Read` (sin `offline_access` ni `Mail.*` — a diferencia del flujo de buzones, aquí no se guarda ningún token de Microsoft a largo plazo).
 
@@ -351,14 +375,14 @@ docker exec mailingai_backend python -m app.scripts.bootstrap_admin --email tu-e
 
 **El email tiene que ser el de una cuenta real de Microsoft/Entra ID dentro del tenant configurado en `MS_TENANT_ID`** — el login es exclusivamente SSO contra Azure AD, así que una cuenta personal (Gmail, Outlook.com sin relación con el tenant, etc.) nunca va a poder completar el login aunque el registro exista en `identity.users`. Si el bootstrap se corre con un email que luego no corresponde a ninguna cuenta del tenant, simplemente queda una fila sin usar (inofensiva, pero conviene evitarlo).
 
-Nunca escala privilegios de un usuario ya existente (si el email ya está en `identity.users`, no toca esa fila). Después de correrlo, entra a `http://localhost:5173` y usa "Ingresar con Microsoft" con esa misma cuenta.
+Nunca escala privilegios de un usuario ya existente (si el email ya está en `identity.users`, no toca esa fila). Después de correrlo, entra a `http://<host>/` y usa "Ingresar con Microsoft" con esa misma cuenta.
 
 ### Migrar a un entorno nuevo (otro host, otro ambiente)
 
 Cada entorno con una base de datos nueva (volumen de Postgres recién creado, o `identity.users` vacía por cualquier motivo) necesita repetir estos pasos — son independientes del código, que no cambia entre entornos:
 
-1. **Redirect URI en Azure AD**: agregar `http://<host-del-backend>/api/auth/microsoft/callback` a la misma App Registration (sección "Azure AD: segundo Redirect URI" arriba). Si cambia el dominio/puerto público del backend, el Redirect URI viejo no sirve — hay que agregar el nuevo (se puede dejar el anterior también, no hace falta borrarlo).
-2. **Variables de entorno**: `BACKEND_PUBLIC_URL` y `FRONTEND_URL` en `.env` deben apuntar a las URLs públicas reales del entorno nuevo; `MS_TENANT_ID`/`MS_CLIENT_ID`/`MS_CLIENT_SECRET` normalmente son los mismos (mismo tenant/App Registration), salvo que el entorno nuevo use un tenant distinto.
+1. **Redirect URI en Azure AD**: agregar `http://<host-nuevo>/api/auth/microsoft/callback` (y los otros dos de la sección 1 si cambia todo el dominio) a la misma App Registration. Si cambia el dominio/puerto público, el Redirect URI viejo no sirve — hay que agregar el nuevo (se puede dejar el anterior también, no hace falta borrarlo).
+2. **Variables de entorno**: `BACKEND_PUBLIC_URL`, `IDENTITY_BROKER_PUBLIC_URL` y `FRONTEND_URL` en `.env` deben apuntar a las URLs públicas reales del entorno nuevo (normalmente las tres al mismo host, vía el proxy); `MS_TENANT_ID`/`MS_CLIENT_ID`/`MS_CLIENT_SECRET` normalmente son los mismos (mismo tenant/App Registration), salvo que el entorno nuevo use un tenant distinto.
 3. **Bootstrap del admin**: correr `bootstrap_admin.py` (arriba) con el email real de quien va a administrar ese entorno — `identity.users` arranca vacía en cada base de datos nueva, no se migra sola.
 4. **Login**: entrar con esa cuenta desde el frontend del entorno nuevo para activarla.
 
@@ -367,13 +391,22 @@ Un volumen de Postgres existente que se copia/restaura entre entornos (backup re
 ### Alta de usuarios (solo admin)
 
 ```powershell
-curl -X POST http://localhost:8001/api/admin/users --cookie "mailingai_session=<tu cookie de sesion admin>" `
+curl -X POST http://<host>/api/admin/users --cookie "mailingai_session=<tu cookie de sesion admin>" `
   -H "Content-Type: application/json" -d '{\"email_address\":\"colega@empresa.com\",\"display_name\":\"Colega\"}'
-curl http://localhost:8001/api/admin/users --cookie "mailingai_session=<...>"
-curl -X PATCH http://localhost:8001/api/admin/users/<user_id> --cookie "mailingai_session=<...>" -H "Content-Type: application/json" -d '{\"enabled\":false}'
+curl http://<host>/api/admin/users --cookie "mailingai_session=<...>"
+curl -X PATCH http://<host>/api/admin/users/<user_id> --cookie "mailingai_session=<...>" -H "Content-Type: application/json" -d '{\"enabled\":false}'
 ```
 
 La cuenta queda "pendiente de primer login" (`ms_object_id` nulo) hasta que la persona entra por primera vez con SSO — recién ahí se vincula. Desactivar (`enabled:false`) revoca todas sus sesiones activas de inmediato.
+
+Para dar de alta una cuenta **local** en vez de SSO, se manda `auth_method`, `username` y `password` (mínimo 8 caracteres):
+
+```powershell
+curl -X POST http://<host>/api/admin/users --cookie "mailingai_session=<tu cookie de sesion admin>" `
+  -H "Content-Type: application/json" -d '{\"email_address\":\"colega@empresa.com\",\"display_name\":\"Colega\",\"auth_method\":\"local\",\"username\":\"colega\",\"password\":\"unaClaveTemporal123\"}'
+```
+
+Esa contraseña es temporal: la persona la va a tener que cambiar (`POST /api/auth/change-password`) apenas entre con `POST /api/auth/local-login`. No hay recuperación de contraseña por email — si la olvida, el admin la resetea.
 
 ### Expedientes y buzones: dueño + compartición
 
