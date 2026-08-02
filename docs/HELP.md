@@ -37,7 +37,7 @@ No hay registro por tu cuenta — si no puedes entrar, pídele a un administrado
 
 ## Notificaciones
 
-La campanita del panel lateral avisa de eventos como: te compartieron un expediente o un buzón, un análisis de IA terminó, un expediente tuyo tiene la revisión vencida, o una sincronización de buzones trajo correos nuevos. Si hay un remitente de notificaciones configurado (Configuración, solo admin), esos mismos avisos también llegan por correo real.
+La campanita del panel lateral avisa de eventos como: te compartieron un expediente o un buzón, un análisis de IA terminó, un expediente tuyo tiene la revisión vencida, o una sincronización de buzones trajo correos nuevos. Si hay un remitente de notificaciones configurado (Configuración, solo admin), algunos de esos avisos también llegan por correo real: expedientes o buzones compartidos, cuentas creadas, análisis de IA terminados y sincronizaciones de buzones. Los recordatorios de revisión vencida, por ahora, se muestran solo dentro de la aplicación.
 
 ## Formato de texto (Markdown)
 

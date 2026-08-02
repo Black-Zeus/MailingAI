@@ -169,7 +169,7 @@ El email **debe** corresponder a una cuenta real de Microsoft dentro del tenant 
 
 Cada entorno con una base de datos nueva (volumen de Postgres recién creado, o `identity.users` vacía por cualquier motivo) necesita repetir estos pasos — son independientes del código, que no cambia entre entornos:
 
-1. **Redirect URI en Azure AD**: agregar `http://<host-nuevo>/api/auth/microsoft/callback` (y los otros dos de [`AZURE_SETUP.md`](AZURE_SETUP.md) si cambia todo el dominio) a la misma App Registration — no hace falta borrar los anteriores.
+1. **Redirect URI en Azure AD**: agregar los dos Redirect URI del entorno nuevo indicados en [`AZURE_SETUP.md`](AZURE_SETUP.md) (el callback del `backend` y el de `identity-broker`) a la misma App Registration — no hace falta borrar los anteriores.
 2. **Variables de entorno**: `BACKEND_PUBLIC_URL`, `IDENTITY_BROKER_PUBLIC_URL` y `FRONTEND_URL` en `.env` deben apuntar a las URLs públicas reales del entorno nuevo; `MS_TENANT_ID`/`MS_CLIENT_ID`/`MS_CLIENT_SECRET` normalmente son los mismos (misma App Registration), salvo que el entorno nuevo use un tenant distinto.
 3. **Bootstrap del admin**: correr `bootstrap_admin.py` (arriba) con el email real de quien va a administrar ese entorno.
 4. **Login**: entrar con esa cuenta desde el frontend del entorno nuevo para activarla.
