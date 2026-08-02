@@ -1,6 +1,8 @@
 # Workflows de MailingAI — detalle por nodo
 
-Documentación de los 16 workflows de esta carpeta: qué hace cada uno y, dentro de cada uno, qué hace cada nodo. Para instrucciones de instalación/importación ver [`docs/INSTALL.md`](../../docs/INSTALL.md).
+Documentación nodo por nodo de los workflows `00`-`09` (el núcleo de fetch/carpetas/gráficos, verificado en vivo contra el buzón real durante esa fase del proyecto). Los workflows `10`-`16`, agregados después, están listados más abajo con una descripción breve pero **todavía no tienen el mismo detalle nodo por nodo ni verificación narrada acá** — no se documentaron a este nivel para no fabricar un relato de verificación que no se hizo con el mismo rigor. Para instrucciones de instalación/importación ver [`docs/INSTALL.md`](../../docs/INSTALL.md).
+
+> **Nota de vigencia (revisar antes de confiar en cualquier mención a "MailingAI Graph OAuth2" más abajo):** las llamadas a Microsoft Graph descritas en este documento como hechas "con la credencial `MailingAI Graph OAuth2`" ya **no** funcionan así. Desde que `identity-broker` pasó a manejar los tokens (ver [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)), esos mismos nodos HTTP Request arman el header `Authorization: Bearer ...` a mano, con un token que piden primero a `identity-broker` (`GET http://identity-broker:8000/internal/token/{mailbox_account_id}`) — no usan ninguna credencial de n8n. Se dejaron las menciones originales a la credencial en las secciones de abajo porque documentan una decisión de diseño real de esa época (por qué el tipo `oAuth2Api` genérico y no el nativo de n8n) que sigue siendo información útil si alguna vez se vuelve a necesitar una credencial Graph nativa en n8n — pero no describen el mecanismo vigente hoy.
 
 Convención de nombres: el prefijo numérico indica el orden de uso, no de importación (todos se importan juntos). `00` es un subworkflow interno que llaman `01`, `02`, `03` y `09` — nunca se ejecuta solo. `05` no usa el subworkflow `00`: tiene su propia llamada a Graph porque necesita traer también los adjuntos de cada correo. `06` descubre la estructura de carpetas del buzón. `07` es el orquestador que dispara el backend FastAPI. `08` trae el contenido real de un adjunto puntual, a pedido directo del backend (no pasa por `07`). `09` busca adjuntos de cualquier formato en una o varias carpetas elegidas, con un patrón opcional (regex o texto libre).
 
@@ -15,6 +17,17 @@ Convención de nombres: el prefijo numérico indica el orden de uso, no de impor
 07 - Execute Analysis Job                     <- webhook interno, lo dispara el backend FastAPI
 08 - Download Attachment                      <- webhook síncrono, trae el contenido real de un adjunto
 09 - Search Attachments (carpetas + patrón)   <- busca adjuntos de cualquier formato por carpeta(s) + patrón opcional
+```
+
+Workflows agregados después de la Fase 4 (sin detalle nodo por nodo en este documento todavía — descripción funcional, ver el propio JSON para el detalle):
+
+```text
+10 - Retrace Attachments (mensaje puntual)         <- webhook síncrono, re-trae adjuntos de UN mensaje ya guardado
+11 - Mark Fetch Run Failed (error handler compartido) <- errorWorkflow de varios de los anteriores, marca fetch_runs failed
+12 - Send Case Email                               <- webhook síncrono, envía un expediente por correo (Graph Send Mail, HTML)
+13 - Limpieza de gráficos huérfanos (cron)         <- diario, borra PNGs de /files sin fila viva en chart_runs
+14 - Recordatorios de próxima revisión (cron)      <- diario, notifica expedientes con next_review_at vencido
+15 - Sincronización delta de buzones (cron + webhook) <- diario o forzado a mano, trae solo lo nuevo desde last_synced_at
 ```
 
 Los workflows `01`, `02`, `03`, `04` y `05` se pueden seguir ejecutando manualmente igual que siempre (botón "Execute workflow", sin tocar nada) — sus parámetros por defecto no cambiaron. Desde la Fase 3, además, cada uno acepta que le pasen los mismos parámetros desde afuera (por eso `07` los puede invocar): cada campo de `Set: Parametros` quedó como `{{ $json.campo || <default de siempre> }}`, así que si no llega nada por fuera, el comportamiento es idéntico al de antes.
@@ -42,9 +55,11 @@ Un `INSERT`/`UPDATE` de Postgres sin `RETURNING` produce **cero items de salida*
 
 Aunque el JSON traiga `"active": true`, `n8n import:workflow` los deja `inactive` salvo que uses `--activeState=fromJson` (no lo usamos, para no activar por accidente algo con trigger real). El único workflow de este proyecto que necesita estar activo es el `07` (tiene el webhook) — `n8n/create-folder.sh` lo reactiva por SQL después de agrupar la carpeta, ya que la CLI no tiene un comando directo para esto.
 
-### 5. La credencial de Graph es OAuth2 genérica (`oAuth2Api`), no la "Microsoft OAuth2 API" nativa de n8n
+### 5. [Histórico, superado por identity-broker] La credencial de Graph era OAuth2 genérica (`oAuth2Api`), no la "Microsoft OAuth2 API" nativa de n8n
 
-Se probó primero con el tipo de credencial nativo `microsoftOAuth2Api`. Al hacer "Connect my account" con una App Registration **single-tenant** (el caso normal), Azure devuelve:
+**Esta nota describe una decisión de una versión anterior de la arquitectura.** Hoy n8n no maneja ninguna credencial OAuth2 de Graph — los nodos piden un token a `identity-broker` (ver nota de vigencia al inicio del documento). Se conserva el relato porque documenta un error real (`AADSTS50194`) que volvería a aparecer si alguna vez se reintroduce una credencial OAuth2 nativa en n8n.
+
+Se probó primero con el tipo de credencial nativo `microsoftOAuth2Api`. Al hacer "Connect my account" con una App Registration **single-tenant** (el caso normal), Azure devolvía:
 
 ```text
 AADSTS50194: Application '...' is not configured as a multi-tenant application.
@@ -115,9 +130,9 @@ Notas sobre esta configuración:
 
 Esto evalúa a `NULL` (sin error) si la carpeta todavía no fue descubierta, y a la carpeta real una vez que sí lo fue — sin depender del orden en que el usuario corra los workflows. El `ON CONFLICT` además usa `COALESCE(EXCLUDED.folder_id, mailing.messages.folder_id)` para no pisar un `folder_id` ya resuelto con `NULL` si una corrida posterior no logra resolverlo.
 
-### 9. Reimportar credenciales pisa el token OAuth2 ya conectado
+### 9. [Histórico, superado por identity-broker] Reimportar credenciales pisaba el token OAuth2 ya conectado
 
-`n8n import:credentials` sobrescribe el `data` completo de la credencial en disco — incluido el `oauthTokenData` que `Connect my account` completa del lado del servidor una vez que el usuario autoriza. Si corres el import completo (sin `-SkipCredentials`) después de haber conectado la cuenta real de Graph, la credencial vuelve a quedar sin token y el próximo job falla con `Unable to sign without access token`, aunque nada haya cambiado en el JSON de la credencial en disco. **Si solo cambiaste archivos de workflow, usa `./scripts/import-n8n.sh --skip-credentials`** para no perder el token ya conectado.
+**Ya no aplica** — desde que ningún nodo usa una credencial OAuth2 de Graph (ver nota de vigencia al inicio), reimportar credenciales no puede perder ningún token de Graph. Se conserva la nota porque `n8n import:credentials` sigue sobrescribiendo el `data` completo de cualquier credencial en disco (comportamiento general de la CLI, no específico de Graph) — si en el futuro se agrega otra credencial con `oauthTokenData` server-side, el mismo problema puede volver a aparecer. Con las credenciales actuales del proyecto (Postgres, webhook secret) no hay ningún token que se pueda perder así.
 
 ### 10. Microsoft Graph rechaza combinar `$search` con `$filter` en `/messages` ("Bad request")
 
@@ -245,10 +260,13 @@ No se ejecuta manualmente. Recibe parámetros de otro workflow vía el nodo `Exe
 **Nodos, en orden:**
 
 1. **`When Executed by Another Workflow`** — `n8n-nodes-base.executeWorkflowTrigger`
-   Trigger del subworkflow. Declara los 6 parámetros de entrada de la tabla de arriba (`workflowInputs`). No hace nada más; solo expone `$json.folder`, `$json.filter`, etc. al resto del workflow.
+   Trigger del subworkflow. Declara los 6 parámetros de entrada de la tabla de arriba (`workflowInputs`). No hace nada más; solo expone `$json.folder`, `$json.filter`, etc. al resto del workflow. `mailbox_account_id` (usado por el nodo siguiente) se lee del mismo item aunque no esté en esa tabla, con `|| 1` como fallback si no llega.
+
+1b. **`Obtener Token de Buzón`** — `n8n-nodes-base.httpRequest`
+   `GET http://identity-broker:8000/internal/token/{mailbox_account_id}` (ruta interna de `identity-broker`, sin autenticación propia — solo alcanzable dentro de la red Docker, ver [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)). Devuelve `{access_token, ...}`: un token de Graph vigente para ese buzón, refrescándolo del lado del broker si hiciera falta. Este es el mecanismo real de autenticación contra Graph — reemplaza a la credencial `MailingAI Graph OAuth2` mencionada más abajo en este documento (histórica, ver nota de vigencia al inicio).
 
 2. **`Graph: List Messages`** — `n8n-nodes-base.httpRequest`
-   `GET` contra Microsoft Graph, usando la credencial `MailingAI Graph OAuth2` (`oAuth2Api`, genérica — ver nota técnica 5).
+   `GET` contra Microsoft Graph. **No usa ninguna credencial de n8n**: el header `Authorization` se arma a mano como `Bearer {{ $('Obtener Token de Buzón').item.json.access_token }}` (`authentication` queda sin configurar en el nodo).
    - URL: si `folder` viene con valor, pega contra `https://graph.microsoft.com/v1.0/me/mailFolders/{folder}/messages`; si viene vacío, pega contra `https://graph.microsoft.com/v1.0/me/messages` (todas las carpetas).
    - Query params: `$filter`, `$search`, `$top` (default 50 si no viene), `$orderby=sentDateTime desc`.
    - Devuelve el objeto crudo de Graph, con el array de mensajes en `value`.
@@ -439,7 +457,7 @@ Trazabilidad: busca en **Enviados** todos los correos que **tengan adjunto** y *
    Inserta en `mailing.fetch_runs` con `folder='sentitems'`, `date_from`/`date_to` (ya en ISO), `search_query`, `filter_description`, `top_requested`, `status='started'`. Devuelve `run_id`.
 
 5. **`Graph: List Sent With Attachments`** — `n8n-nodes-base.httpRequest`
-   `GET /me/mailFolders/SentItems/messages` con **solo** `$filter=graph_filter` (`hasAttachments eq true and sentDateTime ge ... and sentDateTime le ...`) y `$top`, con paginación real activada. **No manda `$search` ni `$orderby`** — Graph rechaza ambas combinaciones junto con este `$filter` (ver Notas técnicas 10 y 11). Usa la credencial `MailingAI Graph OAuth2`. Devuelve todos los correos de Enviados con adjunto en el rango de fechas, sin filtrar todavía por palabra clave.
+   `GET /me/mailFolders/SentItems/messages` con **solo** `$filter=graph_filter` (`hasAttachments eq true and sentDateTime ge ... and sentDateTime le ...`) y `$top`, con paginación real activada. **No manda `$search` ni `$orderby`** — Graph rechaza ambas combinaciones junto con este `$filter` (ver Notas técnicas 10 y 11). Igual que en el subworkflow `00`, el token sale de un nodo `Obtener Token de Buzón` previo (`identity-broker`), no de una credencial de n8n (ver nota de vigencia al inicio del documento). Devuelve todos los correos de Enviados con adjunto en el rango de fechas, sin filtrar todavía por palabra clave.
 
 6. **`Split Out Messages`** — `n8n-nodes-base.splitOut`
    Separa el array `value` en un item por correo.
@@ -609,8 +627,8 @@ A pedido del usuario: "buscar adjuntos sin importar el formato, eligiendo una o 
 
 ## Credenciales que usan estos workflows
 
-- **`MailingAI Graph OAuth2`** (`oAuth2Api`) — usada por `Graph: List Messages` (subworkflow 00), en el workflow 05 por `Graph: List Sent With Attachments` y `Graph: List Message Attachments`, en el workflow 06 por los tres nodos `Graph: List Level N Folders`, y en el workflow 09 por `Graph: List Message Attachments`.
-- **`MailingAI Postgres`** (`postgres`) — usada por todos los nodos `Postgres: *` en los 10 workflows.
-- **`MailingAI Webhook Secret`** (`httpHeaderAuth`) — usada por el nodo `Webhook` del workflow 07, para validar el header `X-MailingAI-Secret` que manda el backend.
+- **`MailingAI Postgres`** (`postgres`) — usada por todos los nodos `Postgres: *` en los 16 workflows.
+- **`MailingAI Webhook Secret`** (`httpHeaderAuth`) — usada por el nodo `Webhook` de cada workflow que expone uno (`07`, `08`, `10`, `12`, `15`), para validar el header `X-MailingAI-Secret` que manda el backend (o, en `15`, también el botón "Sincronizar" del frontend).
+- **`MailingAI Graph OAuth2`** (`oAuth2Api`) — **ninguna llamada real a Graph la usa hoy.** Todas las llamadas a Microsoft Graph (`Graph: List Messages`, `Graph: List Sent With Attachments`, `Graph: List Message Attachments`, `Graph: List Level N Folders`, `Graph: Get Attachment Content`, `Graph: Send Mail`, en los workflows `00`, `05`, `06`, `08`, `09`, `10`, `12`) arman el header `Authorization: Bearer ...` a mano con un token pedido primero a `identity-broker` en un nodo `Obtener Token de Buzón` (`GET http://identity-broker:8000/internal/token/{mailbox_account_id}`) — confirmado leyendo el JSON de cada workflow, no asumido por analogía. Esta credencial es un resabio de una versión anterior de la arquitectura — se sigue creando/importando por compatibilidad con `n8n/import.sh`, pero no hace falta completarla con datos reales (ver [`docs/AZURE_SETUP.md`](../../docs/AZURE_SETUP.md)).
 
-Las tres quedan pre-enlazadas por `id` cuando se importan con `scripts/import-n8n.sh` / `n8n/import.sh` (ver README de la raíz del proyecto).
+Las credenciales quedan pre-enlazadas por `id` cuando se importan con `scripts/import-n8n.sh` / `n8n/import.sh` (ver [`docs/INSTALL.md`](../../docs/INSTALL.md)).
