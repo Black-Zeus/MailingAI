@@ -142,6 +142,17 @@ async def download_attachment(message_id: str, attachment_id: str, pool: PoolDep
     )
 
 
+@router.delete("/messages/{message_id}/attachments/{attachment_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_attachment(message_id: str, attachment_id: str, pool: PoolDep, user: CurrentUserDep) -> None:
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    message = await messages_service.get_message(pool, message_id, accessible_mailbox_ids=accessible_mailbox_ids)
+    if message is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Mensaje no encontrado")
+    deleted = await messages_service.delete_attachment(pool, message_id, attachment_id)
+    if not deleted:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Adjunto no encontrado")
+
+
 @router.post("/messages/{message_id}/retrace-attachments", response_model=RetraceAttachmentsResponse)
 async def retrace_attachments(message_id: str, pool: PoolDep, user: CurrentUserDep) -> RetraceAttachmentsResponse:
     accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)

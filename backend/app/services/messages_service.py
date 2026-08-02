@@ -253,6 +253,10 @@ async def set_attachment_hash(
     await messages_repository.set_attachment_hash(pool, message_id, attachment_id, sha256)
 
 
+async def delete_attachment(pool: asyncpg.Pool, message_id: str, attachment_id: str) -> bool:
+    return await messages_repository.delete_attachment(pool, message_id, attachment_id)
+
+
 async def list_all_attachments(
     pool: asyncpg.Pool,
     *,

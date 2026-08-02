@@ -255,6 +255,20 @@ async def set_attachment_hash(
         await conn.execute(query, message_id, attachment_id, sha256)
 
 
+async def delete_attachment(pool: asyncpg.Pool, message_id: str, attachment_id: str) -> bool:
+    """Borra solo el registro de trazabilidad local -- nunca toca Graph ni el
+    correo real. Si el mensaje se vuelve a indexar/retrazar, el adjunto puede
+    reaparecer (mismo comportamiento que un mensaje borrado y reindexado)."""
+    query = """
+        DELETE FROM mailing.message_attachments
+        WHERE message_id = $1 AND attachment_id = $2
+        RETURNING attachment_row_id;
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(query, message_id, attachment_id)
+    return row is not None
+
+
 async def list_all_attachments(
     pool: asyncpg.Pool,
     *,
