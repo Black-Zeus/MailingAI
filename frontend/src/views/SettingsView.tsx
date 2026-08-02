@@ -1,28 +1,39 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
   activateAIProvider,
+  cancelMailboxIndex,
   claimMailbox,
   createAIProvider,
   createUser,
   deleteAIProvider,
+  deleteFinishedMailboxIndexRuns,
   deleteMailbox,
+  getMailboxDeletionImpact,
   getAIHealth,
   getAIPolicy,
+  getLatestMailboxIndex,
+  getMailboxIndexRun,
   getMailboxConnectUrl,
   getNotificationSender,
   listAIProviderModels,
   listAIProviders,
   listMailboxes,
+  listMailboxIndexRuns,
   listMailboxShares,
   listUserDirectory,
+  deleteUser,
+  getUserDeletionImpact,
   listUsers,
+  resetUserPassword,
   revokeMailboxShare,
   setNotificationSender,
   shareMailbox,
+  startMailboxIndex,
   testAIProvider,
   testMailbox,
   testNotificationSender,
+  triggerMailboxDeltaSync,
   updateAIPolicy,
   updateAIProvider,
   updateMailbox,
@@ -30,12 +41,32 @@ import {
 } from '../api/client'
 import type { AIHealthResponse, AIPolicy, AIProviderRead, AIProviderType } from '../types/ai'
 import { AI_POLICY_LABELS, AI_PROVIDER_TYPE_LABELS, isLocalProviderType } from '../types/ai'
-import type { MailboxAccountRead, MailboxShareRead } from '../types/mailboxes'
-import type { UserDirectoryEntry, UserRead } from '../types/users'
+import type { MailboxAccountRead, MailboxDeletionImpact, MailboxShareRead } from '../types/mailboxes'
+import type { UserDeletionImpact, UserDirectoryEntry, UserRead } from '../types/users'
+import type { MailboxIndexRunRead, MailboxIndexStatus } from '../types/mailboxIndex'
+import { MAILBOX_INDEX_STATUS_LABELS } from '../types/mailboxIndex'
+import { MailboxIndexProgress } from '../components/MailboxIndexProgress'
+import { formatNumber } from '../utils/format'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { ShareModal } from '../components/ShareModal'
 import { UserDetailModal } from '../components/UserDetailModal'
 import { UserFormModal, type UserFormValues } from '../components/UserFormModal'
+import { ActionButton } from '../components/ActionButton'
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Flag,
+  FolderSync,
+  KeyRound,
+  Pause,
+  Pencil,
+  Play,
+  RefreshCw,
+  Share2,
+  Trash2,
+  Zap,
+} from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { useBodyScrollLock } from '../utils/modalScrollLock'
@@ -62,10 +93,11 @@ const MODEL_PLACEHOLDER: Record<AIProviderType, string> = {
   anthropic: 'ej. claude-3-5-sonnet-20241022',
 }
 
-type SettingsTab = 'mailboxes' | 'ai' | 'notifications' | 'users'
+type SettingsTab = 'mailboxes' | 'indexing' | 'ai' | 'notifications' | 'users'
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   mailboxes: 'Buzones',
+  indexing: 'Indexación',
   ai: 'Inteligencia artificial',
   notifications: 'Notificaciones',
   users: 'Usuarios',
@@ -74,6 +106,18 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 const ROLE_LABELS: Record<string, string> = {
   user: 'Usuario',
   admin: 'Admin',
+}
+
+const MAILBOX_INDEX_ACTIVE_STATUSES: MailboxIndexStatus[] = ['queued', 'running']
+const MAILBOX_INDEX_TERMINAL_STATUSES: MailboxIndexStatus[] = ['success', 'partial', 'failed', 'cancelled']
+
+const MAILBOX_INDEX_STATUS_BADGE: Record<MailboxIndexStatus, string> = {
+  queued: 'queued',
+  running: 'running',
+  success: 'success',
+  partial: 'failed',
+  failed: 'failed',
+  cancelled: 'cancelled',
 }
 
 export function SettingsView() {
@@ -113,6 +157,8 @@ export function SettingsView() {
   const [testingMailboxId, setTestingMailboxId] = useState<number | null>(null)
   const [deleteMailboxTarget, setDeleteMailboxTarget] = useState<MailboxAccountRead | null>(null)
   const [deletingMailbox, setDeletingMailbox] = useState(false)
+  const [deleteMailboxImpact, setDeleteMailboxImpact] = useState<MailboxDeletionImpact | null>(null)
+  const [loadingDeleteMailboxImpact, setLoadingDeleteMailboxImpact] = useState(false)
   const [shareMailboxTarget, setShareMailboxTarget] = useState<MailboxAccountRead | null>(null)
   const [mailboxShares, setMailboxShares] = useState<MailboxShareRead[]>([])
   const [sharingMailbox, setSharingMailbox] = useState(false)
@@ -127,6 +173,28 @@ export function SettingsView() {
   const [savingUserForm, setSavingUserForm] = useState(false)
   const [userToggleTarget, setUserToggleTarget] = useState<UserRead | null>(null)
   const [togglingUser, setTogglingUser] = useState(false)
+  const [resetPasswordTarget, setResetPasswordTarget] = useState<UserRead | null>(null)
+  const [resetPasswordValue, setResetPasswordValue] = useState('')
+  const [resettingPassword, setResettingPassword] = useState(false)
+  const [deleteUserTarget, setDeleteUserTarget] = useState<UserRead | null>(null)
+  const [deleteUserImpact, setDeleteUserImpact] = useState<UserDeletionImpact | null>(null)
+  const [loadingDeleteUserImpact, setLoadingDeleteUserImpact] = useState(false)
+  const [deletingUser, setDeletingUser] = useState(false)
+
+  const [activeMailboxIndex, setActiveMailboxIndex] = useState<MailboxIndexRunRead | null>(null)
+  const [mailboxIndexHistory, setMailboxIndexHistory] = useState<MailboxIndexRunRead[]>([])
+  const [selectedIndexMailboxId, setSelectedIndexMailboxId] = useState<number | ''>('')
+  const [startingMailboxIndex, setStartingMailboxIndex] = useState(false)
+  const [triggeringDeltaSync, setTriggeringDeltaSync] = useState(false)
+  const [triggeringDeltaSyncMailboxId, setTriggeringDeltaSyncMailboxId] = useState<number | null>(null)
+  const [cancellingMailboxIndex, setCancellingMailboxIndex] = useState(false)
+  const [clearMailboxIndexModalOpen, setClearMailboxIndexModalOpen] = useState(false)
+  const [clearingMailboxIndexHistory, setClearingMailboxIndexHistory] = useState(false)
+  const [refreshingMailboxIndex, setRefreshingMailboxIndex] = useState(false)
+  const [expandedIndexRunId, setExpandedIndexRunId] = useState<string | null>(null)
+  const [expandedIndexRunDetail, setExpandedIndexRunDetail] = useState<MailboxIndexRunRead | null>(null)
+  const [loadingExpandedIndexRun, setLoadingExpandedIndexRun] = useState(false)
+  const mailboxIndexPollRef = useRef<number | null>(null)
 
   const [notificationSender, setNotificationSenderState] = useState<MailboxAccountRead | null>(null)
   const [loadingSender, setLoadingSender] = useState(false)
@@ -159,6 +227,149 @@ export function SettingsView() {
       setMailboxError(null)
     } catch (err) {
       setMailboxError(err instanceof ApiError ? err.message : 'No se pudo consultar las cuentas de buzón.')
+    }
+  }
+
+  async function loadMailboxIndexHistory() {
+    try {
+      setMailboxIndexHistory(await listMailboxIndexRuns(10))
+    } catch {
+      setMailboxIndexHistory([])
+    }
+  }
+
+  function stopMailboxIndexPolling() {
+    if (mailboxIndexPollRef.current !== null) {
+      window.clearInterval(mailboxIndexPollRef.current)
+      mailboxIndexPollRef.current = null
+    }
+  }
+
+  function startMailboxIndexPolling() {
+    stopMailboxIndexPolling()
+    mailboxIndexPollRef.current = window.setInterval(async () => {
+      try {
+        const run = await getLatestMailboxIndex()
+        setActiveMailboxIndex(run)
+        if (run && MAILBOX_INDEX_TERMINAL_STATUSES.includes(run.status)) {
+          stopMailboxIndexPolling()
+          await loadMailboxIndexHistory()
+          showToast(
+            run.status === 'success'
+              ? `Indexación completa: ${formatNumber(run.total_messages_indexed)} correo(s) en ${formatNumber(run.total_folders)} carpeta(s).`
+              : run.status === 'partial'
+                ? `Indexación terminada con carpetas incompletas — ${formatNumber(run.total_messages_indexed)} correo(s) indexados.`
+                : run.status === 'cancelled'
+                  ? 'Indexación cancelada.'
+                  : `La indexación falló: ${run.error_message ?? 'sin detalle'}.`,
+            run.status === 'failed' || run.status === 'partial',
+          )
+        }
+      } catch {
+        // se reintenta en el siguiente tick
+      }
+    }, 4000)
+  }
+
+  async function handleStartMailboxIndex(mailboxAccountId: number) {
+    setStartingMailboxIndex(true)
+    try {
+      const run = await startMailboxIndex(mailboxAccountId)
+      setActiveMailboxIndex(run)
+      setTab('indexing')
+      startMailboxIndexPolling()
+      showToast('Indexación completa iniciada — es una tarea desatendida, no hace falta quedarse esperando.')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo iniciar la indexación completa.', true)
+    } finally {
+      setStartingMailboxIndex(false)
+    }
+  }
+
+  async function handleTriggerDeltaSync() {
+    setTriggeringDeltaSync(true)
+    try {
+      await triggerMailboxDeltaSync()
+      showToast('Sincronización delta iniciada — es una ejecución automática en segundo plano, no hace falta quedarse esperando.')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo disparar la sincronización delta.', true)
+    } finally {
+      setTriggeringDeltaSync(false)
+    }
+  }
+
+  async function handleTriggerDeltaSyncForMailbox(mailbox: MailboxAccountRead) {
+    setTriggeringDeltaSyncMailboxId(mailbox.mailbox_account_id)
+    try {
+      await triggerMailboxDeltaSync(mailbox.mailbox_account_id)
+      showToast(`Sincronización de "${mailbox.label}" iniciada — es una ejecución automática en segundo plano.`)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo disparar la sincronización de este buzón.', true)
+    } finally {
+      setTriggeringDeltaSyncMailboxId(null)
+    }
+  }
+
+  async function handleCancelMailboxIndex() {
+    if (!activeMailboxIndex) return
+    setCancellingMailboxIndex(true)
+    try {
+      const run = await cancelMailboxIndex(activeMailboxIndex.index_run_id)
+      setActiveMailboxIndex(run)
+      showToast('Cancelación solicitada — se detiene en cuanto termine el paso en curso.')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo cancelar la indexación.', true)
+    } finally {
+      setCancellingMailboxIndex(false)
+    }
+  }
+
+  async function handleRefreshMailboxIndex() {
+    setRefreshingMailboxIndex(true)
+    try {
+      const run = await getLatestMailboxIndex()
+      setActiveMailboxIndex(run)
+      await loadMailboxIndexHistory()
+      if (run && MAILBOX_INDEX_ACTIVE_STATUSES.includes(run.status) && mailboxIndexPollRef.current === null) {
+        startMailboxIndexPolling()
+      }
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo actualizar el estado de indexación.', true)
+    } finally {
+      setRefreshingMailboxIndex(false)
+    }
+  }
+
+  async function handleToggleHistoryRow(run: MailboxIndexRunRead) {
+    if (expandedIndexRunId === run.index_run_id) {
+      setExpandedIndexRunId(null)
+      setExpandedIndexRunDetail(null)
+      return
+    }
+    setExpandedIndexRunId(run.index_run_id)
+    setExpandedIndexRunDetail(null)
+    setLoadingExpandedIndexRun(true)
+    try {
+      setExpandedIndexRunDetail(await getMailboxIndexRun(run.index_run_id))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo cargar el detalle de esta corrida.', true)
+      setExpandedIndexRunId(null)
+    } finally {
+      setLoadingExpandedIndexRun(false)
+    }
+  }
+
+  async function handleClearMailboxIndexHistory() {
+    setClearingMailboxIndexHistory(true)
+    try {
+      const result = await deleteFinishedMailboxIndexRuns()
+      showToast(`${result.deleted} corrida(s) eliminada(s) del historial`)
+      setClearMailboxIndexModalOpen(false)
+      await loadMailboxIndexHistory()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo limpiar el historial.', true)
+    } finally {
+      setClearingMailboxIndexHistory(false)
     }
   }
 
@@ -232,6 +443,24 @@ export function SettingsView() {
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('message', onMessage)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin])
+
+  useEffect(() => {
+    // Al montar (incluye recargar la página), retoma una indexación que haya
+    // quedado corriendo en el servidor -- el progreso vive ahí, no se pierde
+    // con un refresh ni si se cambia de pestaña.
+    if (!isAdmin) return
+    loadMailboxIndexHistory()
+    getLatestMailboxIndex()
+      .then((run) => {
+        setActiveMailboxIndex(run)
+        if (run && MAILBOX_INDEX_ACTIVE_STATUSES.includes(run.status)) {
+          startMailboxIndexPolling()
+        }
+      })
+      .catch(() => {})
+    return () => stopMailboxIndexPolling()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin])
 
@@ -509,13 +738,30 @@ export function SettingsView() {
     }
   }
 
+  async function openDeleteMailboxModal(mailbox: MailboxAccountRead) {
+    setDeleteMailboxTarget(mailbox)
+    setDeleteMailboxImpact(null)
+    setLoadingDeleteMailboxImpact(true)
+    try {
+      setDeleteMailboxImpact(await getMailboxDeletionImpact(mailbox.mailbox_account_id))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo calcular el impacto de la eliminación.', true)
+    } finally {
+      setLoadingDeleteMailboxImpact(false)
+    }
+  }
+
   async function handleDeleteMailbox() {
     if (!deleteMailboxTarget) return
     setDeletingMailbox(true)
     try {
-      await deleteMailbox(deleteMailboxTarget.mailbox_account_id)
-      showToast('Cuenta eliminada')
+      const result = await deleteMailbox(deleteMailboxTarget.mailbox_account_id)
+      showToast(
+        `Cuenta eliminada — ${result.message_count} correo(s), ${result.cases_deleted} expediente(s) completo(s) borrados` +
+          (result.cases_affected > 0 ? `, ${result.cases_affected} expediente(s) actualizado(s).` : '.'),
+      )
       setDeleteMailboxTarget(null)
+      setDeleteMailboxImpact(null)
       await loadMailboxes()
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar la cuenta.', true)
@@ -571,8 +817,15 @@ export function SettingsView() {
           email_address: values.email_address.trim(),
           display_name: values.display_name.trim() || null,
           role: values.role,
+          auth_method: values.auth_method,
+          username: values.auth_method === 'local' ? values.username.trim() : null,
+          password: values.auth_method === 'local' ? values.password : null,
         })
-        showToast('Usuario creado. Queda pendiente de su primer login.')
+        showToast(
+          values.auth_method === 'local'
+            ? 'Cuenta local creada — comunicale la contraseña temporal por fuera del sistema.'
+            : 'Usuario creado. Queda pendiente de su primer login.',
+        )
       } else if (editingUserTarget) {
         await updateUser(editingUserTarget.user_id, {
           display_name: values.display_name.trim() || null,
@@ -586,6 +839,59 @@ export function SettingsView() {
       showToast(err instanceof ApiError ? err.message : 'No se pudo guardar el usuario.', true)
     } finally {
       setSavingUserForm(false)
+    }
+  }
+
+  async function handleResetPassword() {
+    if (!resetPasswordTarget) return
+    if (resetPasswordValue.length < 8) {
+      showToast('La contraseña nueva debe tener al menos 8 caracteres.', true)
+      return
+    }
+    setResettingPassword(true)
+    try {
+      await resetUserPassword(resetPasswordTarget.user_id, resetPasswordValue)
+      showToast('Contraseña reseteada — comunicásela a la persona por fuera del sistema, va a tener que cambiarla al entrar.')
+      setResetPasswordTarget(null)
+      setResetPasswordValue('')
+      await loadUsers()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo resetear la contraseña.', true)
+    } finally {
+      setResettingPassword(false)
+    }
+  }
+
+  async function openDeleteUserModal(target: UserRead) {
+    setDeleteUserTarget(target)
+    setDeleteUserImpact(null)
+    setLoadingDeleteUserImpact(true)
+    try {
+      setDeleteUserImpact(await getUserDeletionImpact(target.user_id))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo calcular el impacto de la eliminación.', true)
+    } finally {
+      setLoadingDeleteUserImpact(false)
+    }
+  }
+
+  async function handleDeleteUser() {
+    if (!deleteUserTarget) return
+    setDeletingUser(true)
+    try {
+      const result = await deleteUser(deleteUserTarget.user_id)
+      showToast(
+        result.cases_reassigned > 0
+          ? `Usuario eliminado — ${result.cases_reassigned} expediente(s) quedaron a tu nombre (con nota de a quién pertenecían).`
+          : 'Usuario eliminado.',
+      )
+      setDeleteUserTarget(null)
+      setDeleteUserImpact(null)
+      await loadUsers()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar el usuario.', true)
+    } finally {
+      setDeletingUser(false)
     }
   }
 
@@ -604,7 +910,11 @@ export function SettingsView() {
     }
   }
 
-  const visibleTabs: SettingsTab[] = isAdmin ? ['mailboxes', 'ai', 'notifications', 'users'] : ['mailboxes']
+  const visibleTabs: SettingsTab[] = isAdmin
+    ? ['mailboxes', 'indexing', 'ai', 'notifications', 'users']
+    : ['mailboxes']
+  const mailboxIndexBusy =
+    activeMailboxIndex !== null && MAILBOX_INDEX_ACTIVE_STATUSES.includes(activeMailboxIndex.status)
 
   return (
     <section>
@@ -688,61 +998,51 @@ export function SettingsView() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                            <button
-                              type="button"
-                              className="btn small primary icon-btn"
-                              disabled={testingMailboxId === m.mailbox_account_id}
-                              data-tooltip="Probar conexión"
-                              aria-label="Probar conexión"
+                            <ActionButton
+                              icon={Zap}
+                              label="Probar conexión"
+                              variant="primary"
+                              loading={testingMailboxId === m.mailbox_account_id}
                               onClick={() => handleTestMailbox(m)}
-                            >
-                              {testingMailboxId === m.mailbox_account_id ? '…' : '⚡'}
-                            </button>
+                            />
                             {m.owner_user_id === null && (
-                              <button
-                                type="button"
-                                className="btn small primary icon-btn"
-                                disabled={claimingMailboxId === m.mailbox_account_id}
-                                data-tooltip="Reclamar"
-                                aria-label="Reclamar"
+                              <ActionButton
+                                icon={Flag}
+                                label="Reclamar"
+                                variant="primary"
+                                loading={claimingMailboxId === m.mailbox_account_id}
                                 onClick={() => handleClaimMailbox(m)}
-                              >
-                                {claimingMailboxId === m.mailbox_account_id ? '…' : '⚑'}
-                              </button>
+                              />
+                            )}
+                            {isAdmin && (
+                              <ActionButton
+                                icon={FolderSync}
+                                label="Indexar buzón completo"
+                                disabled={mailboxIndexBusy}
+                                onClick={() => handleStartMailboxIndex(m.mailbox_account_id)}
+                              />
+                            )}
+                            {isAdmin && (
+                              <ActionButton
+                                icon={RefreshCw}
+                                label="Sincronizar (solo lo nuevo desde la última corrida)"
+                                loading={triggeringDeltaSyncMailboxId === m.mailbox_account_id}
+                                onClick={() => handleTriggerDeltaSyncForMailbox(m)}
+                              />
                             )}
                             {canManage && (
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                data-tooltip="Compartir"
-                                aria-label="Compartir"
-                                onClick={() => openShareMailboxModal(m)}
-                              >
-                                🔗
-                              </button>
+                              <ActionButton icon={Share2} label="Compartir" onClick={() => openShareMailboxModal(m)} />
                             )}
                             {canManage && (
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                disabled={togglingMailboxId === m.mailbox_account_id}
-                                data-tooltip={m.enabled ? 'Deshabilitar' : 'Habilitar'}
-                                aria-label={m.enabled ? 'Deshabilitar' : 'Habilitar'}
+                              <ActionButton
+                                icon={m.enabled ? Pause : Play}
+                                label={m.enabled ? 'Deshabilitar' : 'Habilitar'}
+                                loading={togglingMailboxId === m.mailbox_account_id}
                                 onClick={() => handleToggleMailboxEnabled(m)}
-                              >
-                                {togglingMailboxId === m.mailbox_account_id ? '…' : m.enabled ? '⏸' : '▶'}
-                              </button>
+                              />
                             )}
-                            {canManage && (
-                              <button
-                                type="button"
-                                className="btn small danger icon-btn"
-                                data-tooltip="Eliminar"
-                                aria-label="Eliminar"
-                                onClick={() => setDeleteMailboxTarget(m)}
-                              >
-                                🗑
-                              </button>
+                            {isAdmin && (
+                              <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => openDeleteMailboxModal(m)} />
                             )}
                           </div>
                         </td>
@@ -763,6 +1063,173 @@ export function SettingsView() {
             </div>
           </div>
         </div>
+      )}
+
+      {tab === 'indexing' && isAdmin && (
+        <>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Indexación completa de buzón</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span>{activeMailboxIndex ? MAILBOX_INDEX_STATUS_LABELS[activeMailboxIndex.status] : 'Sin corridas'}</span>
+              <ActionButton icon={RefreshCw} label="Actualizar" loading={refreshingMailboxIndex} onClick={handleRefreshMailboxIndex} />
+            </div>
+          </div>
+          <div className="panel-body">
+            <p style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>
+              Recorre todas las carpetas de un buzón desde el principio, una carpeta a la vez y con pausas entre
+              cada paso para no saturar el servidor ni Microsoft Graph. Es una tarea desatendida — se puede
+              cambiar de pestaña o cerrar la app y el progreso sigue en el servidor, consultable en cualquier
+              momento. Solo puede haber una corrida activa a la vez en todo el sistema.
+            </p>
+
+            {!mailboxIndexBusy && (
+              <div className="field" style={{ maxWidth: 420, marginBottom: 18 }}>
+                <label htmlFor="mailbox-index-select">Buzón a indexar</label>
+                <select
+                  id="mailbox-index-select"
+                  value={selectedIndexMailboxId}
+                  onChange={(e) => setSelectedIndexMailboxId(e.target.value ? Number(e.target.value) : '')}
+                >
+                  <option value="">Selecciona un buzón…</option>
+                  {mailboxes?.map((m) => (
+                    <option key={m.mailbox_account_id} value={m.mailbox_account_id}>
+                      {m.label} — {m.email_address || 'sin correo'}
+                    </option>
+                  ))}
+                </select>
+                <div className="actions" style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn primary btn-labeled"
+                    disabled={startingMailboxIndex || selectedIndexMailboxId === ''}
+                    onClick={() => selectedIndexMailboxId !== '' && handleStartMailboxIndex(selectedIndexMailboxId)}
+                  >
+                    {startingMailboxIndex ? 'Iniciando…' : '▶ Indexar buzón completo'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeMailboxIndex && mailboxIndexBusy && (
+              <>
+                <div className="summary" style={{ marginBottom: 16 }}>
+                  <div className="summary-icon">⏳</div>
+                  <div>
+                    <strong style={{ fontSize: 15 }}>
+                      {mailboxes?.find((m) => m.mailbox_account_id === activeMailboxIndex.mailbox_account_id)?.label ??
+                        `Buzón #${activeMailboxIndex.mailbox_account_id}`}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="actions" style={{ marginBottom: 16 }}>
+                  <button
+                    type="button"
+                    className="btn danger btn-labeled"
+                    disabled={cancellingMailboxIndex || activeMailboxIndex.cancel_requested}
+                    onClick={handleCancelMailboxIndex}
+                  >
+                    {activeMailboxIndex.cancel_requested ? 'Cancelando…' : '✕ Cancelar'}
+                  </button>
+                </div>
+
+                <MailboxIndexProgress run={activeMailboxIndex} />
+              </>
+            )}
+
+            {mailboxIndexHistory.length > 0 && (
+              <>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: 24,
+                    marginBottom: 8,
+                  }}
+                >
+                  <h4 style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>Corridas anteriores</h4>
+                  <ActionButton icon={Trash2} label="Limpiar historial" variant="danger" onClick={() => setClearMailboxIndexModalOpen(true)} />
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 40 }}></th>
+                        <th>Buzón</th>
+                        <th style={{ width: 110 }}></th>
+                        <th style={{ width: 100 }}>Correos</th>
+                        <th>Solicitada</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mailboxIndexHistory.map((run) => {
+                        const isExpanded = expandedIndexRunId === run.index_run_id
+                        return (
+                          <Fragment key={run.index_run_id}>
+                            <tr>
+                              <td>
+                                <ActionButton
+                                  icon={isExpanded ? ChevronDown : ChevronRight}
+                                  label={isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                  onClick={() => handleToggleHistoryRow(run)}
+                                />
+                              </td>
+                              <td>
+                                {mailboxes?.find((m) => m.mailbox_account_id === run.mailbox_account_id)?.label ??
+                                  `Buzón #${run.mailbox_account_id}`}
+                              </td>
+                              <td>
+                                <span className={`badge ${MAILBOX_INDEX_STATUS_BADGE[run.status]}`}>
+                                  {MAILBOX_INDEX_STATUS_LABELS[run.status]}
+                                </span>
+                              </td>
+                              <td>{formatNumber(run.total_messages_indexed)}</td>
+                              <td>{new Date(run.requested_at).toLocaleString()}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={5} style={{ background: 'var(--panel-2)' }}>
+                                  {loadingExpandedIndexRun ? (
+                                    <p style={{ color: 'var(--muted)', fontSize: 12.5, margin: '8px 0' }}>Cargando…</p>
+                                  ) : (
+                                    expandedIndexRunDetail && <MailboxIndexProgress run={expandedIndexRunDetail} />
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-head">
+            <h3>Sincronización delta de buzones</h3>
+          </div>
+          <div className="panel-body">
+            <p style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>
+              Corre sola una vez al día (06:00) y trae solo los correos nuevos o modificados de cada buzón
+              habilitado desde la última corrida — no reindexa todo el historial. Usa este botón para forzarla
+              ahora mismo en vez de esperar al horario programado.
+            </p>
+            <ActionButton
+              icon={RefreshCw}
+              label={triggeringDeltaSync ? 'Disparando…' : 'Forzar sincronización ahora'}
+              variant="primary"
+              loading={triggeringDeltaSync}
+              onClick={handleTriggerDeltaSync}
+            />
+          </div>
+        </div>
+        </>
       )}
 
       {tab === 'ai' && isAdmin && (
@@ -819,53 +1286,28 @@ export function SettingsView() {
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                disabled={testingProviderId === p.provider_id}
-                                data-tooltip="Probar"
-                                aria-label="Probar"
+                              <ActionButton
+                                icon={Zap}
+                                label="Probar"
+                                loading={testingProviderId === p.provider_id}
                                 onClick={() => handleTestProvider(p)}
-                              >
-                                {testingProviderId === p.provider_id ? '…' : '⚡'}
-                              </button>
+                              />
                               {!p.is_active && (
-                                <button
-                                  type="button"
-                                  className="btn small primary icon-btn"
-                                  disabled={
-                                    activatingId === p.provider_id ||
-                                    (policy === 'local_only' && !isLocalProviderType(p.provider_type))
-                                  }
-                                  data-tooltip={
+                                <ActionButton
+                                  icon={Play}
+                                  label={
                                     policy === 'local_only' && !isLocalProviderType(p.provider_type)
                                       ? "Bloqueado por la política 'Solo local'"
                                       : 'Activar'
                                   }
-                                  aria-label="Activar"
+                                  variant="primary"
+                                  loading={activatingId === p.provider_id}
+                                  disabled={policy === 'local_only' && !isLocalProviderType(p.provider_type)}
                                   onClick={() => handleActivate(p.provider_id)}
-                                >
-                                  {activatingId === p.provider_id ? '…' : '▶'}
-                                </button>
+                                />
                               )}
-                              <button
-                                type="button"
-                                className="btn small icon-btn"
-                                data-tooltip="Editar"
-                                aria-label="Editar"
-                                onClick={() => openEditForm(p)}
-                              >
-                                ✎
-                              </button>
-                              <button
-                                type="button"
-                                className="btn small danger icon-btn"
-                                data-tooltip="Eliminar"
-                                aria-label="Eliminar"
-                                onClick={() => setDeleteTarget(p)}
-                              >
-                                🗑
-                              </button>
+                              <ActionButton icon={Pencil} label="Editar" onClick={() => openEditForm(p)} />
+                              <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => setDeleteTarget(p)} />
                             </div>
                           </td>
                         </tr>
@@ -1036,15 +1478,16 @@ export function SettingsView() {
                       <th style={{ width: 320 }}>Email</th>
                       <th style={{ width: 220 }}>Nombre</th>
                       <th>Rol</th>
+                      <th>Método</th>
                       <th>Estado</th>
                       <th>Último login</th>
-                      <th style={{ width: 160 }}></th>
+                      <th style={{ width: 250 }}></th>
                     </tr>
                   </thead>
                   <tbody>
                     {users.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="empty-view">
+                        <td colSpan={7} className="empty-view">
                           No hay ningún usuario registrado todavía.
                         </td>
                       </tr>
@@ -1054,37 +1497,45 @@ export function SettingsView() {
                         <td>{u.email_address}</td>
                         <td>{u.display_name || '—'}</td>
                         <td>{ROLE_LABELS[u.role] ?? u.role}</td>
+                        <td>
+                          <span className={`badge ${u.auth_method === 'local' ? 'queued' : 'success'}`}>
+                            {u.auth_method === 'local' ? `Local (${u.username})` : 'SSO'}
+                          </span>
+                          {u.auth_method === 'local' && u.must_change_password && (
+                            <span className="badge failed" style={{ marginLeft: 6 }}>
+                              debe cambiar contraseña
+                            </span>
+                          )}
+                        </td>
                         <td>{u.enabled ? 'Activo' : 'Desactivado'}</td>
                         <td>{u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Nunca'}</td>
                         <td>
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              className="btn small icon-btn"
-                              data-tooltip="Ver ficha"
-                              aria-label="Ver ficha"
-                              onClick={() => setDetailUser(u)}
-                            >
-                              🧾
-                            </button>
-                            <button
-                              type="button"
-                              className="btn small icon-btn"
-                              data-tooltip="Editar"
-                              aria-label="Editar"
-                              onClick={() => openEditUserForm(u)}
-                            >
-                              ✎
-                            </button>
-                            <button
-                              type="button"
-                              className={`btn small icon-btn${u.enabled ? ' danger' : ''}`}
-                              data-tooltip={u.enabled ? 'Desactivar' : 'Activar'}
-                              aria-label={u.enabled ? 'Desactivar' : 'Activar'}
+                            <ActionButton icon={FileText} label="Ver ficha" onClick={() => setDetailUser(u)} />
+                            <ActionButton icon={Pencil} label="Editar" onClick={() => openEditUserForm(u)} />
+                            {u.auth_method === 'local' && (
+                              <ActionButton
+                                icon={KeyRound}
+                                label="Resetear contraseña"
+                                onClick={() => {
+                                  setResetPasswordTarget(u)
+                                  setResetPasswordValue('')
+                                }}
+                              />
+                            )}
+                            <ActionButton
+                              icon={u.enabled ? Pause : Play}
+                              label={u.enabled ? 'Desactivar' : 'Activar'}
+                              variant={u.enabled ? 'danger' : 'default'}
                               onClick={() => setUserToggleTarget(u)}
-                            >
-                              {u.enabled ? '⏸' : '▶'}
-                            </button>
+                            />
+                            <ActionButton
+                              icon={Trash2}
+                              label={u.user_id === user?.user_id ? 'No podés eliminar tu propia cuenta' : 'Eliminar'}
+                              variant="danger"
+                              disabled={u.user_id === user?.user_id}
+                              onClick={() => openDeleteUserModal(u)}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -1265,15 +1716,29 @@ export function SettingsView() {
         title="Eliminar cuenta de buzón"
         description={
           deleteMailboxTarget
-            ? `Se elimina "${deleteMailboxTarget.label}" (${deleteMailboxTarget.email_address || 'sin correo registrado'}). Los trabajos que ya corrieron contra este buzón no se ven afectados, pero no se podrán crear trabajos nuevos contra esta cuenta hasta reconectarla.`
+            ? `Se elimina "${deleteMailboxTarget.label}" (${deleteMailboxTarget.email_address || 'sin correo registrado'}) y TODO su contenido indexado localmente: correos, expedientes armados solo con esos correos, y sus adjuntos. Un expediente que además tenga correos de otro buzón no se borra, pero queda una nota señalando que esos correos ya no están disponibles. Esta acción es solo local — nunca borra ni modifica nada en el buzón real de Microsoft 365 — pero no se puede deshacer.`
             : ''
         }
         confirmLabel="Eliminar cuenta"
-        confirmingLabel="Eliminando…"
-        confirming={deletingMailbox}
-        onCancel={() => setDeleteMailboxTarget(null)}
+        confirmingLabel={deletingMailbox ? 'Eliminando…' : 'Calculando impacto…'}
+        confirming={deletingMailbox || loadingDeleteMailboxImpact}
+        onCancel={() => {
+          setDeleteMailboxTarget(null)
+          setDeleteMailboxImpact(null)
+        }}
         onConfirm={handleDeleteMailbox}
-      />
+      >
+        {loadingDeleteMailboxImpact && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Calculando impacto…</p>}
+        {!loadingDeleteMailboxImpact && deleteMailboxImpact && (
+          <p style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>
+            Se borrarán {deleteMailboxImpact.message_count} correo(s) y {deleteMailboxImpact.cases_deleted}{' '}
+            expediente(s) completo(s)
+            {deleteMailboxImpact.cases_affected > 0 &&
+              `; otros ${deleteMailboxImpact.cases_affected} expediente(s) quedarán con una nota de correo no disponible`}
+            .
+          </p>
+        )}
+      </ConfirmModal>
 
       <ShareModal
         open={shareMailboxTarget !== null}
@@ -1316,7 +1781,77 @@ export function SettingsView() {
         onConfirm={handleConfirmToggleUser}
       />
 
+      <ConfirmModal
+        open={resetPasswordTarget !== null}
+        title="Resetear contraseña"
+        description={
+          resetPasswordTarget
+            ? `Se fija una contraseña nueva para "${resetPasswordTarget.display_name || resetPasswordTarget.username}". Se cierran todas sus sesiones activas y va a tener que cambiarla de nuevo en su próximo login.`
+            : ''
+        }
+        confirmLabel="Resetear"
+        confirmingLabel="Reseteando…"
+        confirmIcon="🔑"
+        confirmDanger={false}
+        confirming={resettingPassword}
+        onCancel={() => {
+          setResetPasswordTarget(null)
+          setResetPasswordValue('')
+        }}
+        onConfirm={handleResetPassword}
+      >
+        <div className="field full" style={{ marginTop: 10 }}>
+          <label htmlFor="reset-password-value">Contraseña temporal nueva</label>
+          <input
+            id="reset-password-value"
+            type="text"
+            minLength={8}
+            placeholder="mínimo 8 caracteres"
+            value={resetPasswordValue}
+            onChange={(e) => setResetPasswordValue(e.target.value)}
+          />
+        </div>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={deleteUserTarget !== null}
+        title="Eliminar usuario"
+        description={
+          deleteUserTarget
+            ? `Se elimina la cuenta de "${deleteUserTarget.display_name || deleteUserTarget.email_address}" — no se puede deshacer. No se borra ningún expediente ni correo indexado.`
+            : ''
+        }
+        confirmLabel="Eliminar cuenta"
+        confirmingLabel={deletingUser ? 'Eliminando…' : 'Calculando impacto…'}
+        confirming={deletingUser || loadingDeleteUserImpact}
+        onCancel={() => {
+          setDeleteUserTarget(null)
+          setDeleteUserImpact(null)
+        }}
+        onConfirm={handleDeleteUser}
+      >
+        {loadingDeleteUserImpact && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Calculando impacto…</p>}
+        {!loadingDeleteUserImpact && deleteUserImpact && (
+          <p style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>
+            {deleteUserImpact.cases_owned > 0
+              ? `${deleteUserImpact.cases_owned} expediente(s) de esta persona quedarán a tu nombre, con una nota indicando quién era el dueño original — se puede reasignar después desde Expedientes.`
+              : 'No es dueño de ningún expediente — no hay nada que reasignar.'}
+          </p>
+        )}
+      </ConfirmModal>
+
       <UserDetailModal open={detailUser !== null} user={detailUser} onClose={() => setDetailUser(null)} />
+
+      <ConfirmModal
+        open={clearMailboxIndexModalOpen}
+        title="Limpiar historial de indexación"
+        description="Esta acción elimina los registros de corridas terminadas (completas, parciales, fallidas o canceladas). Los correos ya indexados en el buzón no se ven afectados, solo el historial de progreso."
+        confirmLabel="Confirmar limpieza"
+        confirmingLabel="Limpiando…"
+        confirming={clearingMailboxIndexHistory}
+        onCancel={() => setClearMailboxIndexModalOpen(false)}
+        onConfirm={handleClearMailboxIndexHistory}
+      />
     </section>
   )
 }
