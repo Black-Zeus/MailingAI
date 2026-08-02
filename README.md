@@ -38,5 +38,8 @@ Guía completa de instalación (Docker Compose, `.env`, primer administrador): [
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Cómo están armados los servicios, el modelo de datos y el modelo de seguridad. |
 | [`docs/AZURE_SETUP.md`](docs/AZURE_SETUP.md) | Registro de la app en Microsoft Entra ID (Azure AD). |
 | [`docs/API.md`](docs/API.md) | Referencia de endpoints con ejemplos, para integrar o probar el backend directo. |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Modelo de amenazas, autenticación y limitaciones de seguridad conocidas. |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Runbook operacional del día a día. |
+| [`docs/STATUS.md`](docs/STATUS.md) | Qué está implementado, qué es parcial y qué falta todavía. |
 | [`docs/HELP.md`](docs/HELP.md) | Qué es MailingAI y cómo se usa día a día, para el usuario final. |
 | [`n8n/WorkFlows/README.md`](n8n/WorkFlows/README.md) | Detalle nodo por nodo de cada workflow de n8n. |

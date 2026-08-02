@@ -8,6 +8,9 @@
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Cómo están armados los servicios, las capas del backend, el modelo de datos y el modelo de seguridad. |
 | [`AZURE_SETUP.md`](AZURE_SETUP.md) | Registro de la app en Microsoft Entra ID (Azure AD): permisos de Graph, Redirect URIs, client secret. |
 | [`API.md`](API.md) | Referencia de endpoints con ejemplos `curl`, para probar o integrar el backend directo. |
+| [`SECURITY.md`](SECURITY.md) | Modelo de amenazas, autenticación, CSRF, secretos y limitaciones de seguridad conocidas. |
+| [`OPERATIONS.md`](OPERATIONS.md) | Runbook del día a día: logs, jobs atascados, rotación de secretos, sincronización fallida. |
+| [`STATUS.md`](STATUS.md) | Qué está implementado, qué es parcial y qué todavía no existe — matriz honesta por área. |
 | [`HELP.md`](HELP.md) | Qué es MailingAI, para qué sirve y cómo se usa día a día (pensado para un usuario final, no para quien lo despliega). |
 
 ## ¿Qué es MailingAI, en una frase?
