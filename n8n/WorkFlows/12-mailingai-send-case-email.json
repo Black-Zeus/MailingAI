@@ -50,7 +50,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { message: { subject: $('Webhook').item.json.body.subject, body: { contentType: \"Text\", content: $('Webhook').item.json.body.body }, toRecipients: ($('Webhook').item.json.body.to || []).map(addr => ({ emailAddress: { address: addr } })), ccRecipients: ($('Webhook').item.json.body.cc || []).map(addr => ({ emailAddress: { address: addr } })), attachments: ($('Webhook').item.json.body.attachments || []).map(a => ({ \"@odata.type\": \"#microsoft.graph.fileAttachment\", name: a.filename, contentType: a.content_type, contentBytes: a.content_base64 })) }, saveToSentItems: true } }}",
+        "jsonBody": "={{ { message: { subject: $('Webhook').item.json.body.subject, body: { contentType: \"HTML\", content: $('Webhook').item.json.body.body }, toRecipients: ($('Webhook').item.json.body.to || []).map(addr => ({ emailAddress: { address: addr } })), ccRecipients: ($('Webhook').item.json.body.cc || []).map(addr => ({ emailAddress: { address: addr } })), attachments: ($('Webhook').item.json.body.attachments || []).map(a => ({ \"@odata.type\": \"#microsoft.graph.fileAttachment\", name: a.filename, contentType: a.content_type, contentBytes: a.content_base64 })) }, saveToSentItems: true } }}",
         "options": {
           "response": {
             "response": {
