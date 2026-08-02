@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext'
 import { NotificationBell } from './NotificationBell'
 import type { SystemStatus } from '../types/system'
 
-export type ViewName = 'new' | 'jobs' | 'cases' | 'messages' | 'attachments' | 'settings'
+export type ViewName = 'new' | 'jobs' | 'cases' | 'dashboard' | 'messages' | 'attachments' | 'settings'
 
 const NAV_ITEMS: Array<{ view: ViewName; icon: string; label: string }> = [
+  { view: 'dashboard', icon: '📊', label: 'Dashboard' },
   { view: 'new', icon: '＋', label: 'Nueva consulta' },
   { view: 'jobs', icon: '◷', label: 'Trabajos' },
   { view: 'cases', icon: '▤', label: 'Expedientes' },
@@ -56,7 +57,7 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
         </div>
       </div>
       <nav>
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter((item) => item.view !== 'settings' || isAdmin).map((item) => (
           <button
             key={item.view}
             type="button"
