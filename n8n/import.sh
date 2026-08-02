@@ -1,20 +1,19 @@
 #!/bin/sh
 # Corre DENTRO del contenedor mailingai_n8n (montado en /import/import.sh).
-# Crea las plantillas de credencial si faltan, valida que la de Graph ya no
-# tenga placeholders, e importa credenciales + workflows con la CLI de n8n.
+# Crea las plantillas de credencial si faltan e importa credenciales +
+# workflows con la CLI de n8n.
 #
 # Uso (desde el host):
-#   docker compose exec -T n8n sh /import/import.sh [--force] [--skip-credentials] [--skip-workflows]
+#   docker compose exec -T n8n sh /import/import.sh [--skip-credentials] [--skip-workflows]
 
 set -e
 
-FORCE=0
 SKIP_CREDENTIALS=0
 SKIP_WORKFLOWS=0
 
 for arg in "$@"; do
   case "$arg" in
-    --force) FORCE=1 ;;
+    --force) ;;  # ya no hace nada -- se mantiene aceptado por compatibilidad con invocaciones existentes
     --skip-credentials) SKIP_CREDENTIALS=1 ;;
     --skip-workflows) SKIP_WORKFLOWS=1 ;;
     *)
@@ -71,18 +70,12 @@ if [ ! -f "$GRAPH_CRED" ]; then
 }
 JSON
   echo "Plantilla creada: n8n/credentials/mailingai-graph-oauth2.json"
-  echo "  -> editala desde el host (ver README.md) con los datos reales de tu App Registration."
-  echo "  -> usa el tipo generico 'OAuth2 API' (no el 'Microsoft OAuth2 API' nativo de n8n): ese"
-  echo "     pega siempre contra /common, que falla con AADSTS50194 en apps single-tenant."
+  echo "  -> heredada de una version anterior de la arquitectura: ningun workflow la usa hoy"
+  echo "     (los nodos que llaman a Graph piden el token a identity-broker, ver docs/ARCHITECTURE.md)."
+  echo "     Se importa igual con los valores de ejemplo, no hace falta completarla."
 fi
 
 if [ "$SKIP_CREDENTIALS" -eq 0 ]; then
-  if grep -q "REEMPLAZA_CON_TU_" "$GRAPH_CRED" && [ "$FORCE" -eq 0 ]; then
-    echo "AVISO: n8n/credentials/mailingai-graph-oauth2.json todavia tiene valores de ejemplo (REEMPLAZA_CON_TU_...)." >&2
-    echo "Editala desde el host y vuelve a correr el import. (--force para importar igual, solo para probar el mecanismo)" >&2
-    exit 1
-  fi
-
   echo ""
   echo "Importando credenciales desde $CRED_DIR ..."
   n8n import:credentials --separate --input="$CRED_DIR"
@@ -110,9 +103,8 @@ fi
 
 echo ""
 echo "Listo. Abre n8n (http://localhost:5680) y revisa:"
-echo "  1. Credentials -> 'MailingAI Graph OAuth2' -> Connect my account (una vez, para completar el consentimiento OAuth2 con tu cuenta real)."
-echo "  2. Que los nodos Postgres / HTTP Request de los workflows importados ya muestren la credencial correcta (quedan pre-enlazadas por id)."
-echo "  3. Los workflows quedan agrupados en la carpeta 'MailingAI', numerados en el orden en que se usan normalmente (00 es el subworkflow interno, no se ejecuta directo)."
-echo "  4. Prueba primero '01 - MailingAI - Fetch Sent Items' paso a paso (Test step) antes de dejarlo en produccion."
+echo "  1. Que los nodos Postgres de los workflows importados ya muestren la credencial correcta (quedan pre-enlazados por id)."
+echo "  2. Los workflows quedan agrupados en la carpeta 'MailingAI', numerados en el orden en que se usan normalmente (00 es el subworkflow interno, no se ejecuta directo)."
+echo "  3. Prueba primero '01 - MailingAI - Fetch Sent Items' paso a paso (Test step) antes de dejarlo en produccion -- necesita al menos un buzon ya conectado y reclamado desde la app (Configuracion -> Buzones)."
 echo ""
 echo "Volver a correr este import es seguro: credenciales y workflows tienen id fijo, se actualizan en vez de duplicarse."

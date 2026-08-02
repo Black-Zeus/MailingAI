@@ -4,6 +4,22 @@ Ejemplos de uso directo del backend (`curl`, PowerShell) para probar o integrar 
 
 `<host>` es la IP o el dominio donde corre el stack (`localhost` si accedes desde la misma máquina).
 
+## Autenticación
+
+Los endpoints de negocio (`/api/jobs`, `/api/messages`, `/api/cases`, `/api/ai/*` salvo casos puntuales, `/api/admin/*`, `/api/notifications`) devuelven `401` sin la cookie `mailingai_session`. Solo son públicos, sin sesión: `/api/auth/*` (login), `/health`, `/charts/*` y `/internal/*` (estos dos últimos pensados para llamarse entre contenedores, no desde el navegador).
+
+El login SSO de Microsoft es un flujo de redirects de navegador (`/api/auth/microsoft/*`), no se puede probar con `curl` de forma directa. El login **local** sí es un POST simple — es la forma más rápida de conseguir una cookie de sesión para probar el resto de la API:
+
+```powershell
+curl -c cookies.txt -X POST http://<host>/api/auth/local-login `
+  -H "Content-Type: application/json" -d '{\"username\":\"tu_usuario\",\"password\":\"tu_clave\"}'
+
+curl -b cookies.txt http://<host>/api/cases
+curl -b cookies.txt http://<host>/api/admin/users
+```
+
+`-c cookies.txt` guarda la cookie que devuelve el login; `-b cookies.txt` la reenvía en cada llamada siguiente. Todos los ejemplos de `curl` de este documento que no muestran `--cookie`/`-b` explícito asumen que ya tenés una sesión guardada así.
+
 ## Trabajos de análisis (`/api/jobs`)
 
 El backend expone trabajos asíncronos respaldados en `mailing.analysis_jobs`; crearlos dispara automáticamente el workflow correspondiente en n8n (webhook interno, sin que el backend espere a que termine):
@@ -138,6 +154,21 @@ curl -X DELETE "http://<host>/api/cases?scope=closed"
 `GET /api/system/status` verifica backend/Postgres/n8n (`/healthz`)/Ollama en un solo llamado — lo usa el panel lateral del frontend. `GET /api/system/stats` devuelve conteos reales (mensajes, adjuntos, conversaciones, casos) — lo usa la vista "Nueva consulta".
 
 `DELETE /api/jobs?scope=` (`failed` | `finished` | `all-inactive`) y `DELETE /api/cases?scope=` (`all` | `open` | `closed`) borran registros reales — nunca tocan jobs `queued`/`running`. El frontend pide confirmación explícita (modal) antes de llamarlos; si los usas directo por `curl`, no hay vuelta atrás.
+
+### Qué borra cada operación destructiva
+
+Ninguna operación de borrado del sistema toca el buzón real en Microsoft — todo lo que sigue es **local**, sobre el índice propio:
+
+| Operación | Alcance | ¿Se puede recuperar? | ¿Afecta expedientes existentes? |
+|---|---|---|---|
+| `DELETE /api/messages?scope=...` | Borra mensajes indexados | Sí, reindexando (corriendo el job de nuevo) | Si el mensaje estaba correlacionado, se pierde esa correlación puntual — el expediente no se borra |
+| `DELETE /api/messages/{id}/attachments/{id}` | Borra el registro de un adjunto puntual | Sí, si el mensaje se reindexa | No |
+| `DELETE /api/jobs?scope=...` | Borra el historial de trabajos (`failed`/`finished`/`all-inactive`) | No | No — los jobs no tienen relación directa con expedientes |
+| `DELETE /api/cases?scope=...` | Borra expedientes completos (`all`/`open`/`closed`) | No, salvo restaurar un backup de Postgres | Sí — borra el expediente entero, línea de tiempo, notas, evidencia y auditoría incluidas |
+| `DELETE /api/mailboxes/{id}/owner` (admin) | Desconecta un buzón: borra en cascada sus mensajes/adjuntos locales | No para lo borrado; el buzón se puede reconectar pero sin el histórico | Expedientes que dependían solo de ese buzón se borran; expedientes con mensajes de otros buzones también sobreviven marcados `ai_stale` |
+| `DELETE /api/admin/users/{id}` (admin) | Borra la cuenta de usuario | No la cuenta; sus expedientes tampoco se pierden | No borra expedientes — se reasignan al admin que ejecuta el borrado, con `previous_owner_label` como rastro |
+
+En general: borrar **mensajes/adjuntos/jobs** es reversible reindexando; borrar **expedientes** o **buzones** no lo es (salvo restaurar un backup de la base); borrar **usuarios** nunca borra expedientes, siempre los reasigna.
 
 ## Administración de usuarios (`/api/admin/users`, solo admin)
 

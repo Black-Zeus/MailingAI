@@ -23,7 +23,7 @@ No hay registro por tu cuenta — si no puedes entrar, pídele a un administrado
 - **Dashboard** — lo primero que ves al entrar: un resumen con conteos (expedientes abiertos, vencidos, sin analizar, etc.), para tener una foto general antes de entrar al detalle.
 - **Expedientes** — la lista de casos armados a partir de correos relacionados. Desde acá se abre el detalle de cada uno: correos que lo componen, línea de tiempo, notas, evidencia adjunta, resumen de IA, y las acciones (cambiar conclusión, marcar seguimiento, compartir, reasignar dueño).
 - **Mensajes** — los correos ya indexados, con filtros (remitente, asunto, fecha, carpeta). Desde acá también se puede armar un expediente nuevo a partir de un correo o hilo puntual.
-- **Adjuntos** — trazabilidad de archivos adjuntos (PDF/Word) que siguen una convención de nombre relacionada a un código de caso.
+- **Adjuntos** — trazabilidad de archivos adjuntos ya indexados (documentos, planillas, presentaciones, PDF, texto), con búsqueda por carpeta, texto o patrón de nombre — por ejemplo, los que siguen una convención relacionada a un código de caso.
 - **Trabajos** — historial de las tareas que trajeron datos desde el buzón (cuándo corrieron, si fallaron, qué trajeron).
 - **Configuración** *(solo administradores)* — buzones conectados, usuarios del sistema, remitente usado para notificaciones por correo. Oculto por completo para quien no es administrador.
 

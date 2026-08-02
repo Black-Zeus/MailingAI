@@ -1,12 +1,13 @@
 # Configuración de la cuenta en Azure (Microsoft Entra ID)
 
-MailingAI necesita **una sola** App Registration en tu tenant de Microsoft Entra ID (Azure AD). La usan tres servicios distintos del stack, cada uno con su propio Redirect URI pero compartiendo `client id` / `client secret` / `tenant id`:
+MailingAI necesita **una sola** App Registration en tu tenant de Microsoft Entra ID (Azure AD). La usan dos servicios del stack, cada uno con su propio Redirect URI pero compartiendo `client id` / `client secret` / `tenant id` (los mismos tres valores, solo en `.env`):
 
 | Servicio | Para qué la usa | Redirect URI |
 |---|---|---|
-| `identity-broker` | Conectar un buzón real (OAuth2 delegado, guarda tokens de larga duración) | `http://<host>/identity/oauth/microsoft/callback` |
+| `identity-broker` | Conectar un buzón real (OAuth2 delegado, guarda tokens de larga duración) — n8n le pide el token vigente a este servicio, no maneja OAuth2 propio | `http://<host>/identity/oauth/microsoft/callback` |
 | `backend` | Login SSO de usuarios de la app (no guarda tokens de Graph, solo identifica a la persona) | `http://<host>/api/auth/microsoft/callback` |
-| `n8n` | Ya no arma su propio token: le pide uno vigente a `identity-broker`. Este Redirect URI solo hace falta si en algún momento se vuelve a usar la credencial OAuth2 nativa del editor de n8n | `http://<host>/n8n/rest/oauth2-credential/callback` |
+
+`n8n` **no** necesita Redirect URI propio ni una credencial OAuth2 completa: los nodos que llaman a Graph piden el token a `identity-broker` por la red interna (ver [`ARCHITECTURE.md`](ARCHITECTURE.md)). Solo haría falta el Redirect URI `http://<host>/n8n/rest/oauth2-credential/callback` si en algún momento se vuelve a usar la credencial OAuth2 nativa del editor de n8n — no es el caso hoy.
 
 Sustituye `<host>` por el dominio/puerto público real (en desarrollo local, `localhost`).
 
@@ -14,8 +15,8 @@ Sustituye `<host>` por el dominio/puerto público real (en desarrollo local, `lo
 
 1. Portal de Azure → **Microsoft Entra ID → App registrations → New registration**.
 2. Nombre libre (ej. `MailingAI`).
-3. Tipo de cuenta: **Accounts in this organizational directory only** (single-tenant) — es el caso normal para un buzón corporativo. Si eliges soportar varios tenants, la configuración de la credencial de OAuth2 en n8n (más abajo) tiene que apuntar al endpoint `/common` en vez de al de tu tenant específico.
-4. **Authentication → Add a platform → Web** y agrega los tres Redirect URIs de la tabla de arriba. Se pueden agregar todos de una vez, y no hace falta borrar ninguno si más adelante cambias de dominio — simplemente agrega el nuevo.
+3. Tipo de cuenta: **Accounts in this organizational directory only** (single-tenant) — es el caso normal para un buzón corporativo.
+4. **Authentication → Add a platform → Web** y agrega los dos Redirect URIs de la tabla de arriba. No hace falta borrar ninguno si más adelante cambias de dominio — simplemente agrega el nuevo.
 
 ## 2. Permisos de Microsoft Graph
 
@@ -36,11 +37,11 @@ Si tu tenant requiere consentimiento de administrador para alguno de estos permi
 
 ## 3. Client secret
 
-**Certificates & secrets → New client secret.** El valor solo se muestra una vez al crearlo — cópialo de inmediato. No hay forma de recuperarlo después; si se pierde, hay que generar uno nuevo y actualizar `.env` (y el archivo de credenciales de n8n, ver abajo).
+**Certificates & secrets → New client secret.** El valor solo se muestra una vez al crearlo — cópialo de inmediato. No hay forma de recuperarlo después; si se pierde, hay que generar uno nuevo y actualizar `.env`.
 
 ## 4. Datos que necesitas anotar
 
-Al terminar tienes tres valores. Van al `.env` del proyecto (nunca se commitean — `.env` está en `.gitignore`):
+Al terminar tienes tres valores. Van **solo** al `.env` del proyecto (nunca se commitean — `.env` está en `.gitignore`):
 
 ```env
 MS_TENANT_ID=<Directory (tenant) ID>
@@ -48,24 +49,7 @@ MS_CLIENT_ID=<Application (client) ID>
 MS_CLIENT_SECRET=<el client secret generado en el paso 3>
 ```
 
-`identity-broker` y el `backend` los toman directo de estas variables. **n8n es distinto**: no lee `.env` para esto — usa una credencial propia (`n8n/credentials/mailingai-graph-oauth2.json`, ignorada por git) donde estos mismos tres valores se pegan a mano una vez, más el tipo de credencial genérico `OAuth2 API` (no el nativo "Microsoft OAuth2 API" de n8n, que fuerza el endpoint `/common` y falla con `AADSTS50194` en apps single-tenant):
-
-```json
-{
-  "type": "oAuth2Api",
-  "data": {
-    "grantType": "authorizationCode",
-    "authUrl": "https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/authorize",
-    "accessTokenUrl": "https://login.microsoftonline.com/<tenantId>/oauth2/v2.0/token",
-    "clientId": "...",
-    "clientSecret": "...",
-    "scope": "openid profile offline_access User.Read Mail.Read",
-    "authentication": "body"
-  }
-}
-```
-
-Ver [`INSTALL.md`](INSTALL.md) para el flujo completo de import (`scripts/import-n8n.sh`) que crea esta plantilla automáticamente la primera vez.
+`identity-broker` y el `backend` los toman directo de estas variables — no hay que configurar nada más en ningún otro lugar. El script de import de n8n (`scripts/import-n8n.sh`, ver [`INSTALL.md`](INSTALL.md)) crea de paso una plantilla `n8n/credentials/mailingai-graph-oauth2.json` con datos de ejemplo: es un resabio de una versión anterior de la arquitectura, ningún workflow la usa hoy, y se importa igual sin necesidad de completarla con datos reales.
 
 ## 5. Migrar a otro entorno (otro host/dominio)
 

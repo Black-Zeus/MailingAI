@@ -4,6 +4,16 @@ Guía end-to-end para levantar el stack desde cero. Para el detalle nodo por nod
 
 > A lo largo de esta guía, `<host>` es la IP o el dominio donde corre el servidor de la aplicación (`localhost` solo si la abres desde la misma máquina donde corre Docker).
 
+## Antes de exponer esto a una red real
+
+El despliegue tal cual está documentado corre sobre **HTTP plano** (`proxy/nginx.conf` no termina TLS todavía) — cookies de sesión, login local, tokens OAuth y correos indexados viajan sin cifrar entre el navegador y `proxy`. Es un punto de partida válido para laboratorio, pruebas o una red interna ya controlada (VPN, red corporativa cerrada), **no para exponerlo directo a Internet**. Antes de un despliegue en una red no controlada:
+
+1. Termina TLS en `proxy` (el mismo nginx admite agregar `listen 443 ssl` con un certificado, ej. vía certbot, sin tocar el resto de los servicios — ninguno más publica puerto).
+2. Pon `SESSION_COOKIE_SECURE=true` en `.env` (la cookie de sesión no se manda por HTTP una vez que hay TLS).
+3. Revisa que `proxy/.htpasswd` (Basic Auth de `/n8n/`) use una clave real, no la de prueba.
+
+Nada de esto está automatizado hoy — es trabajo pendiente antes de un despliegue productivo, no una opción de configuración ya resuelta.
+
 ## 0. Prerrequisitos
 
 - Docker + Docker Compose.
@@ -121,27 +131,27 @@ docker compose exec -T postgres psql -U mailingai -d mailingai -c "SELECT * FROM
 
 ## 5. Importar credenciales y workflows en n8n
 
-Toda la lógica de importación corre **dentro del contenedor** `mailingai_n8n`, en `n8n/import.sh`: crea la carpeta `n8n/credentials` y las plantillas si faltan, valida que la de Graph ya no tenga placeholders, y llama a la CLI de n8n (`n8n import:credentials`, `n8n import:workflow`). `scripts/import-n8n.sh` es solo un disparador desde shell (igual en Linux y en Windows vía Git Bash/WSL). Credenciales y workflows tienen un `id` fijo en su JSON, así que **volver a correr el import es seguro**: n8n actualiza el registro existente en vez de duplicarlo.
+Toda la lógica de importación corre **dentro del contenedor** `mailingai_n8n`, en `n8n/import.sh`: crea la carpeta `n8n/credentials` y las plantillas si faltan, y llama a la CLI de n8n (`n8n import:credentials`, `n8n import:workflow`). `scripts/import-n8n.sh` es solo un disparador desde shell (igual en Linux y en Windows vía Git Bash/WSL). Credenciales y workflows tienen un `id` fijo en su JSON, así que **volver a correr el import es seguro**: n8n actualiza el registro existente en vez de duplicarlo.
 
 ```sh
 ./scripts/import-n8n.sh
 ```
 
-1. La primera corrida crea las plantillas de credenciales en `n8n/credentials/` (bind-mounted, quedan visibles en el host): `mailingai-postgres.json` (ya listo, usa el password de `.env`) y `mailingai-graph-oauth2.json` (con placeholders). El import se detiene ahí, pidiendo llenar los datos reales de Graph.
-2. Edita `n8n/credentials/mailingai-graph-oauth2.json` con los datos de tu App Registration (ver [`AZURE_SETUP.md`](AZURE_SETUP.md)). Usa el tipo genérico **`OAuth2 API`** de n8n, no el nativo "Microsoft OAuth2 API" — ese pega siempre contra el endpoint `/common`, que falla con `AADSTS50194` en apps single-tenant (el caso normal). La plantilla ya viene armada así, solo reemplaza `REEMPLAZA_CON_TU_TENANT_ID` (aparece dos veces), `REEMPLAZA_CON_TU_CLIENT_ID` y `REEMPLAZA_CON_TU_CLIENT_SECRET`.
-3. Corre el script de nuevo — esta vez importa las 3 credenciales y los ~16 workflows, agrupados en una carpeta **MailingAI** dentro de tu proyecto personal de n8n (lo hace `n8n/create-folder.sh`, invocado automáticamente; también reactiva los workflows con webhook/schedule, que `import:workflow` deja `inactive` por defecto).
-4. Entra a `http://<host>/n8n/` (pide la Basic Auth del paso 2) → **Credentials → MailingAI Graph OAuth2 → Connect my account** y completa el consentimiento OAuth2 con tu cuenta real — este paso siempre es manual, no se puede automatizar desde un script.
+La primera corrida crea dos plantillas de credenciales en `n8n/credentials/` (bind-mounted, quedan visibles en el host) e importa todo de una sola pasada — no hace falta editar nada a mano para que el fetch de correos funcione:
 
-Estas credenciales **no** se guardan en `.env`: los archivos en `n8n/credentials/*.json` quedan ignorados por git y, una vez importados, el `clientSecret`/password quedan cifrados dentro de la base de datos de n8n.
+- `mailingai-postgres.json` — ya listo, usa el password de `.env`.
+- `mailingai-graph-oauth2.json` — plantilla con datos de ejemplo, **no se usa hoy por ningún workflow** (resabio de una versión anterior de la arquitectura; los nodos que llaman a Graph piden el token a `identity-broker`, ver [`AZURE_SETUP.md`](AZURE_SETUP.md) y [`ARCHITECTURE.md`](ARCHITECTURE.md)). Se importa igual, sin completarla.
 
-Parámetros del script: `--force` (importa aunque el archivo de Graph todavía tenga placeholders, solo para probar el mecanismo), `--skip-credentials` (importa solo los workflows), `--skip-workflows` (importa solo las credenciales).
+El import agrupa los ~16 workflows en una carpeta **MailingAI** dentro de tu proyecto personal de n8n (lo hace `n8n/create-folder.sh`, invocado automáticamente) y reactiva los que tienen webhook/schedule (`import:workflow` los deja `inactive` por defecto).
+
+Parámetros del script: `--skip-credentials` (importa solo los workflows), `--skip-workflows` (importa solo las credenciales).
 
 Qué revisar después de importar:
 
 1. **typeVersion de nodos**: si n8n marca algún nodo como desactualizado, ábrelo y deja que n8n lo migre a la versión soportada por tu instalación.
-2. Prueba primero `01 - MailingAI - Fetch Sent Items` con **Execute Workflow** manual y revisa cada nodo paso a paso (`Test step`) antes de dejarlo en producción.
+2. Prueba primero `01 - MailingAI - Fetch Sent Items` con **Execute Workflow** manual y revisa cada nodo paso a paso (`Test step`) antes de dejarlo en producción — necesita al menos un buzón ya conectado y reclamado desde la app (paso 7 más abajo).
 
-Alternativa manual (sin el script): importar cada archivo de `n8n/WorkFlows/` desde **Workflows → Import from File** (empezando por `00-mailingai-graph-fetch-subworkflow.json`) y crear las credenciales a mano desde **Credentials → New** — en ese caso hay que reseleccionar la credencial en cada nodo y agrupar los workflows a mano si se quiere.
+Alternativa manual (sin el script): importar cada archivo de `n8n/WorkFlows/` desde **Workflows → Import from File** (empezando por `00-mailingai-graph-fetch-subworkflow.json`) y crear la credencial de Postgres a mano desde **Credentials → New** — en ese caso hay que reseleccionar esa credencial en cada nodo Postgres y agrupar los workflows a mano si se quiere.
 
 Detalle nodo por nodo de cada workflow: [`n8n/WorkFlows/README.md`](../n8n/WorkFlows/README.md).
 

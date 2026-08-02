@@ -42,7 +42,7 @@ La carpeta local `share` queda montada dentro del contenedor n8n en `/files`; lo
 
 ## Por qué `identity-broker` es un servicio aparte
 
-Conectar un buzón real requiere guardar tokens OAuth2 de larga duración (`offline_access`) de Microsoft Graph. Aislar ese flujo en un microservicio propio, con su propia base de credenciales, mantiene al `backend` (que ya maneja sesiones de usuario, expedientes, etc.) sin tocar tokens de Graph directamente. El `backend` le pide al broker "dame el token vigente del buzón X" por la red interna (`IDENTITY_BROKER_URL`); nunca ve el `client secret` de Microsoft.
+Conectar un buzón real requiere guardar tokens OAuth2 de larga duración (`offline_access`) de Microsoft Graph. Aislar ese flujo en un microservicio propio, con su propia base de credenciales, mantiene tanto al `backend` como a `n8n` sin tocar el `client secret` de Microsoft directamente. Los nodos `HTTP Request` de n8n que llaman a Graph (`Graph: List Messages` y equivalentes) piden primero un token vigente a `identity-broker` (`GET http://identity-broker:8000/internal/token/{mailbox_account_id}`) y lo usan como header `Authorization: Bearer ...` armado a mano — **no** usan ninguna credencial OAuth2 propia de n8n. La credencial `n8n/credentials/mailingai-graph-oauth2.json` que crea el script de import es una plantilla heredada de una versión anterior de la arquitectura (cuando n8n sí manejaba su propio token): hoy ningún nodo la referencia, no hace falta completarla con datos reales para que el fetch de correos funcione.
 
 ## Por qué n8n concentra todo lo periódico y todo Graph
 
@@ -67,7 +67,7 @@ n8n tiene ~16 workflows, agrupados por función:
 
 Detalle nodo por nodo: [`n8n/WorkFlows/README.md`](../n8n/WorkFlows/README.md).
 
-La comunicación backend→n8n es por webhooks HTTP internos (`http://n8n:5678/webhook/...`), protegidos con un secreto compartido (`WEBHOOK_SHARED_SECRET`) enviado como header y validado por una credencial `httpHeaderAuth` en n8n. La comunicación inversa (n8n→backend, para notificar que algo terminó o pedir que se genere un gráfico) usa rutas `/internal/*` y `/charts/*` del backend que **no requieren sesión** — pero tampoco están mapeadas en `proxy/nginx.conf`, así que solo son alcanzables desde la red interna de Docker, nunca desde internet.
+La comunicación backend→n8n es por webhooks HTTP internos (`http://n8n:5678/webhook/...`), protegidos con un secreto compartido (`WEBHOOK_SHARED_SECRET`) enviado como header y validado por una credencial `httpHeaderAuth` en n8n. La comunicación inversa (n8n→backend, para notificar que algo terminó o pedir que se genere un gráfico) usa rutas `/internal/*` y `/charts/*` del backend que **no requieren sesión**. Son casos distintos: `/internal/*` deliberadamente NO está mapeada en `proxy/nginx.conf`, así que solo es alcanzable desde la red interna de Docker, nunca desde internet. `/charts/*` sí está mapeada públicamente a propósito (para poder probarla a mano, ver [`API.md`](API.md)) — no expone datos sensibles ni acceso a la base, solo genera una imagen a partir de los puntos que se le mandan en el body.
 
 ## Capas del backend (FastAPI)
 
