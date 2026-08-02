@@ -16,6 +16,7 @@ class CurrentUser:
     email_address: str
     display_name: str | None
     role: str
+    must_change_password: bool = False
 
     @property
     def is_admin(self) -> bool:
@@ -38,6 +39,7 @@ async def get_current_user(
         email_address=session["email_address"],
         display_name=session["display_name"],
         role=session["role"],
+        must_change_password=session["must_change_password"],
     )
 
 

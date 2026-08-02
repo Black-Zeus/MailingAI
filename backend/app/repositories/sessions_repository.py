@@ -24,7 +24,7 @@ async def insert_session(
 async def get_active_session(pool: asyncpg.Pool, session_token_hash: str) -> asyncpg.Record | None:
     query = """
         SELECT s.session_token_hash, s.expires_at, s.created_at,
-               u.user_id, u.email_address, u.display_name, u.role, u.enabled
+               u.user_id, u.email_address, u.display_name, u.role, u.enabled, u.must_change_password
         FROM identity.user_sessions s
         JOIN identity.users u ON u.user_id = s.user_id
         WHERE s.session_token_hash = $1

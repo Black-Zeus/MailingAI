@@ -1,5 +1,7 @@
 from typing import Annotated
 
+from datetime import datetime, timezone
+
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
@@ -12,13 +14,14 @@ from app.schemas.mailboxes import (
     MailboxAccountRead,
     MailboxAccountUpdate,
     MailboxConnectUrlResponse,
+    MailboxDeletionImpactRead,
     MailboxSendTestResponse,
     MailboxShareCreate,
     MailboxShareRead,
     MailboxTestResponse,
     NotificationSenderUpdate,
 )
-from app.services import cases_service, identity_broker_client, n8n_client, notification_email_service
+from app.services import cases_service, email_templates, identity_broker_client, n8n_client, notification_email_service
 from app.services.identity_broker_client import IdentityBrokerError
 
 router = APIRouter(prefix="/api/mailboxes", tags=["mailboxes"])
@@ -61,7 +64,9 @@ async def list_mailboxes(pool: PoolDep, user: CurrentUserDep) -> list[MailboxAcc
 
 
 @router.get("/connect-url", response_model=MailboxConnectUrlResponse)
-async def get_connect_url(label: str = Query(min_length=1)) -> MailboxConnectUrlResponse:
+async def get_connect_url(_admin: AdminUserDep, label: str = Query(min_length=1)) -> MailboxConnectUrlResponse:
+    """Solo un admin puede registrar buzones nuevos -- un usuario normal
+    trabaja con los buzones ya conectados, no los da de alta."""
     return MailboxConnectUrlResponse(url=identity_broker_client.build_connect_url(label))
 
 
@@ -114,11 +119,13 @@ async def test_notification_sender(admin: AdminUserDep) -> MailboxSendTestRespon
 
 
 @router.post("/{mailbox_account_id}/claim", response_model=MailboxAccountRead)
-async def claim_mailbox(mailbox_account_id: int, user: CurrentUserDep) -> MailboxAccountRead:
+async def claim_mailbox(mailbox_account_id: int, user: AdminUserDep) -> MailboxAccountRead:
     """Se llama tras completar el consentimiento OAuth2 (ver el listener de
-    postMessage en SettingsView.tsx) -- quien lo hace queda como dueño. Si
-    dos personas completan el flujo casi al mismo tiempo para la misma
-    cuenta, la segunda recibe 409."""
+    postMessage en SettingsView.tsx) -- quien lo hace queda como dueño. Solo
+    un admin llega hasta aca (get_connect_url ya lo exige antes), pero se
+    revalida aca tambien por si se llama esta ruta directo. Si dos admins
+    completan el flujo casi al mismo tiempo para la misma cuenta, el segundo
+    recibe 409."""
     try:
         record = await identity_broker_client.claim_mailbox_owner(mailbox_account_id, owner_user_id=user.user_id)
     except identity_broker_client.MailboxAlreadyClaimedError as exc:
@@ -162,17 +169,36 @@ async def update_mailbox(
     return MailboxAccountRead(**updated)
 
 
-@router.delete("/{mailbox_account_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-async def delete_mailbox(mailbox_account_id: int, pool: PoolDep, user: CurrentUserDep) -> None:
-    record = await _get_accessible_mailbox_or_404(pool, mailbox_account_id, user)
-    if not user.is_admin and record.get("owner_user_id") != user.user_id:
-        raise _forbidden("Solo el dueño del buzón (o un admin) puede eliminarlo.")
+@router.get("/{mailbox_account_id}/deletion-impact", response_model=MailboxDeletionImpactRead)
+async def get_mailbox_deletion_impact(mailbox_account_id: int, pool: PoolDep, _admin: AdminUserDep) -> MailboxDeletionImpactRead:
+    """Vista previa (no borra nada) para el modal de confirmación: cuántos
+    correos indexados, expedientes que se borrarían completos, y expedientes
+    mixtos que solo perderían algunos mensajes."""
+    impact = await cases_service.get_mailbox_deletion_impact(pool, mailbox_account_id)
+    return MailboxDeletionImpactRead(**impact)
+
+
+@router.delete("/{mailbox_account_id}", response_model=MailboxDeletionImpactRead)
+async def delete_mailbox(mailbox_account_id: int, pool: PoolDep, admin: AdminUserDep) -> MailboxDeletionImpactRead:
+    """Borra el buzón y, en cascada, TODO su contenido indexado localmente:
+    correos, expedientes que dependían exclusivamente de ellos, y adjuntos.
+    Los expedientes que además tienen mensajes de otros buzones sobreviven,
+    pero quedan con una nota en su línea de tiempo señalando qué correo ya no
+    está disponible. Nunca toca el buzón real en Microsoft 365 -- solo lo ya
+    indexado en esta base. Solo un administrador puede hacerlo, justamente
+    porque ya no es una operación reversible ni de bajo impacto."""
+    records = await identity_broker_client.list_mailboxes()
+    record = next((r for r in records if r["mailbox_account_id"] == mailbox_account_id), None)
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    impact = await cases_service.delete_mailbox_content(pool, mailbox_account_id, mailbox_label=record["label"])
     try:
         deleted = await identity_broker_client.delete_mailbox(mailbox_account_id)
     except IdentityBrokerError as exc:
         raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    return MailboxDeletionImpactRead(**impact)
 
 
 @router.get("/{mailbox_account_id}/shares", response_model=list[MailboxShareRead])
@@ -208,10 +234,16 @@ async def share_mailbox(
         mailbox_account_id=mailbox_account_id,
         created_by_user_id=user.user_id,
     )
+    email_body = email_templates.render_mailbox_shared_email(
+        granted_by=sharer_name,
+        mailbox_name=record["label"],
+        mailbox_address=record.get("email_address"),
+        granted_at=datetime.now(timezone.utc),
+    )
     await notification_email_service.try_send_email(
         to_email=share["email_address"],
         subject=f'MailingAI — te dieron acceso al buzón "{record["label"]}"',
-        body=notification_message,
+        body=email_body,
     )
     return MailboxShareRead(**share)
 

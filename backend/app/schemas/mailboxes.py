@@ -58,6 +58,12 @@ class MailboxSendTestResponse(BaseModel):
     sent: bool
 
 
+class MailboxDeletionImpactRead(BaseModel):
+    message_count: int
+    cases_deleted: int
+    cases_affected: int
+
+
 class MailboxShareRead(BaseModel):
     mailbox_account_id: int
     user_id: int
