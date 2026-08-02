@@ -1,55 +1,76 @@
 import base64
-import io
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Annotated
-from xml.sax.saxutils import escape
 
 import asyncpg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi import status as http_status
 from fastapi.responses import Response
-from PIL import Image as PILImage
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.pdfgen import canvas as pdfcanvas
-from reportlab.platypus import (
-    HRFlowable,
-    Image as RLImage,
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from pydantic import BaseModel
+from weasyprint import HTML
 
 from app.auth.dependencies import CurrentUserDep
 from app.db import get_pool
-from app.repositories import cases_repository
+from app.repositories import cases_repository, users_repository
 from app.schemas.cases import CaseDetail, CaseSendEmailResponse, TimelineEventRead
 from app.services import cases_service, n8n_client
+from app.services.markdown_render import html_to_plain_text, markdown_to_safe_html
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 PoolDep = Annotated[asyncpg.Pool, Depends(get_pool)]
 
-# Documento formal: todo el texto va en negro, sin colores de marca -- la
-# jerarquia se marca con tamano/negrita (H1/H2/H3), no con color. El unico
-# uso de color que queda es de fondo, muy claro, para el bloque de "Analisis
-# de cierre" y las lineas divisorias finas -- nunca texto.
-_LINE = colors.HexColor("#dde3ea")
-_AI_BG = colors.HexColor("#f2f4ff")
-_AI_BORDER = colors.HexColor("#d6ddfb")
-
-_CORREO_SUFFIX_RE = re.compile(r"\s*\(correo:.*\)$")
-# timestamptz de Postgres llega como datetime con tzinfo -- el "piso" de
-# ordenamiento debe ser aware tambien, o comparar con un occurred_at nulo
-# revienta con TypeError (naive vs aware).
+_DOCUMENT_VERSION = "1.0"
 _MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
+_CORREO_SUFFIX_RE = re.compile(r"\s*\(correo:.*\)$")
+_FILENAME_UNSAFE_RE = re.compile(r'[\\/:*?"<>|]+')
+
+
+def _safe_filename(title: str) -> str:
+    """Nombre de archivo a partir del titulo del expediente (ej.
+    GFCH-260702620) en vez del case_id interno -- el id numerico no le dice
+    nada al usuario que recibe el PDF."""
+    cleaned = _FILENAME_UNSAFE_RE.sub("_", title.strip())
+    return cleaned or "expediente"
+
+_MESES = {
+    1: "ene", 2: "feb", 3: "mar", 4: "abr", 5: "may", 6: "jun",
+    7: "jul", 8: "ago", 9: "sep", 10: "oct", 11: "nov", 12: "dic",
+}
+
+_OUTCOME_LABELS = {
+    "con_hallazgos": "Con hallazgos",
+    "sin_hallazgos": "Sin hallazgos (nada que revisar)",
+    "pendiente": "Pendiente de revisión",
+    "en_proceso": "En proceso",
+    "derivado": "Derivado a",
+    "mas_antecedentes": "Se solicitan más antecedentes",
+    "investigado_sin_compromiso": "Investigado — sin compromiso",
+    "falso_positivo": "Falso positivo",
+    "mitigado": "Mitigado / remediado",
+    "sin_recepcion": "Sin recepción del correo",
+}
+
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_jinja_env = Environment(
+    loader=FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=select_autoescape(["html", "jinja"]),
+)
+
+
+def _fmt_day(value: datetime | date | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value.day} {_MESES[value.month]} {value.year}"
+
+
+def _fmt_time(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    return value.strftime("%H:%M")
 
 
 def _fmt_dt(value: datetime | None) -> str:
@@ -58,87 +79,24 @@ def _fmt_dt(value: datetime | None) -> str:
     return value.strftime("%d-%m-%Y %H:%M")
 
 
-def _esc(text: str | None) -> str:
-    return escape(text or "")
-
-
-def _truncate_to_width(text: str, font: str, size: float, max_width: float) -> str:
-    if stringWidth(text, font, size) <= max_width:
+def _truncate_words(text: str, max_words: int = 30) -> str:
+    words = text.split()
+    if len(words) <= max_words:
         return text
-    ellipsis = "…"
-    while text and stringWidth(text + ellipsis, font, size) > max_width:
-        text = text[:-1]
-    return (text + ellipsis) if text else ellipsis
+    return " ".join(words[:max_words]) + "..."
 
 
-def _build_canvas_maker(header_text: str) -> type[pdfcanvas.Canvas]:
-    margin = 20 * mm
-
-    class _CaseCanvas(pdfcanvas.Canvas):
-        def __init__(self, *args, **kwargs):
-            pdfcanvas.Canvas.__init__(self, *args, **kwargs)
-            self._saved_page_states: list[dict] = []
-
-        def showPage(self):
-            self._saved_page_states.append(dict(self.__dict__))
-            self._startPage()
-
-        def save(self):
-            total_pages = len(self._saved_page_states)
-            for state in self._saved_page_states:
-                self.__dict__.update(state)
-                self._draw_header_footer(total_pages)
-                pdfcanvas.Canvas.showPage(self)
-            pdfcanvas.Canvas.save(self)
-
-        def _draw_header_footer(self, total_pages: int) -> None:
-            width, height = letter
-            max_width = width - 2 * margin
-            # La pagina 1 ya trae el titulo grande al inicio del cuerpo -- una
-            # cabecera repitiendolo ahi arriba es la tercera vez que se ve el
-            # mismo dato. Solo se dibuja desde la pagina 2 en adelante.
-            if self._pageNumber > 1:
-                self.setFont("Helvetica-Bold", 9)
-                self.setFillColor(colors.black)
-                self.drawString(
-                    margin,
-                    height - 12 * mm,
-                    _truncate_to_width(header_text, "Helvetica-Bold", 9, max_width),
-                )
-                self.setStrokeColor(colors.black)
-                self.setLineWidth(0.6)
-                self.line(margin, height - 14 * mm, width - margin, height - 14 * mm)
-            self.setFont("Helvetica", 8)
-            self.setFillColor(colors.black)
-            self.drawRightString(
-                width - margin, 12 * mm, f"Página {self._pageNumber} de {total_pages}"
-            )
-
-    return _CaseCanvas
-
-
-def _build_evidence_image(content: bytes, max_width: float, max_height: float) -> RLImage | Paragraph:
-    try:
-        with PILImage.open(io.BytesIO(content)) as im:
-            width_px, height_px = im.size
-    except Exception:
-        return Paragraph("(no se pudo previsualizar esta imagen)", ParagraphStyle("evidenceErr"))
-    if not width_px or not height_px:
-        return Paragraph("(no se pudo previsualizar esta imagen)", ParagraphStyle("evidenceErr"))
-    scale = min(max_width / width_px, max_height / height_px)
-    return RLImage(io.BytesIO(content), width=width_px * scale, height=height_px * scale)
-
-
-def _group_timeline(
+def _group_email_events(
     timeline: list[TimelineEventRead],
 ) -> list[tuple[TimelineEventRead, list[TimelineEventRead]]]:
     """Agrupa los adjuntos (document_shared) bajo el correo que los trajo.
 
-    Solo los correos (email_sent) quedan como eventos de la linea de tiempo del
-    PDF -- las notas del auditor se intercalan aparte con su texto completo
-    (ver build_case_pdf) en vez de la version acotada a una linea que vive en
-    mailing.timeline_events, y el cierre por IA ya se muestra en el bloque
-    "Analisis de cierre" al inicio del documento, asi que no se repite aqui.
+    Solo los correos (email_sent) generan un evento de linea de tiempo aqui --
+    las notas del auditor se toman de detail.notes (texto completo) y la
+    fusion de expedientes de los eventos 'case_merged', ambos combinados por
+    separado en build_case_pdf. El resto de action_type (ai_case_summary,
+    auditor_note) ya se muestra en otras secciones del documento y se ignora
+    aqui para no duplicar informacion.
     """
     children_by_message: dict[str, list[TimelineEventRead]] = {}
     for event in timeline:
@@ -153,172 +111,176 @@ def _group_timeline(
     return groups
 
 
-def build_case_pdf(detail: CaseDetail, evidence_records: list[asyncpg.Record]) -> bytes:
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=letter,
-        topMargin=22 * mm,
-        bottomMargin=20 * mm,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        title=detail.title,
-    )
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "caseTitle",
-        parent=styles["Title"],
-        textColor=colors.black,
-        fontName="Helvetica-Bold",
-        fontSize=18,
-        leading=22,
-    )
-    heading_style = ParagraphStyle(
-        "caseHeading",
-        parent=styles["Heading2"],
-        textColor=colors.black,
-        fontName="Helvetica-Bold",
-        fontSize=13,
-        leading=16,
-        spaceBefore=14,
-        spaceAfter=4,
-    )
-    subheading_style = ParagraphStyle(
-        "caseSubheading",
-        parent=styles["Heading3"],
-        textColor=colors.black,
-        fontName="Helvetica-Bold",
-        fontSize=10,
-        leading=13,
-        spaceBefore=2,
-        spaceAfter=2,
-    )
-    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8.5, leading=13, textColor=colors.black)
-    attach_style = ParagraphStyle("eventAttach", parent=small, leftIndent=10, fontSize=8)
-    story = []
+def _build_timeline_items(detail: CaseDetail) -> list[dict]:
+    items: list[tuple[datetime, dict]] = []
 
-    story.append(Paragraph(f"Expediente caso: {_esc(detail.title)}", title_style))
-    story.append(HRFlowable(width="100%", thickness=1.4, color=colors.black, spaceAfter=10))
-
-    meta_rows = []
-    meta_rows.append(["Estado", "Abierto" if detail.status == "open" else "Cerrado"])
-    meta_rows.append(["Mensajes", str(detail.message_count)])
-    meta_rows.append(
-        ["Periodo", f"{_fmt_dt(detail.first_message_at)} → {_fmt_dt(detail.last_message_at)}"]
-    )
-    meta_rows.append(["Exportado", datetime.now().strftime("%d-%m-%Y %H:%M")])
-    meta_table = Table(meta_rows, colWidths=[35 * mm, 130 * mm])
-    meta_table.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ]
+    for event, children in _group_email_events(detail.timeline):
+        confidence_pct = round(event.confidence * 100) if event.confidence is not None else None
+        badge_class = "observed" if (event.confidence or 0) >= cases_service.CONFIDENCE_CR_KEYWORD else "manual"
+        child_labels = [_CORREO_SUFFIX_RE.sub("", child.description or "") for child in children]
+        items.append(
+            (
+                event.occurred_at or _MIN_DT,
+                {
+                    "kind": "email",
+                    "time": _fmt_dt(event.occurred_at),
+                    "title": event.description or event.action_type,
+                    "actor": event.actor,
+                    "detail": "Comunicación registrada en el expediente.",
+                    "confidence_pct": confidence_pct,
+                    "badge_class": badge_class,
+                    "children": child_labels,
+                },
+            )
         )
-    )
-    story.append(meta_table)
-    story.append(Spacer(1, 10))
+
+    for event in detail.timeline:
+        if event.action_type != "case_merged":
+            continue
+        items.append(
+            (
+                event.occurred_at or _MIN_DT,
+                {
+                    "kind": "merge",
+                    "time": _fmt_dt(event.occurred_at),
+                    "detail": event.description or "Fusión de expedientes.",
+                },
+            )
+        )
+
+    for note in detail.notes:
+        # Solo un adelanto acotado aca -- el texto completo de la nota ya se
+        # muestra entero en "Observacion del auditor" (pagina de registro
+        # documental). Mostrarlo completo tambien aca es la misma
+        # informacion duplicada dos veces en el mismo PDF.
+        items.append(
+            (
+                note.created_at or _MIN_DT,
+                {
+                    "kind": "note",
+                    "time": _fmt_dt(note.created_at),
+                    "detail": _truncate_words(html_to_plain_text(note.body)),
+                },
+            )
+        )
+
+    items.sort(key=lambda pair: pair[0])
+    return [payload for _dt, payload in items]
+
+
+def _build_context(
+    detail: CaseDetail,
+    evidence_records: list[asyncpg.Record],
+    *,
+    owner_display: str | None,
+) -> dict:
+    now = datetime.now()
+    case_code = detail.title
+    messages = detail.messages
+
+    direct_count = sum(1 for m in messages if m.confidence >= cases_service.CONFIDENCE_CR_KEYWORD)
+    inferred_count = len(messages) - direct_count
+
+    senders = {m.from_address.strip().lower() for m in messages if m.from_address}
+
+    if detail.first_message_at and detail.last_message_at:
+        delta = detail.last_message_at - detail.first_message_at
+        thread_duration_label = f"{delta.days} d {delta.seconds // 3600:02d} h"
+        period_label = f"{_fmt_day(detail.first_message_at)} – {_fmt_day(detail.last_message_at)}"
+    else:
+        thread_duration_label = "—"
+        period_label = "Sin mensajes registrados"
 
     ai_result = detail.latest_ai_run.result if detail.latest_ai_run else None
-    if ai_result is not None:
-        # El resumen corregido a mano por el auditor pisa al texto crudo del
-        # modelo tambien en el PDF -- un solo texto "vigente".
-        summary_text = detail.ai_summary_override or ai_result.summary
-        ai_body = [
-            [
-                Paragraph(
-                    f"{_esc(summary_text)}<br/><br/>"
-                    f"<b>Prioridad sugerida:</b> {_esc(ai_result.suggested_priority)} &middot; "
-                    f"<b>Próxima acción:</b> {_esc(ai_result.suggested_next_action)}",
-                    small,
-                )
-            ]
-        ]
-        ai_table = Table(ai_body, colWidths=[165 * mm])
-        ai_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), _AI_BG),
-                    ("BOX", (0, 0), (-1, -1), 0.6, _AI_BORDER),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                    ("TOPPADDING", (0, 0), (-1, -1), 8),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ]
-            )
+    summary_text = detail.ai_summary_override or (ai_result.summary if ai_result else None)
+    summary_paragraphs = [line.strip() for line in summary_text.split("\n") if line.strip()] if summary_text else []
+
+    message_rows = []
+    for m in sorted(messages, key=lambda m: m.sent_datetime or _MIN_DT):
+        confidence_pct = round(m.confidence * 100)
+        message_rows.append(
+            {
+                "date": _fmt_day(m.sent_datetime) if m.sent_datetime else "—",
+                "time": _fmt_time(m.sent_datetime) if m.sent_datetime else "",
+                "subject": m.subject or "(sin asunto)",
+                "sender": m.from_address or "—",
+                "confidence_pct": confidence_pct,
+                "is_direct": m.confidence >= cases_service.CONFIDENCE_CR_KEYWORD,
+            }
         )
-        story.append(Paragraph("Análisis de cierre", heading_style))
-        story.append(ai_table)
 
-    note_style = ParagraphStyle("noteBody", parent=small, leftIndent=0, spaceBefore=2)
+    latest_note = None
+    if detail.notes:
+        newest = max(detail.notes, key=lambda n: n.created_at)
+        latest_note = {"time": _fmt_dt(newest.created_at), "body": newest.body}
 
-    email_groups = _group_timeline(detail.timeline)
-    timeline_items: list[tuple[datetime, str, object]] = [
-        (event.occurred_at or _MIN_DT, "email", (event, children)) for event, children in email_groups
-    ]
-    timeline_items += [(note.created_at or _MIN_DT, "note", note) for note in detail.notes]
-    timeline_items.sort(key=lambda item: item[0])
-
-    story.append(Paragraph("Línea de tiempo", heading_style))
-    story.append(HRFlowable(width="100%", thickness=0.6, color=_LINE, spaceAfter=6))
-    for _dt, kind, payload in timeline_items:
-        if kind == "email":
-            event, children = payload
-            lines = (
-                f"<b>Fecha:</b> {_fmt_dt(event.occurred_at)}<br/>"
-                f"<b>Asunto:</b> {_esc(event.description or event.action_type)}<br/>"
-                f"<b>De:</b> {_esc(event.actor) if event.actor else '—'}"
-            )
-            story.append(Paragraph(lines, small))
-            for child in children:
-                desc = _CORREO_SUFFIX_RE.sub("", child.description or "")
-                story.append(Paragraph(f"<b>Adjunto:</b> {_esc(desc)}", attach_style))
-        else:
-            note = payload
-            note_html = _esc(note.body).replace("\n", "<br/>")
-            story.append(Paragraph(f"<b>Fecha:</b> {_fmt_dt(note.created_at)}", small))
-            story.append(Paragraph("Nota del auditor:", subheading_style))
-            story.append(Paragraph(note_html, note_style))
-        story.append(Spacer(1, 12))
-
-    if evidence_records:
-        story.append(PageBreak())
-        story.append(Paragraph("Evidencia", heading_style))
-        story.append(HRFlowable(width="100%", thickness=0.6, color=_LINE, spaceAfter=6))
-        ev_rows = [["Fecha y hora", "Glosa", "Evidencia"]]
-        for ev in evidence_records:
-            ev_rows.append(
-                [
-                    Paragraph(_fmt_dt(ev["created_at"]), small),
-                    Paragraph(_esc(ev["glosa"]), small),
-                    _build_evidence_image(ev["content"], max_width=80 * mm, max_height=60 * mm),
-                ]
-            )
-        ev_table = Table(ev_rows, colWidths=[28 * mm, 47 * mm, 90 * mm], repeatRows=1)
-        ev_table.setStyle(
-            TableStyle(
-                [
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-                    ("FONTSIZE", (0, 0), (-1, 0), 7.5),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("LINEBELOW", (0, 0), (-1, 0), 1, _LINE),
-                    ("LINEBELOW", (0, 1), (-1, -2), 0.5, _LINE),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
+    evidence_items = []
+    for idx, ev in enumerate(evidence_records, start=1):
+        author = ev["creator_display_name"] or ev["creator_email_address"] or "No registrado"
+        file_stem = Path(ev["file_name"]).stem or ev["file_name"]
+        evidence_items.append(
+            {
+                "code": f"EV-{idx:03d}",
+                "title": file_stem,
+                "incorporated_at": _fmt_dt(ev["created_at"]),
+                "author": author,
+                "content_type": ev["content_type"],
+                "content_base64": base64.b64encode(ev["content"]).decode("ascii"),
+                "glosa": ev["glosa"],
+            }
         )
-        story.append(ev_table)
 
-    doc.build(story, canvasmaker=_build_canvas_maker(detail.title))
-    return buf.getvalue()
+    return {
+        "case_code": case_code,
+        "external_code": detail.external_code,
+        "status_badge_class": "open" if detail.status == "open" else "closed",
+        "status_label": "Abierto" if detail.status == "open" else "Cerrado",
+        "period_label": period_label,
+        "cutoff_label": f"{_fmt_day(now)} · {_fmt_time(now)}",
+        "summary_paragraphs": summary_paragraphs,
+        "owner_display": owner_display,
+        "message_count": len(messages),
+        "participant_count": len(senders),
+        "outcome_label": _OUTCOME_LABELS.get(detail.outcome, "Sin conclusión definida"),
+        "pending_action_html": markdown_to_safe_html(detail.pending_action) if detail.pending_action else None,
+        "next_review_label": (
+            _fmt_day(detail.next_review_at)
+            if detail.next_review_at
+            else "No definida. Se recomienda asignar responsable y fecha objetivo."
+        ),
+        "document_version": _DOCUMENT_VERSION,
+        "thread_duration_label": thread_duration_label,
+        "direct_count": direct_count,
+        "inferred_count": inferred_count,
+        "timeline_items": _build_timeline_items(detail),
+        "confidence_direct_pct": round(cases_service.CONFIDENCE_CONVERSATION * 100),
+        "confidence_keyword_pct": round(cases_service.CONFIDENCE_CR_KEYWORD * 100),
+        "confidence_heuristic_pct": round(cases_service.CONFIDENCE_HEURISTIC * 100),
+        "message_rows": message_rows,
+        "latest_note": latest_note,
+        "evidence_items": evidence_items,
+    }
+
+
+def build_case_pdf(
+    detail: CaseDetail,
+    evidence_records: list[asyncpg.Record],
+    *,
+    owner_display: str | None = None,
+) -> bytes:
+    context = _build_context(detail, evidence_records, owner_display=owner_display)
+    template = _jinja_env.get_template("case_export.html.jinja")
+    html_string = template.render(**context)
+    return HTML(string=html_string, base_url=str(_TEMPLATES_DIR)).write_pdf()
+
+
+async def _resolve_owner_display(pool: asyncpg.Pool, owner_user_id: int | None) -> str | None:
+    if owner_user_id is None:
+        return None
+    record = await users_repository.get_user_by_id(pool, owner_user_id)
+    if record is None:
+        return None
+    return record["display_name"] or record["email_address"]
 
 
 @router.get("/{case_id}/export.pdf")
@@ -327,16 +289,34 @@ async def export_case_pdf(case_id: int, pool: PoolDep, user: CurrentUserDep) -> 
     if detail is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     evidence_records = await cases_repository.list_case_evidence_with_content(pool, case_id)
-    pdf_bytes = build_case_pdf(detail, evidence_records)
+    owner_display = await _resolve_owner_display(pool, detail.owner_user_id)
+    pdf_bytes = build_case_pdf(detail, evidence_records, owner_display=owner_display)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="expediente_{case_id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="expediente_{_safe_filename(detail.title)}.pdf"'},
     )
 
 
 def _split_addresses(raw: str) -> list[str]:
     return [addr.strip() for addr in re.split(r"[;,]", raw) if addr.strip()]
+
+
+class MarkdownPreviewRequest(BaseModel):
+    text: str
+
+
+class MarkdownPreviewResponse(BaseModel):
+    html: str
+
+
+@router.post("/render-markdown", response_model=MarkdownPreviewResponse)
+async def render_markdown_preview(payload: MarkdownPreviewRequest, _user: CurrentUserDep) -> MarkdownPreviewResponse:
+    """El cuerpo del correo se edita como Markdown (mas simple de leer/editar
+    que HTML crudo) -- este endpoint deja que el frontend previsualice
+    exactamente el HTML que se va a enviar, sin duplicar el conversor en
+    Javascript."""
+    return MarkdownPreviewResponse(html=markdown_to_safe_html(payload.text))
 
 
 @router.post("/{case_id}/send-email", response_model=CaseSendEmailResponse)
@@ -370,10 +350,11 @@ async def send_case_email(
     email_attachments: list[dict[str, str]] = []
     if attach_case_pdf:
         evidence_records = await cases_repository.list_case_evidence_with_content(pool, case_id)
-        pdf_bytes = build_case_pdf(detail, evidence_records)
+        owner_display = await _resolve_owner_display(pool, detail.owner_user_id)
+        pdf_bytes = build_case_pdf(detail, evidence_records, owner_display=owner_display)
         email_attachments.append(
             {
-                "filename": f"expediente_{case_id}.pdf",
+                "filename": f"expediente_{_safe_filename(detail.title)}.pdf",
                 "content_type": "application/pdf",
                 "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
             }
@@ -396,7 +377,7 @@ async def send_case_email(
             to=to_list,
             cc=cc_list,
             subject=subject,
-            body=body,
+            body=markdown_to_safe_html(body),
             attachments=email_attachments,
         )
     except n8n_client.SendEmailError as exc:

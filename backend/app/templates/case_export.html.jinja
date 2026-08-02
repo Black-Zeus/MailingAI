@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Expediente {{ case_code }}</title>
+<style>
+  :root{--navy:#11243b;--blue:#1f5f8b;--cyan:#29a3a3;--ink:#17202a;--muted:#5e6b78;--line:#d7dee6;--soft:#f3f6f8;--amber:#b66a00;--amber-bg:#fff3dc;--green:#26734d;--green-bg:#eaf6ef;--red:#a53b3b}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;color:var(--ink);font-family:"DejaVu Sans","Segoe UI",Arial,sans-serif;font-size:9.5pt;line-height:1.42}
+  h1,h2,h3,p,dl,dd{margin-top:0}
+  h1{font-size:23pt;line-height:1.08;color:var(--navy);margin:0 0 2mm}
+  h2{font-size:15pt;color:var(--navy);margin:0 0 5mm;padding-bottom:2mm;border-bottom:.6mm solid var(--cyan)}
+  h3{font-size:10pt;color:var(--navy);margin:0 0 2mm;text-transform:uppercase;letter-spacing:.45px}
+  .eyebrow{font-size:8pt;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--blue);margin-bottom:3mm}
+  .subtitle{font-size:11pt;color:var(--muted);margin-bottom:8mm}
+
+  @page cover{size:A4;margin:26mm 18mm 22mm 18mm;border-top:6mm solid var(--navy);
+    @bottom-left{content:"{{ case_code }} · Versión {{ document_version }}";font-size:7.8pt;color:#5e6b78}
+    @bottom-right{content:"Página " counter(page) " de " counter(pages);font-size:7.8pt;color:#5e6b78}}
+  @page timeline{size:A4;margin:26mm 18mm 22mm 18mm;border-top:6mm solid var(--navy);
+    @bottom-left{content:"{{ case_code }} · Línea de tiempo";font-size:7.8pt;color:#5e6b78}
+    @bottom-right{content:"Página " counter(page) " de " counter(pages);font-size:7.8pt;color:#5e6b78}}
+  @page docs{size:A4;margin:26mm 18mm 22mm 18mm;border-top:6mm solid var(--navy);
+    @bottom-left{content:"{{ case_code }} · Registro de comunicaciones";font-size:7.8pt;color:#5e6b78}
+    @bottom-right{content:"Página " counter(page) " de " counter(pages);font-size:7.8pt;color:#5e6b78}}
+  @page evidence{size:A4;margin:26mm 18mm 22mm 18mm;border-top:6mm solid var(--navy);
+    @bottom-left{content:"{{ case_code }} · Evidencia y cierre";font-size:7.8pt;color:#5e6b78}
+    @bottom-right{content:"Página " counter(page) " de " counter(pages);font-size:7.8pt;color:#5e6b78}}
+
+  .sheet{page-break-after:always}
+  .sheet:last-child{page-break-after:auto}
+  .sheet.cover{page:cover}
+  .sheet.timeline-sheet{page:timeline}
+  .sheet.docs-sheet{page:docs}
+  .sheet.evidence-sheet{page:evidence}
+
+  .case-bar{display:grid;grid-template-columns:1.5fr .9fr .9fr;gap:4mm;background:var(--navy);color:white;padding:5mm 6mm;margin:0 0 7mm;border-radius:2mm}
+  .case-bar span,.metric span,.meta dt{display:block;font-size:7.3pt;text-transform:uppercase;letter-spacing:.5px;color:#aebed0;font-weight:700}
+  .case-bar strong{font-size:11pt}
+  .badge{display:inline-block;border-radius:99px;padding:1.2mm 3mm;font-size:7.5pt;font-weight:700;white-space:nowrap}
+  .badge.open{background:var(--amber-bg);color:var(--amber);border:.2mm solid #efc87f}
+  .badge.closed{background:var(--green-bg);color:var(--green);border:.2mm solid #b9dfc8}
+  .badge.manual{background:#e9f2fb;color:var(--blue);border:.2mm solid #bfd7ec}
+  .badge.observed{background:var(--green-bg);color:var(--green);border:.2mm solid #b9dfc8}
+  .grid-2{display:grid;grid-template-columns:1.2fr .8fr;gap:6mm}
+  .card{border:.25mm solid var(--line);border-radius:2mm;padding:5mm;background:white}
+  .card.soft{background:var(--soft);border:0}
+  .summary{font-size:10pt;line-height:1.55}
+  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:3mm;margin:5mm 0}
+  .metric{background:var(--soft);border-left:1mm solid var(--cyan);padding:3.2mm}
+  .metric span{color:var(--muted)}
+  .metric strong{display:block;font-size:15pt;color:var(--navy);margin-top:1mm}
+  .meta{display:grid;grid-template-columns:36mm 1fr;gap:2mm 4mm;margin:0}
+  .meta dt{color:var(--muted)}
+  .meta dd{margin:0;font-weight:600}
+  .callout{margin-top:5mm;border-left:1.2mm solid var(--amber);background:var(--amber-bg);padding:4mm 5mm}
+  .callout strong{color:#7b4900}
+  .section-note{color:var(--muted);font-size:8.5pt;margin:-3mm 0 5mm}
+  .timeline{position:relative;margin-left:5mm;padding-left:9mm}
+  .timeline::before{content:"";position:absolute;left:1.8mm;top:2mm;bottom:2mm;width:.5mm;background:#bed0dc}
+  .event{position:relative;margin-bottom:4.5mm;break-inside:avoid}
+  .event::before{content:"";position:absolute;left:-8.6mm;top:1.4mm;width:3.2mm;height:3.2mm;border-radius:50%;background:white;border:.8mm solid var(--cyan)}
+  .event .time{font-size:7.7pt;color:var(--blue);font-weight:700;margin-bottom:.8mm}
+  .event .title{font-size:9.5pt;font-weight:700;color:var(--navy);margin-bottom:.5mm}
+  .event .detail{font-size:8.5pt;color:var(--muted)}
+  .event .attach{font-size:8pt;color:var(--muted);margin-left:4mm}
+  .event.audit{padding:3mm 4mm;background:#eef6f8;border-radius:1.5mm}
+  .event.audit::before{background:var(--navy);border-color:var(--navy)}
+  table{width:100%;border-collapse:collapse;font-size:8.2pt}
+  th{text-align:left;text-transform:uppercase;letter-spacing:.35px;font-size:7.2pt;color:var(--muted);padding:2.5mm;border-bottom:.6mm solid var(--navy)}
+  td{vertical-align:top;padding:3mm 2.5mm;border-bottom:.25mm solid var(--line)}
+  .confidence{font-weight:800;color:var(--green)}
+  .evidence-box{border:.25mm solid var(--line);border-radius:2mm;padding:5mm;break-inside:avoid;margin-bottom:6mm}
+  .evidence-head{display:grid;grid-template-columns:1fr auto;gap:4mm;align-items:start;margin-bottom:4mm}
+  .evidence-img{max-width:100%;max-height:120mm;display:block;margin:0 auto;border-radius:1.5mm;border:.25mm solid var(--line)}
+  .caption{margin-top:2.5mm;color:var(--muted);font-size:8pt}
+  /* Notas del auditor se guardan como HTML (convertidas desde Markdown al
+     guardar) -- estos resets evitan los margenes por defecto de p/ul/ol que
+     se ven mal dentro de tarjetas compactas. */
+  .md-content p{margin:0 0 2mm}
+  .md-content p:last-child{margin-bottom:0}
+  .md-content ul,.md-content ol{margin:1mm 0 2mm;padding-left:5mm}
+  .md-content li{margin-bottom:.5mm}
+  .md-content strong{color:var(--navy)}
+  .md-content code{font-family:"DejaVu Sans Mono",Consolas,monospace;font-size:8pt;background:var(--soft);padding:.3mm 1mm;border-radius:1mm}
+  .md-content blockquote{margin:1mm 0;padding-left:3mm;border-left:.8mm solid var(--line);color:var(--muted)}
+  .decision{display:grid;grid-template-columns:40mm 1fr;gap:3mm 5mm;border-top:.5mm solid var(--line);padding-top:4mm;margin-top:5mm}
+  .decision strong{color:var(--navy)}
+</style>
+</head>
+<body>
+
+  <section class="sheet cover">
+    <div class="eyebrow">Informe de expediente</div>
+    <h1>{{ case_code }}</h1>
+    {% if external_code %}<p class="section-note" style="margin-top:-1mm">Código: {{ external_code }}</p>{% endif %}
+    <p class="subtitle">Registro consolidado de comunicaciones, observaciones y evidencia asociada</p>
+
+    <div class="case-bar">
+      <div><span>Estado operativo</span><strong><i class="badge {{ status_badge_class }}">{{ status_label }}</i></strong></div>
+      <div><span>Periodo analizado</span><strong>{{ period_label }}</strong></div>
+      <div><span>Fecha de corte</span><strong>{{ cutoff_label }}</strong></div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <h2>Resumen ejecutivo</h2>
+        {% if summary_paragraphs %}
+          {% for p in summary_paragraphs %}<p class="summary">{{ p }}</p>{% endfor %}
+        {% else %}
+          <p class="summary">Sin análisis de IA generado para este expediente. El resumen se completará cuando se ejecute un análisis o el auditor registre una conclusión manual.</p>
+        {% endif %}
+      </div>
+      <div>
+        <h2>Ficha de control</h2>
+        <dl class="meta">
+          <dt>Responsable</dt><dd>{{ owner_display or "Sin asignar" }}</dd>
+          <dt>Mensajes</dt><dd>{{ message_count }}</dd>
+          <dt>Participantes</dt><dd>{{ participant_count }} casilla{{ "s" if participant_count != 1 else "" }} externa{{ "s" if participant_count != 1 else "" }}</dd>
+          <dt>Versión</dt><dd>{{ document_version }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric"><span>Duración del hilo</span><strong>{{ thread_duration_label }}</strong></div>
+      <div class="metric"><span>Asociación directa</span><strong>{{ direct_count }} / {{ message_count }}</strong></div>
+      <div class="metric"><span>Asociación inferida</span><strong>{{ inferred_count }} / {{ message_count }}</strong></div>
+    </div>
+
+    <div class="card soft">
+      <h3>Alcance y limitaciones</h3>
+      <p>Documento de apoyo para seguimiento y revisión. Consolida información registrada en la aplicación a la fecha de corte. No sustituye el correo original ni constituye, por sí solo, evidencia forense. La integridad probatoria depende de conservar las fuentes, adjuntos y metadatos originales.</p>
+    </div>
+  </section>
+
+  <section class="sheet timeline-sheet">
+    <div class="eyebrow">Trazabilidad cronológica</div>
+    <h2>Línea de tiempo consolidada</h2>
+    <p class="section-note">Los eventos se presentan según fueron registrados en la aplicación. Las asociaciones inferidas requieren validación humana.</p>
+    {% if timeline_items %}
+    <div class="timeline">
+      {% for item in timeline_items %}
+        {% if item.kind == "email" %}
+          <div class="event">
+            <div class="time">{{ item.time }}</div>
+            <div class="title">{{ item.title }} {% if item.confidence_pct is not none %}<span class="badge {{ item.badge_class }}">{{ item.confidence_pct }}%</span>{% endif %}</div>
+            <div class="detail">De: {{ item.actor or "—" }} · {{ item.detail }}</div>
+            {% for child in item.children %}<div class="attach">Adjunto: {{ child }}</div>{% endfor %}
+          </div>
+        {% elif item.kind == "merge" %}
+          <div class="event audit">
+            <div class="time">{{ item.time }}</div>
+            <div class="title">Fusión de expedientes</div>
+            <div class="detail">{{ item.detail }}</div>
+          </div>
+        {% else %}
+          <div class="event audit">
+            <div class="time">{{ item.time }}</div>
+            <div class="title">Nota del auditor</div>
+            <div class="detail">{{ item.detail }}</div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="section-note">No hay eventos registrados para este expediente.</p>
+    {% endif %}
+    <div class="card soft">
+      <h3>Criterio de confianza utilizado</h3>
+      <p><strong>{{ confidence_direct_pct }}%:</strong> mismo hilo o incorporación manual. <strong>{{ confidence_keyword_pct }}%:</strong> coincidencia por identificador, palabra clave o código. <strong>{{ confidence_heuristic_pct }}%:</strong> heurística por tema y participantes. Los porcentajes expresan confianza de asociación, no certeza sobre el contenido.</p>
+    </div>
+  </section>
+
+  <section class="sheet docs-sheet">
+    <div class="eyebrow">Detalle documental</div>
+    <h2>Registro de comunicaciones</h2>
+    <p class="section-note">La tabla identifica las piezas que componen el expediente. El contenido íntegro debe permanecer disponible en la fuente original o como anexo exportado.</p>
+    {% if message_rows %}
+    <table>
+      <thead><tr><th style="width:18%">Fecha y hora</th><th style="width:39%">Asunto / referencia</th><th style="width:28%">Remitente</th><th style="width:15%">Confianza</th></tr></thead>
+      <tbody>
+        {% for row in message_rows %}
+        <tr>
+          <td>{{ row.date }}<br>{{ row.time }}</td>
+          <td>{{ row.subject }}</td>
+          <td>{{ row.sender }}</td>
+          <td>{% if row.is_direct %}<span class="confidence">{{ row.confidence_pct }}% · Directa</span>{% else %}<span class="badge manual">{{ row.confidence_pct }}% · Inferida</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="section-note">Este expediente no tiene mensajes asociados.</p>
+    {% endif %}
+    {% if latest_note %}
+    <div class="card" style="margin-top:6mm">
+      <h3>Observación del auditor</h3>
+      <p class="section-note" style="margin:0 0 2mm"><strong>{{ latest_note.time }}</strong></p>
+      <div class="md-content">{{ latest_note.body | safe }}</div>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="sheet evidence-sheet">
+    <div class="eyebrow">Soporte documental y cierre</div>
+    <h2>Evidencia</h2>
+    {% if evidence_items %}
+      {% for ev in evidence_items %}
+      <div class="evidence-box">
+        <div class="evidence-head">
+          <div><h3>{{ ev.code }} · {{ ev.title }}</h3><p class="section-note" style="margin:0">Incorporada: {{ ev.incorporated_at }} · Autor: {{ ev.author }}</p></div>
+          <span class="badge observed">Evidencia adjunta</span>
+        </div>
+        <img class="evidence-img" src="data:{{ ev.content_type }};base64,{{ ev.content_base64 }}" alt="{{ ev.title }}">
+        <p class="caption"><strong>Glosa:</strong> {{ ev.glosa }}</p>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="card soft"><p>Este expediente no tiene evidencia adjunta a la fecha de corte.</p></div>
+    {% endif %}
+
+    <h2 style="margin-top:9mm">Conclusión y control de emisión</h2>
+    <div class="decision">
+      <strong>Conclusión</strong><div>{{ outcome_label }}</div>
+      <strong>Estado del caso</strong><div><span class="badge {{ status_badge_class }}">{{ status_label }}</span></div>
+      <strong>Acción pendiente</strong><div class="md-content">{{ pending_action_html | safe if pending_action_html else "No definida." }}</div>
+      <strong>Próxima revisión</strong><div>{{ next_review_label }}</div>
+    </div>
+  </section>
+
+</body>
+</html>
