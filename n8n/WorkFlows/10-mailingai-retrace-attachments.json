@@ -7,7 +7,7 @@
         "httpMethod": "POST",
         "path": "retrace-attachments",
         "authentication": "headerAuth",
-        "responseMode": "lastNode",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb01",
@@ -97,7 +97,37 @@
       "name": "Split Out Attachments",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
+      "alwaysOutputData": true,
       "position": [750, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-real-attachment",
+              "leftValue": "={{ !!$json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb11",
+      "name": "Filter: Es Adjunto Real",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [875, 100]
     },
     {
       "parameters": {
@@ -234,9 +264,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = now(), total_messages = $1 WHERE run_id = $2 RETURNING run_id;",
+        "query": "UPDATE mailing.fetch_runs SET status = 'success', finished_at = now(), total_messages = $1 WHERE run_id = $2 RETURNING run_id, total_messages;",
         "options": {
-          "queryReplacement": "={{ [ (($json.traced || []).filter(t => t && t.attachment_row_id)).length, $('Postgres: Insert fetch_runs').item.json.run_id ] }}"
+          "queryReplacement": "={{ [ ($json.traced || []).filter(t => t && t.id && ['pdf','doc','docx','xls','xlsx','ppt','pptx','csv','txt'].includes((t.name || '').split('.').pop().toLowerCase())).length, $('Postgres: Insert fetch_runs').item.json.run_id ] }}"
         }
       },
       "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb09",
@@ -259,7 +289,7 @@
             {
               "name": "traced_count",
               "type": "number",
-              "value": "={{ $('Aggregate: Traced').item.json.traced ? $('Aggregate: Traced').item.json.traced.filter(t => t && t.attachment_row_id).length : 0 }}"
+              "value": "={{ $('Postgres: Update fetch_runs').item.json.total_messages }}"
             }
           ]
         },
@@ -270,6 +300,18 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [2250, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { traced_count: $json.traced_count } }}",
+        "options": {}
+      },
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb12",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2500, 0]
     }
   ],
   "connections": {
@@ -286,6 +328,12 @@
       "main": [[{ "node": "Split Out Attachments", "type": "main", "index": 0 }]]
     },
     "Split Out Attachments": {
+      "main": [[
+        { "node": "Filter: Es Adjunto Real", "type": "main", "index": 0 },
+        { "node": "Aggregate: Traced", "type": "main", "index": 0 }
+      ]]
+    },
+    "Filter: Es Adjunto Real": {
       "main": [[{ "node": "Set: Parse Attachment Name", "type": "main", "index": 0 }]]
     },
     "Set: Parse Attachment Name": {
@@ -295,13 +343,16 @@
       "main": [[{ "node": "Postgres: Upsert mailing.message_attachments", "type": "main", "index": 0 }]]
     },
     "Postgres: Upsert mailing.message_attachments": {
-      "main": [[{ "node": "Aggregate: Traced", "type": "main", "index": 0 }]]
+      "main": [[]]
     },
     "Aggregate: Traced": {
       "main": [[{ "node": "Postgres: Update fetch_runs", "type": "main", "index": 0 }]]
     },
     "Postgres: Update fetch_runs": {
       "main": [[{ "node": "Set: Shape Response", "type": "main", "index": 0 }]]
+    },
+    "Set: Shape Response": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   }
 }
