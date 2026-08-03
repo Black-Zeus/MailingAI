@@ -17,11 +17,16 @@ class MailboxAccountRead(BaseModel):
     updated_at: datetime
     owner_user_id: int | None = None
     is_notification_sender: bool = False
+    tenant_config_id: int | None = None
 
 
 class MailboxAccountUpdate(BaseModel):
     label: str | None = None
     enabled: bool | None = None
+
+
+class MailboxTenantAssign(BaseModel):
+    tenant_config_id: int
 
 
 class MailboxConnectUrlResponse(BaseModel):

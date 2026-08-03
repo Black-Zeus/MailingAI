@@ -6,7 +6,8 @@ Matriz honesta de qué funciona hoy, qué es una versión intermedia (funciona p
 
 | Capacidad | Estado | Detalle / limitación |
 |---|---|---|
-| SSO Microsoft/Entra ID | Implementado | Probado contra tenant single-tenant; multi-tenant (`/common`) no se probó |
+| SSO Microsoft/Entra ID | Implementado | Probado contra tenant single-tenant; multi-tenant (`/common`) no se probó -- login de usuarios sigue atado a un único tenant (el del `.env`) por decisión de alcance, ver fila siguiente |
+| Multi-tenant para buzones conectados | Implementado | Cada buzón guarda su propio tenant/client id/secret; N tenants se registran desde Configuración → Tenants de Microsoft (solo admin). **No** aplica al login de usuarios de la app, que sigue siendo un único tenant |
 | Cuentas locales usuario/contraseña | Implementado | Sin recuperación por email — si se olvida, un admin resetea manualmente |
 | Roles admin / usuario | Implementado | Solo dos niveles, sin roles intermedios (ej. "solo lectura global") |
 | Dueño + compartición de expedientes/buzones | Implementado | Compartir buzón solo admite `read`, no `edit` |

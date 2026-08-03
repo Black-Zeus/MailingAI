@@ -20,8 +20,12 @@ from app.schemas import (
     MailboxOwnerClaim,
     MailboxShareCreate,
     MailboxShareRead,
+    MailboxTenantAssign,
     MailboxTestResponse,
     NotificationSenderUpdate,
+    TenantConfigCreate,
+    TenantConfigRead,
+    TenantConfigUpdate,
     TokenResponse,
 )
 
@@ -30,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Estado del flujo OAuth2 en curso (state -> label pendiente). En memoria:
 # alcanza para un broker de una sola instancia -- si se reinicia a mitad de
 # un login, el usuario simplemente vuelve a apretar "Conectar cuenta nueva".
-_PENDING_STATES: dict[str, dict[str, float | str]] = {}
+_PENDING_STATES: dict[str, dict[str, float | str | int]] = {}
 _STATE_TTL_SECONDS = 600
 
 
@@ -41,10 +45,36 @@ def _prune_expired_states() -> None:
         _PENDING_STATES.pop(s, None)
 
 
+async def _ensure_default_tenant_config() -> None:
+    """Si nunca se registro ningun tenant desde la UI, siembra uno a partir
+    de las variables de entorno globales (MS_TENANT_ID/MS_CLIENT_ID/
+    MS_CLIENT_SECRET, con MS_TENANT_NAME como label -- vacio si no se
+    completo) -- para que un deploy existente (de antes de esta tabla) siga
+    pudiendo conectar buzones nuevos sin ningun paso manual. Deploys nuevos
+    sin esas variables completadas simplemente no siembran nada; el admin
+    registra su primer tenant desde Configuracion."""
+    settings = get_settings()
+    if not (settings.ms_tenant_id and settings.ms_client_id and settings.ms_client_secret):
+        return
+    pool = get_pool()
+    if await repository.count_tenant_configs(pool) > 0:
+        return
+    await repository.insert_tenant_config(
+        pool,
+        label=settings.ms_tenant_name,
+        ms_tenant_id=settings.ms_tenant_id,
+        ms_client_id=settings.ms_client_id,
+        ms_client_secret=settings.ms_client_secret,
+        is_active=True,
+    )
+    logger.info("Sembrado el tenant principal desde variables de entorno (identity.tenant_configs estaba vacia)")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect()
     try:
+        await _ensure_default_tenant_config()
         yield
     finally:
         await disconnect()
@@ -71,11 +101,26 @@ def health() -> dict[str, str]:
 
 
 @app.get("/oauth/microsoft/start")
-async def oauth_start(label: str = Query(min_length=1)) -> RedirectResponse:
+async def oauth_start(
+    label: str = Query(min_length=1), tenant_config_id: int = Query(...)
+) -> RedirectResponse:
+    pool = get_pool()
+    tenant = await repository.get_tenant_config_for_oauth(pool, tenant_config_id)
+    if tenant is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Tenant no encontrado")
     _prune_expired_states()
     state = secrets.token_urlsafe(24)
-    _PENDING_STATES[state] = {"label": label, "created_at": time.time()}
-    return RedirectResponse(ms_oauth.build_authorize_url(state))
+    _PENDING_STATES[state] = {
+        "label": label,
+        "tenant_config_id": tenant_config_id,
+        "tenant_id": tenant["ms_tenant_id"],
+        "client_id": tenant["ms_client_id"],
+        "client_secret": tenant["ms_client_secret"],
+        "created_at": time.time(),
+    }
+    return RedirectResponse(
+        ms_oauth.build_authorize_url(state, tenant_id=tenant["ms_tenant_id"], client_id=tenant["ms_client_id"])
+    )
 
 
 @app.get("/oauth/microsoft/callback", response_class=HTMLResponse)
@@ -98,9 +143,13 @@ async def oauth_callback(
             status_code=400,
         )
 
-    settings = get_settings()
     try:
-        tokens = await ms_oauth.exchange_code_for_tokens(code)
+        tokens = await ms_oauth.exchange_code_for_tokens(
+            code,
+            tenant_id=str(pending["tenant_id"]),
+            client_id=str(pending["client_id"]),
+            client_secret=str(pending["client_secret"]),
+        )
         me = await ms_oauth.get_me(tokens["access_token"])
     except MicrosoftOAuthError as exc:
         logger.exception("Fallo el intercambio de codigo OAuth2 con Microsoft")
@@ -113,9 +162,10 @@ async def oauth_callback(
         label=str(pending["label"]),
         email_address=email_address,
         provider="microsoft",
-        tenant_id=settings.ms_tenant_id,
-        client_id=settings.ms_client_id,
-        client_secret=settings.ms_client_secret,
+        tenant_id=str(pending["tenant_id"]),
+        client_id=str(pending["client_id"]),
+        client_secret=str(pending["client_secret"]),
+        tenant_config_id=int(pending["tenant_config_id"]),
         access_token=tokens["access_token"],
         refresh_token=tokens.get("refresh_token", ""),
         token_expires_at=ms_oauth.expires_at_from(tokens),
@@ -146,6 +196,39 @@ async def patch_mailbox(mailbox_account_id: int, payload: MailboxAccountUpdate) 
     pool = get_pool()
     record = await repository.update_mailbox(
         pool, mailbox_account_id, label=payload.label, enabled=payload.enabled
+    )
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    return MailboxAccountRead(**dict(record))
+
+
+@internal_router.patch("/mailboxes/{mailbox_account_id}/tenant", response_model=MailboxAccountRead)
+async def assign_mailbox_tenant(mailbox_account_id: int, payload: MailboxTenantAssign) -> MailboxAccountRead:
+    """Solo permite asignar el tenant de un buzon que todavia no tiene uno
+    (ej. buzones conectados antes de que existiera esta tabla) -- una vez
+    asignado, no se puede cambiar por acá: las credenciales reales del buzon
+    (tenant_id/client_id/client_secret) quedan fijas a como se conecto de
+    verdad, cambiar el tenant a mano rompe el proximo refresh de token si el
+    buzon en realidad pertenece a otro tenant de Microsoft."""
+    pool = get_pool()
+    existing = await repository.get_mailbox_public(pool, mailbox_account_id)
+    if existing is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+    if existing["tenant_config_id"] is not None:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="Este buzón ya tiene un tenant asignado -- no se puede cambiar.",
+        )
+    tenant = await repository.get_tenant_config_for_oauth(pool, payload.tenant_config_id)
+    if tenant is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Tenant no encontrado")
+    record = await repository.assign_mailbox_tenant(
+        pool,
+        mailbox_account_id,
+        tenant_config_id=payload.tenant_config_id,
+        tenant_id=tenant["ms_tenant_id"],
+        client_id=tenant["ms_client_id"],
+        client_secret=tenant["ms_client_secret"],
     )
     if record is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
@@ -297,6 +380,52 @@ async def test_mailbox(mailbox_account_id: int) -> MailboxTestResponse:
         email_address=me.get("mail") or me.get("userPrincipalName"),
         display_name=me.get("displayName"),
     )
+
+
+@internal_router.get("/tenant-configs", response_model=list[TenantConfigRead])
+async def list_tenant_configs() -> list[TenantConfigRead]:
+    pool = get_pool()
+    records = await repository.list_tenant_configs(pool)
+    return [TenantConfigRead(**dict(r)) for r in records]
+
+
+@internal_router.post("/tenant-configs", response_model=TenantConfigRead, status_code=http_status.HTTP_201_CREATED)
+async def create_tenant_config(payload: TenantConfigCreate) -> TenantConfigRead:
+    pool = get_pool()
+    record = await repository.insert_tenant_config(
+        pool,
+        label=payload.label,
+        ms_tenant_id=payload.ms_tenant_id,
+        ms_client_id=payload.ms_client_id,
+        ms_client_secret=payload.ms_client_secret,
+        is_active=payload.is_active,
+    )
+    return TenantConfigRead(**dict(record))
+
+
+@internal_router.patch("/tenant-configs/{tenant_config_id}", response_model=TenantConfigRead)
+async def update_tenant_config(tenant_config_id: int, payload: TenantConfigUpdate) -> TenantConfigRead:
+    pool = get_pool()
+    record = await repository.update_tenant_config(
+        pool,
+        tenant_config_id,
+        label=payload.label,
+        ms_tenant_id=payload.ms_tenant_id,
+        ms_client_id=payload.ms_client_id,
+        ms_client_secret=payload.ms_client_secret,
+        is_active=payload.is_active,
+    )
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Tenant no encontrado")
+    return TenantConfigRead(**dict(record))
+
+
+@internal_router.delete("/tenant-configs/{tenant_config_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_tenant_config(tenant_config_id: int) -> None:
+    pool = get_pool()
+    deleted = await repository.delete_tenant_config(pool, tenant_config_id)
+    if not deleted:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Tenant no encontrado")
 
 
 app.include_router(internal_router)

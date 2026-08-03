@@ -84,6 +84,7 @@ services:
       MS_TENANT_ID: ${MS_TENANT_ID:?la variable MS_TENANT_ID es obligatoria, ver .env}
       MS_CLIENT_ID: ${MS_CLIENT_ID:?la variable MS_CLIENT_ID es obligatoria, ver .env}
       MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:?la variable MS_CLIENT_SECRET es obligatoria, ver .env}
+      MS_TENANT_NAME: ${MS_TENANT_NAME:-}
       PUBLIC_BASE_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost/identity}
       WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET:?la variable WEBHOOK_SHARED_SECRET es obligatoria, ver .env}
       WEBHOOK_SHARED_SECRET_HEADER: ${WEBHOOK_SHARED_SECRET_HEADER:-X-MailingAI-Secret}

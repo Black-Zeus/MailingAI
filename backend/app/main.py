@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.admin_mailbox_index import router as admin_mailbox_index_router
+from app.api.admin_tenants import router as admin_tenants_router
 from app.api.admin_users import router as admin_users_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
@@ -91,6 +92,7 @@ _require_session = [Depends(get_current_user)]
 app.include_router(auth_router)
 app.include_router(admin_users_router)
 app.include_router(admin_mailbox_index_router)
+app.include_router(admin_tenants_router)
 app.include_router(charts_router)
 app.include_router(internal_router, dependencies=[Depends(verify_internal_secret)])
 app.include_router(jobs_router, dependencies=_require_session)

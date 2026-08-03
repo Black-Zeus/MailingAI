@@ -11,6 +11,7 @@ export interface MailboxAccountRead {
   updated_at: string
   owner_user_id: number | null
   is_notification_sender: boolean
+  tenant_config_id: number | null
 }
 
 export const MAILBOX_PROVIDER_LABELS: Record<MailboxProvider, string> = {

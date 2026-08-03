@@ -184,6 +184,21 @@ Ninguna operación de borrado del sistema toca el buzón real en Microsoft — t
 
 En general: borrar **mensajes/adjuntos/jobs** es reversible reindexando; borrar **expedientes** o **buzones** no lo es (salvo restaurar un backup de la base); borrar **usuarios** nunca borra expedientes, siempre los reasigna.
 
+## Tenants de Microsoft (`/api/admin/tenants`, solo admin)
+
+```powershell
+curl -X POST http://<host>/api/admin/tenants --cookie "mailingai_session=<tu cookie de sesion admin>" `
+  -H "Content-Type: application/json" `
+  -d '{\"label\":\"Cliente XYZ\",\"ms_tenant_id\":\"<tenant id de Azure>\",\"ms_client_id\":\"<client id>\",\"ms_client_secret\":\"<client secret>\"}'
+curl http://<host>/api/admin/tenants --cookie "mailingai_session=<...>"
+curl -X PATCH http://<host>/api/admin/tenants/<tenant_config_id> --cookie "mailingai_session=<...>" -H "Content-Type: application/json" -d '{\"is_active\":false}'
+curl -X DELETE http://<host>/api/admin/tenants/<tenant_config_id> --cookie "mailingai_session=<...>"
+```
+
+Cada tenant registrado es una App Registration de Microsoft Entra ID distinta (ver [`AZURE_SETUP.md`](AZURE_SETUP.md#registrar-un-tenant-adicional-para-buzones-de-otra-organización)) — `ms_client_secret` nunca se devuelve por API (`GET`/`PATCH` solo exponen `has_client_secret: boolean`), y en un `PATCH` omitirlo (o mandar `null`) mantiene el secret existente en vez de borrarlo. Borrar un tenant no desconecta los buzones que ya se conectaron con él (cada buzón guarda su propio tenant/client id/secret en `identity.mailbox_accounts`), solo deja de aparecer como opción para conectar cuentas nuevas.
+
+`GET /api/mailboxes/connect-url` (usado por el botón "Conectar cuenta nueva" del frontend) ahora exige `tenant_config_id` además de `label` — elige contra qué tenant registrado se hace el consentimiento OAuth2. El resto del flujo (popup + `postMessage` + `POST /api/mailboxes/{id}/claim`) no cambió, ver [`ARCHITECTURE.md`](ARCHITECTURE.md#multi-tenant-de-microsoft-entra-id-buzones-no-login-de-usuarios).
+
 ## Administración de usuarios (`/api/admin/users`, solo admin)
 
 ```powershell

@@ -18,6 +18,7 @@ from app.schemas.mailboxes import (
     MailboxSendTestResponse,
     MailboxShareCreate,
     MailboxShareRead,
+    MailboxTenantAssign,
     MailboxTestResponse,
     NotificationSenderUpdate,
 )
@@ -64,10 +65,14 @@ async def list_mailboxes(pool: PoolDep, user: CurrentUserDep) -> list[MailboxAcc
 
 
 @router.get("/connect-url", response_model=MailboxConnectUrlResponse)
-async def get_connect_url(_admin: AdminUserDep, label: str = Query(min_length=1)) -> MailboxConnectUrlResponse:
+async def get_connect_url(
+    _admin: AdminUserDep, label: str = Query(min_length=1), tenant_config_id: int = Query(...)
+) -> MailboxConnectUrlResponse:
     """Solo un admin puede registrar buzones nuevos -- un usuario normal
-    trabaja con los buzones ya conectados, no los da de alta."""
-    return MailboxConnectUrlResponse(url=identity_broker_client.build_connect_url(label))
+    trabaja con los buzones ya conectados, no los da de alta. tenant_config_id
+    elige a que tenant de Microsoft registrado (Configuración → Tenants) va a
+    pertenecer la cuenta que se conecte."""
+    return MailboxConnectUrlResponse(url=identity_broker_client.build_connect_url(label, tenant_config_id))
 
 
 @router.get("/notification-sender", response_model=MailboxAccountRead | None)
@@ -101,16 +106,20 @@ async def test_notification_sender(admin: AdminUserDep) -> MailboxSendTestRespon
         raise HTTPException(
             status_code=http_status.HTTP_409_CONFLICT, detail="No hay ningún buzón configurado como remitente de notificaciones."
         )
+    email_body = email_templates.render_system_notification_email(
+        eyebrow="Correo de prueba",
+        title="La configuración funciona",
+        message="Este es un correo de prueba del remitente de notificaciones configurado en MailingAI. Si lo recibiste, la configuración quedó correcta.",
+        details=[("Buzón remitente", sender["label"]), ("Correo", sender["email_address"] or "sin correo registrado")],
+        show_cta=False,
+    )
     try:
         await n8n_client.send_case_email(
             mailbox_account_id=sender["mailbox_account_id"],
             to=[admin.email_address],
             cc=[],
             subject="MailingAI — correo de prueba",
-            body=(
-                f"Este es un correo de prueba del buzón de notificaciones \"{sender['label']}\" "
-                f"({sender['email_address'] or 'sin correo'}). Si lo recibiste, la configuración funciona."
-            ),
+            body=email_body,
             attachments=[],
         )
     except n8n_client.SendEmailError as exc:
@@ -167,6 +176,30 @@ async def update_mailbox(
     if updated is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
     return MailboxAccountRead(**updated)
+
+
+@router.patch("/{mailbox_account_id}/tenant", response_model=MailboxAccountRead)
+async def assign_mailbox_tenant(mailbox_account_id: int, payload: MailboxTenantAssign, _admin: AdminUserDep) -> MailboxAccountRead:
+    """Re-apunta un buzón ya conectado a otro tenant registrado -- copia las
+    credenciales reales del tenant elegido (identity-broker resuelve
+    tenant_config_id -> tenant_id/client_id/client_secret internamente, ese
+    secreto nunca pasa por este backend). Los tokens de acceso/refresh que ya
+    tenía el buzón no se tocan: si en verdad pertenece a otro tenant de
+    Microsoft, el próximo refresh va a fallar -- solo tiene sentido usarlo
+    para corregir la trazabilidad de un buzón que ya pertenecía de verdad al
+    tenant elegido (ej. buzones conectados antes de que existiera esta
+    tabla)."""
+    try:
+        record = await identity_broker_client.assign_mailbox_tenant(mailbox_account_id, payload.tenant_config_id)
+    except identity_broker_client.MailboxTenantAlreadyAssignedError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="Este buzón ya tiene un tenant asignado — no se puede cambiar."
+        ) from exc
+    except IdentityBrokerError as exc:
+        raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if record is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta o tenant no encontrado")
+    return MailboxAccountRead(**record)
 
 
 @router.get("/{mailbox_account_id}/deletion-impact", response_model=MailboxDeletionImpactRead)

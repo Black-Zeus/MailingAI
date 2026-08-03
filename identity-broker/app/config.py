@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     ms_tenant_id: str = ""
     ms_client_id: str = ""
     ms_client_secret: str = ""
+    # Nombre para mostrar del tenant sembrado a partir de estas variables
+    # (identity.tenant_configs) -- si queda vacio, el tenant se siembra con
+    # label vacio en vez de un texto generico tipo "Tenant principal".
+    ms_tenant_name: str = ""
     # Mail.Send se sumo para poder enviar el correo de cierre de un
     # expediente (con el PDF adjunto) -- unica escritura real hacia Graph en
     # todo el proyecto, el resto sigue siendo estrictamente lectura.

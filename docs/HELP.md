@@ -25,7 +25,7 @@ No hay registro por tu cuenta — si no puedes entrar, pídele a un administrado
 - **Mensajes** — los correos ya indexados, con filtros (remitente, asunto, fecha, carpeta). Desde acá también se puede armar un expediente nuevo a partir de un correo o hilo puntual.
 - **Adjuntos** — trazabilidad de archivos adjuntos ya indexados (documentos, planillas, presentaciones, PDF, texto), con búsqueda por carpeta, texto o patrón de nombre — por ejemplo, los que siguen una convención relacionada a un código de caso.
 - **Trabajos** — historial de las tareas que trajeron datos desde el buzón (cuándo corrieron, si fallaron, qué trajeron).
-- **Configuración** *(solo administradores)* — buzones conectados, usuarios del sistema, remitente usado para notificaciones por correo. Oculto por completo para quien no es administrador.
+- **Configuración** *(solo administradores)* — tenants de Microsoft registrados, buzones conectados, usuarios del sistema, remitente usado para notificaciones por correo. Oculto por completo para quien no es administrador.
 
 ## Expedientes: lo básico
 

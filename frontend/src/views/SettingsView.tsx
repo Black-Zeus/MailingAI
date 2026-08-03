@@ -2,11 +2,14 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
   activateAIProvider,
+  assignMailboxTenant,
   cancelMailboxIndex,
   claimMailbox,
   createAIProvider,
+  createTenantConfig,
   createUser,
   deleteAIProvider,
+  deleteTenantConfig,
   deleteFinishedMailboxIndexRuns,
   deleteMailbox,
   getMailboxDeletionImpact,
@@ -21,6 +24,7 @@ import {
   listMailboxes,
   listMailboxIndexRuns,
   listMailboxShares,
+  listTenantConfigs,
   listUserDirectory,
   deleteUser,
   getUserDeletionImpact,
@@ -37,18 +41,20 @@ import {
   updateAIPolicy,
   updateAIProvider,
   updateMailbox,
+  updateTenantConfig,
   updateUser,
 } from '../api/client'
 import type { AIHealthResponse, AIPolicy, AIProviderRead, AIProviderType } from '../types/ai'
 import { AI_POLICY_LABELS, AI_PROVIDER_TYPE_LABELS, isLocalProviderType } from '../types/ai'
 import type { MailboxAccountRead, MailboxDeletionImpact, MailboxShareRead } from '../types/mailboxes'
 import type { UserDeletionImpact, UserDirectoryEntry, UserRead } from '../types/users'
+import type { TenantConfigRead } from '../types/tenants'
 import type { MailboxIndexRunRead, MailboxIndexStatus } from '../types/mailboxIndex'
 import { MAILBOX_INDEX_STATUS_LABELS } from '../types/mailboxIndex'
 import { MailboxIndexProgress } from '../components/MailboxIndexProgress'
 import { formatNumber } from '../utils/format'
 import { ConfirmModal } from '../components/ConfirmModal'
-import { ShareModal } from '../components/ShareModal'
+import { ShareModal, type PendingShareChanges } from '../components/ShareModal'
 import { UserDetailModal } from '../components/UserDetailModal'
 import { UserFormModal, type UserFormValues } from '../components/UserFormModal'
 import { ActionButton } from '../components/ActionButton'
@@ -62,6 +68,7 @@ import {
   Pause,
   Pencil,
   Play,
+  Plus,
   RefreshCw,
   Share2,
   Trash2,
@@ -85,6 +92,22 @@ const EMPTY_FORM: ProviderFormState = {
   base_url: '',
   model: '',
   api_key: '',
+}
+
+interface TenantFormState {
+  label: string
+  ms_tenant_id: string
+  ms_client_id: string
+  ms_client_secret: string
+  is_active: boolean
+}
+
+const EMPTY_TENANT_FORM: TenantFormState = {
+  label: '',
+  ms_tenant_id: '',
+  ms_client_id: '',
+  ms_client_secret: '',
+  is_active: true,
 }
 
 const MODEL_PLACEHOLDER: Record<AIProviderType, string> = {
@@ -150,9 +173,19 @@ export function SettingsView() {
   const [userDirectory, setUserDirectory] = useState<UserDirectoryEntry[]>([])
   const [connectModalOpen, setConnectModalOpen] = useState(false)
   const [newMailboxLabel, setNewMailboxLabel] = useState('')
-  useModalBehavior(formOpen || connectModalOpen)
+  const [selectedTenantConfigId, setSelectedTenantConfigId] = useState<number | ''>('')
+  const [tenants, setTenants] = useState<TenantConfigRead[] | null>(null)
+  const [tenantFormOpen, setTenantFormOpen] = useState(false)
+  const [editingTenantId, setEditingTenantId] = useState<number | null>(null)
+  const [tenantForm, setTenantForm] = useState<TenantFormState>(EMPTY_TENANT_FORM)
+  const [savingTenant, setSavingTenant] = useState(false)
+  const [deleteTenantTarget, setDeleteTenantTarget] = useState<TenantConfigRead | null>(null)
+  const [deletingTenant, setDeletingTenant] = useState(false)
+  const [expandedTenantId, setExpandedTenantId] = useState<number | null>(null)
+  useModalBehavior(formOpen || connectModalOpen || tenantFormOpen)
   const [connecting, setConnecting] = useState(false)
   const [togglingMailboxId, setTogglingMailboxId] = useState<number | null>(null)
+  const [assigningTenantMailboxId, setAssigningTenantMailboxId] = useState<number | null>(null)
   const [claimingMailboxId, setClaimingMailboxId] = useState<number | null>(null)
   const [testingMailboxId, setTestingMailboxId] = useState<number | null>(null)
   const [deleteMailboxTarget, setDeleteMailboxTarget] = useState<MailboxAccountRead | null>(null)
@@ -162,7 +195,6 @@ export function SettingsView() {
   const [shareMailboxTarget, setShareMailboxTarget] = useState<MailboxAccountRead | null>(null)
   const [mailboxShares, setMailboxShares] = useState<MailboxShareRead[]>([])
   const [sharingMailbox, setSharingMailbox] = useState(false)
-  const [revokingMailboxShareUserId, setRevokingMailboxShareUserId] = useState<number | null>(null)
 
   const [users, setUsers] = useState<UserRead[]>([])
   const [usersLoading, setUsersLoading] = useState(true)
@@ -227,6 +259,19 @@ export function SettingsView() {
       setMailboxError(null)
     } catch (err) {
       setMailboxError(err instanceof ApiError ? err.message : 'No se pudo consultar las cuentas de buzón.')
+    }
+  }
+
+  async function loadTenants() {
+    try {
+      const data = await listTenantConfigs()
+      setTenants(data)
+      setSelectedTenantConfigId((prev) => {
+        if (prev !== '' && data.some((t) => t.tenant_config_id === prev && t.is_active)) return prev
+        return data.find((t) => t.is_active)?.tenant_config_id ?? ''
+      })
+    } catch {
+      setTenants([])
     }
   }
 
@@ -417,6 +462,7 @@ export function SettingsView() {
       loadAll()
       loadNotificationSender()
       loadUsers()
+      loadTenants()
     }
     loadMailboxes()
     loadUserDirectory()
@@ -624,9 +670,77 @@ export function SettingsView() {
     }
   }
 
-  function openConnectModal() {
+  function openConnectModal(tenantConfigId?: number) {
     setNewMailboxLabel('')
+    if (tenantConfigId) setSelectedTenantConfigId(tenantConfigId)
     setConnectModalOpen(true)
+  }
+
+  function openTenantForm(tenant?: TenantConfigRead) {
+    if (tenant) {
+      setEditingTenantId(tenant.tenant_config_id)
+      setTenantForm({
+        label: tenant.label,
+        ms_tenant_id: tenant.ms_tenant_id,
+        ms_client_id: tenant.ms_client_id,
+        ms_client_secret: '',
+        is_active: tenant.is_active,
+      })
+    } else {
+      setEditingTenantId(null)
+      setTenantForm(EMPTY_TENANT_FORM)
+    }
+    setTenantFormOpen(true)
+  }
+
+  function closeTenantForm() {
+    setTenantFormOpen(false)
+  }
+
+  async function handleTenantSubmit(e: FormEvent) {
+    e.preventDefault()
+    setSavingTenant(true)
+    try {
+      const payload = {
+        label: tenantForm.label,
+        ms_tenant_id: tenantForm.ms_tenant_id,
+        ms_client_id: tenantForm.ms_client_id,
+        ms_client_secret: tenantForm.ms_client_secret.trim() || null,
+        is_active: tenantForm.is_active,
+      }
+      if (editingTenantId) {
+        await updateTenantConfig(editingTenantId, payload)
+      } else {
+        if (!tenantForm.ms_client_secret.trim()) {
+          showToast('El client secret es obligatorio para un tenant nuevo.', true)
+          setSavingTenant(false)
+          return
+        }
+        await createTenantConfig(payload)
+      }
+      showToast(editingTenantId ? 'Tenant actualizado' : 'Tenant agregado')
+      setTenantFormOpen(false)
+      await loadTenants()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo guardar el tenant.', true)
+    } finally {
+      setSavingTenant(false)
+    }
+  }
+
+  async function handleDeleteTenant() {
+    if (!deleteTenantTarget) return
+    setDeletingTenant(true)
+    try {
+      await deleteTenantConfig(deleteTenantTarget.tenant_config_id)
+      showToast('Tenant eliminado')
+      setDeleteTenantTarget(null)
+      await loadTenants()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar el tenant.', true)
+    } finally {
+      setDeletingTenant(false)
+    }
   }
 
   async function handleConnectMailbox() {
@@ -635,9 +749,13 @@ export function SettingsView() {
       showToast('Escribe un nombre para la cuenta antes de conectarla (ej. "Mesa", "Agente Juan").', true)
       return
     }
+    if (!selectedTenantConfigId) {
+      showToast('Selecciona a qué tenant de Microsoft pertenece esta cuenta.', true)
+      return
+    }
     setConnecting(true)
     try {
-      const { url } = await getMailboxConnectUrl(label)
+      const { url } = await getMailboxConnectUrl(label, selectedTenantConfigId)
       const width = 520
       const height = 680
       const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2)
@@ -696,6 +814,113 @@ export function SettingsView() {
     }
   }
 
+  async function handleAssignMailboxTenant(mailbox: MailboxAccountRead, tenantConfigId: number) {
+    setAssigningTenantMailboxId(mailbox.mailbox_account_id)
+    try {
+      await assignMailboxTenant(mailbox.mailbox_account_id, tenantConfigId)
+      showToast(`Tenant asignado a "${mailbox.label}"`)
+      await loadMailboxes()
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo asignar el tenant.', true)
+    } finally {
+      setAssigningTenantMailboxId(null)
+    }
+  }
+
+  function renderMailboxRow(m: MailboxAccountRead) {
+    const canManage = isAdmin || m.owner_user_id === user?.user_id
+    return (
+      <tr key={m.mailbox_account_id}>
+        <td>
+          <span className={`badge ${m.enabled ? 'success' : ''}`}>{m.enabled ? 'Habilitada' : 'Deshabilitada'}</span>
+        </td>
+        <td>
+          <div>{m.label}</div>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+            {m.email_address || '—'}
+          </div>
+        </td>
+        <td>
+          {ownerLabel(m.owner_user_id)}
+          {m.is_notification_sender && <span className="badge success ml-2">notificaciones</span>}
+        </td>
+        {isAdmin && (
+          <td>
+            {m.tenant_config_id ? (
+              tenants?.find((t) => t.tenant_config_id === m.tenant_config_id)?.label || `Tenant #${m.tenant_config_id}`
+            ) : (
+              <select
+                aria-label={`Asignar tenant a ${m.label}`}
+                value=""
+                disabled={assigningTenantMailboxId === m.mailbox_account_id}
+                onChange={(e) => {
+                  const next = e.target.value ? Number(e.target.value) : null
+                  if (next) handleAssignMailboxTenant(m, next)
+                }}
+                style={{ fontSize: 12, padding: '6px 8px' }}
+              >
+                <option value="">Sin asignar — elegir…</option>
+                {tenants?.map((t) => (
+                  <option key={t.tenant_config_id} value={t.tenant_config_id}>
+                    {t.label || `Tenant #${t.tenant_config_id}`}
+                  </option>
+                ))}
+              </select>
+            )}
+          </td>
+        )}
+        <td>
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <ActionButton
+              icon={Zap}
+              label="Probar conexión"
+              variant="primary"
+              loading={testingMailboxId === m.mailbox_account_id}
+              onClick={() => handleTestMailbox(m)}
+            />
+            {m.owner_user_id === null && (
+              <ActionButton
+                icon={Flag}
+                label="Reclamar"
+                variant="primary"
+                loading={claimingMailboxId === m.mailbox_account_id}
+                onClick={() => handleClaimMailbox(m)}
+              />
+            )}
+            {isAdmin && (
+              <ActionButton
+                icon={FolderSync}
+                label="Indexar buzón completo"
+                disabled={mailboxIndexBusy}
+                onClick={() => handleStartMailboxIndex(m.mailbox_account_id)}
+              />
+            )}
+            {isAdmin && (
+              <ActionButton
+                icon={RefreshCw}
+                label="Sincronizar (solo lo nuevo desde la última corrida)"
+                loading={triggeringDeltaSyncMailboxId === m.mailbox_account_id}
+                onClick={() => handleTriggerDeltaSyncForMailbox(m)}
+              />
+            )}
+            {canManage && <ActionButton icon={Share2} label="Compartir" onClick={() => openShareMailboxModal(m)} />}
+            {canManage && (
+              <ActionButton
+                icon={m.enabled ? Pause : Play}
+                label={m.enabled ? 'Deshabilitar' : 'Habilitar'}
+                loading={togglingMailboxId === m.mailbox_account_id}
+                onClick={() => handleToggleMailboxEnabled(m)}
+              />
+            )}
+            {isAdmin && (
+              <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => openDeleteMailboxModal(m)} />
+            )}
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
   async function openShareMailboxModal(mailbox: MailboxAccountRead) {
     setShareMailboxTarget(mailbox)
     try {
@@ -706,35 +931,37 @@ export function SettingsView() {
     }
   }
 
-  async function handleShareMailboxConfirm(userId: number) {
+  async function handleConfirmMailboxShares(changes: PendingShareChanges) {
     if (!shareMailboxTarget) return
     setSharingMailbox(true)
-    try {
-      await shareMailbox(shareMailboxTarget.mailbox_account_id, userId, 'read')
-      showToast('Buzón compartido.')
-      setMailboxShares(await listMailboxShares(shareMailboxTarget.mailbox_account_id))
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo compartir el buzón.', true)
-    } finally {
-      setSharingMailbox(false)
+    let casesAffected = 0
+    let failCount = 0
+    for (const add of changes.adds) {
+      try {
+        await shareMailbox(shareMailboxTarget.mailbox_account_id, add.userId, 'read')
+      } catch {
+        failCount += 1
+      }
     }
-  }
-
-  async function handleRevokeMailboxShare(userId: number) {
-    if (!shareMailboxTarget) return
-    setRevokingMailboxShareUserId(userId)
-    try {
-      const result = await revokeMailboxShare(shareMailboxTarget.mailbox_account_id, userId)
+    for (const userId of changes.removeUserIds) {
+      try {
+        const result = await revokeMailboxShare(shareMailboxTarget.mailbox_account_id, userId)
+        casesAffected += result.cases_affected
+      } catch {
+        failCount += 1
+      }
+    }
+    setMailboxShares(await listMailboxShares(shareMailboxTarget.mailbox_account_id))
+    setSharingMailbox(false)
+    if (failCount === 0) {
       showToast(
-        result.cases_affected > 0
-          ? `Acceso revocado. También se le quitó el acceso a ${result.cases_affected} expediente(s) relacionado(s).`
-          : 'Acceso revocado.',
+        casesAffected > 0
+          ? `Cambios guardados. También se quitó el acceso a ${casesAffected} expediente(s) relacionado(s).`
+          : 'Cambios guardados.',
       )
-      setMailboxShares(await listMailboxShares(shareMailboxTarget.mailbox_account_id))
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo revocar el acceso.', true)
-    } finally {
-      setRevokingMailboxShareUserId(null)
+      setShareMailboxTarget(null)
+    } else {
+      showToast(`${failCount} cambio(s) no se pudieron aplicar — revisa la lista e intenta de nuevo.`, true)
     }
   }
 
@@ -915,6 +1142,7 @@ export function SettingsView() {
     : ['mailboxes']
   const mailboxIndexBusy =
     activeMailboxIndex !== null && MAILBOX_INDEX_ACTIVE_STATUSES.includes(activeMailboxIndex.status)
+  const unassignedMailboxes = mailboxes?.filter((m) => !m.tenant_config_id) ?? []
 
   return (
     <section>
@@ -940,7 +1168,150 @@ export function SettingsView() {
         </div>
       )}
 
-      {tab === 'mailboxes' && (
+      {tab === 'mailboxes' && isAdmin && (
+        <div className="panel mt-6" style={{ marginTop: 0, marginBottom: 20 }}>
+          <div className="panel-head">
+            <h3>Tenants de Microsoft</h3>
+            <span>{tenants?.length ?? 0} registrado(s)</span>
+          </div>
+          <div className="panel-body">
+            <p className="text-muted" style={{ fontSize: 12, marginBottom: 14 }}>
+              Un tenant es la organización de Microsoft 365 dueña de los buzones que conectás — la tuya propia, o la
+              de un cliente si administrás buzones de más de una organización. Agregá cada organización acá antes de
+              conectar sus buzones. Uno marcado como inactivo deja de estar disponible para conectar cuentas nuevas,
+              pero los buzones que ya tenía siguen funcionando igual. Tocá la flecha de cada fila para ver sus
+              buzones o conectarle uno nuevo directo.
+            </p>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" style={{ width: 40 }} aria-label="Expandir"></th>
+                    <th scope="col">Nombre</th>
+                    <th scope="col">Tenant ID</th>
+                    <th scope="col">Client ID</th>
+                    <th scope="col" style={{ width: 100 }} aria-label="Estado"></th>
+                    <th scope="col" style={{ width: 140 }} aria-label="Acciones"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tenants !== null && tenants.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="empty-view">
+                        No hay ningún tenant registrado todavía.
+                      </td>
+                    </tr>
+                  )}
+                  {tenants?.map((t) => {
+                    const isExpanded = expandedTenantId === t.tenant_config_id
+                    const tenantMailboxes = mailboxes?.filter((m) => m.tenant_config_id === t.tenant_config_id) ?? []
+                    return (
+                      <Fragment key={t.tenant_config_id}>
+                        <tr>
+                          <td>
+                            <ActionButton
+                              icon={isExpanded ? ChevronDown : ChevronRight}
+                              label={isExpanded ? 'Ocultar buzones' : 'Ver buzones'}
+                              onClick={() => setExpandedTenantId(isExpanded ? null : t.tenant_config_id)}
+                            />
+                          </td>
+                          <td>{t.label}</td>
+                          <td className="mono" style={{ fontSize: 12 }}>{t.ms_tenant_id}</td>
+                          <td className="mono" style={{ fontSize: 12 }}>{t.ms_client_id}</td>
+                          <td>
+                            <span className={`badge ${t.is_active ? 'success' : ''}`}>
+                              {t.is_active ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                              <ActionButton
+                                icon={Plus}
+                                label="Conectar buzón a este tenant"
+                                variant="primary"
+                                onClick={() => openConnectModal(t.tenant_config_id)}
+                              />
+                              <ActionButton icon={Pencil} label="Editar" onClick={() => openTenantForm(t)} />
+                              <ActionButton
+                                icon={Trash2}
+                                label="Eliminar"
+                                variant="danger"
+                                onClick={() => setDeleteTenantTarget(t)}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={6} style={{ background: 'var(--panel-2)' }}>
+                              {tenantMailboxes.length === 0 ? (
+                                <p className="text-muted" style={{ fontSize: 12, margin: '8px 0' }}>
+                                  Este tenant todavía no tiene ningún buzón conectado.
+                                </p>
+                              ) : (
+                                <div className="table-wrap" style={{ margin: '8px 0' }}>
+                                  <table>
+                                    <thead>
+                                      <tr>
+                                        <th scope="col" style={{ width: 140 }} aria-label="Estado"></th>
+                                        <th scope="col">Buzón</th>
+                                        <th scope="col">Dueño</th>
+                                        <th scope="col">Tenant</th>
+                                        <th scope="col" style={{ width: 250 }} aria-label="Acciones"></th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>{tenantMailboxes.map((m) => renderMailboxRow(m))}</tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="actions mt-6">
+              <button type="button" className="btn primary btn-labeled" onClick={() => openTenantForm()}>
+                ＋ Agregar tenant
+              </button>
+              <button type="button" className="btn btn-labeled" onClick={loadMailboxes}>
+                ↻ Actualizar buzones
+              </button>
+            </div>
+
+            {unassignedMailboxes.length > 0 && (
+              <div className="mt-7">
+                <h4 style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 8px' }}>
+                  Buzones sin organización asignada
+                </h4>
+                <p className="text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+                  Se conectaron antes de existir esta lista de tenants — asignales uno para que queden agrupados
+                  correctamente (elegí el que corresponda en la columna "Tenant" de cada fila).
+                </p>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col" style={{ width: 140 }} aria-label="Estado"></th>
+                        <th scope="col">Buzón</th>
+                        <th scope="col">Dueño</th>
+                        <th scope="col">Tenant</th>
+                        <th scope="col" style={{ width: 250 }} aria-label="Acciones"></th>
+                      </tr>
+                    </thead>
+                    <tbody>{unassignedMailboxes.map((m) => renderMailboxRow(m))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'mailboxes' && !isAdmin && (
         <div className="panel">
           <div className="panel-head">
             <h3>Buzones</h3>
@@ -950,7 +1321,11 @@ export function SettingsView() {
             <p style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>
               Cada cuenta conectada queda disponible para correr trabajos contra ese buzón — el buzón de mesa y los
               de los agentes pueden convivir al mismo tiempo. Conectar una cuenta abre el login real de Microsoft
-              en una ventana aparte; al volver, esta lista se actualiza sola.
+              en una ventana aparte; al volver, esta lista se actualiza sola. La columna "Tenant" de cada fila deja
+              elegir a qué tenant registrado pertenece un buzón ya conectado (útil para los que se conectaron antes
+              de existir esta tabla) — cambiarlo reemplaza las credenciales reales que usa ese buzón para renovar su
+              token, así que solo hazlo si el buzón realmente pertenece al tenant que elijas, o el próximo refresh
+              va a fallar.
             </p>
 
             {mailboxError && <p className="form-error">{mailboxError}</p>}
@@ -962,101 +1337,24 @@ export function SettingsView() {
                     <th scope="col" style={{ width: 140 }} aria-label="Estado"></th>
                     <th scope="col">Buzón</th>
                     <th scope="col">Dueño</th>
+                    {isAdmin && <th scope="col">Tenant</th>}
                     <th scope="col" style={{ width: 250 }} aria-label="Acciones"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {mailboxes !== null && mailboxes.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="empty-view">
+                      <td colSpan={isAdmin ? 5 : 4} className="empty-view">
                         No hay ninguna cuenta de buzón conectada todavía (o accesible para ti).
                       </td>
                     </tr>
                   )}
-                  {mailboxes?.map((m) => {
-                    const canManage = isAdmin || m.owner_user_id === user?.user_id
-                    return (
-                      <tr key={m.mailbox_account_id}>
-                        <td>
-                          <span className={`badge ${m.enabled ? 'success' : ''}`}>
-                            {m.enabled ? 'Habilitada' : 'Deshabilitada'}
-                          </span>
-                        </td>
-                        <td>
-                          <div>{m.label}</div>
-                          <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
-                            {m.email_address || '—'}
-                          </div>
-                        </td>
-                        <td>
-                          {ownerLabel(m.owner_user_id)}
-                          {m.is_notification_sender && (
-                            <span className="badge success ml-2">
-                              notificaciones
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                            <ActionButton
-                              icon={Zap}
-                              label="Probar conexión"
-                              variant="primary"
-                              loading={testingMailboxId === m.mailbox_account_id}
-                              onClick={() => handleTestMailbox(m)}
-                            />
-                            {m.owner_user_id === null && (
-                              <ActionButton
-                                icon={Flag}
-                                label="Reclamar"
-                                variant="primary"
-                                loading={claimingMailboxId === m.mailbox_account_id}
-                                onClick={() => handleClaimMailbox(m)}
-                              />
-                            )}
-                            {isAdmin && (
-                              <ActionButton
-                                icon={FolderSync}
-                                label="Indexar buzón completo"
-                                disabled={mailboxIndexBusy}
-                                onClick={() => handleStartMailboxIndex(m.mailbox_account_id)}
-                              />
-                            )}
-                            {isAdmin && (
-                              <ActionButton
-                                icon={RefreshCw}
-                                label="Sincronizar (solo lo nuevo desde la última corrida)"
-                                loading={triggeringDeltaSyncMailboxId === m.mailbox_account_id}
-                                onClick={() => handleTriggerDeltaSyncForMailbox(m)}
-                              />
-                            )}
-                            {canManage && (
-                              <ActionButton icon={Share2} label="Compartir" onClick={() => openShareMailboxModal(m)} />
-                            )}
-                            {canManage && (
-                              <ActionButton
-                                icon={m.enabled ? Pause : Play}
-                                label={m.enabled ? 'Deshabilitar' : 'Habilitar'}
-                                loading={togglingMailboxId === m.mailbox_account_id}
-                                onClick={() => handleToggleMailboxEnabled(m)}
-                              />
-                            )}
-                            {isAdmin && (
-                              <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => openDeleteMailboxModal(m)} />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {mailboxes?.map((m) => renderMailboxRow(m))}
                 </tbody>
               </table>
             </div>
 
             <div className="actions mt-6">
-              <button type="button" className="btn primary btn-labeled" onClick={openConnectModal}>
-                ＋ Conectar cuenta nueva
-              </button>
               <button type="button" className="btn btn-labeled" onClick={loadMailboxes}>
                 ↻ Actualizar lista
               </button>
@@ -1684,6 +1982,26 @@ export function SettingsView() {
                   onKeyDown={(e) => e.key === 'Enter' && handleConnectMailbox()}
                 />
               </div>
+              <div className="field full">
+                <label htmlFor="mailbox-tenant">Tenant de Microsoft</label>
+                <select
+                  id="mailbox-tenant"
+                  value={selectedTenantConfigId}
+                  onChange={(e) => setSelectedTenantConfigId(e.target.value ? Number(e.target.value) : '')}
+                >
+                  <option value="">Selecciona un tenant…</option>
+                  {tenants?.filter((t) => t.is_active).map((t) => (
+                    <option key={t.tenant_config_id} value={t.tenant_config_id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                {tenants !== null && tenants.filter((t) => t.is_active).length === 0 && (
+                  <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
+                    No hay ningún tenant activo — agrega uno arriba antes de conectar una cuenta.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
           <div className="modal-actions">
@@ -1696,6 +2014,99 @@ export function SettingsView() {
           </div>
         </div>
       </div>
+
+      <div className={`modal-backdrop${tenantFormOpen ? ' open' : ''}`}>
+        <div className="modal narrow">
+          <form onSubmit={handleTenantSubmit}>
+            <div className="modal-body">
+              <h3>{editingTenantId ? 'Editar tenant' : 'Agregar tenant'}</h3>
+              <div className="form-grid mt-6">
+                <div className="field full">
+                  <label htmlFor="tenant-label">Nombre</label>
+                  <input
+                    id="tenant-label"
+                    type="text"
+                    required
+                    placeholder="ej. Cliente XYZ"
+                    value={tenantForm.label}
+                    onChange={(e) => setTenantForm((f) => ({ ...f, label: e.target.value }))}
+                  />
+                </div>
+                <div className="field full">
+                  <label htmlFor="tenant-ms-id">Tenant ID (Azure AD)</label>
+                  <input
+                    id="tenant-ms-id"
+                    type="text"
+                    required
+                    autoComplete="off"
+                    placeholder="ej. 11111111-2222-3333-4444-555555555555"
+                    value={tenantForm.ms_tenant_id}
+                    onChange={(e) => setTenantForm((f) => ({ ...f, ms_tenant_id: e.target.value }))}
+                  />
+                </div>
+                <div className="field full">
+                  <label htmlFor="tenant-client-id">Client ID (App Registration)</label>
+                  <input
+                    id="tenant-client-id"
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={tenantForm.ms_client_id}
+                    onChange={(e) => setTenantForm((f) => ({ ...f, ms_client_id: e.target.value }))}
+                  />
+                </div>
+                <div className="field full">
+                  <label htmlFor="tenant-client-secret">
+                    Client secret {editingTenantId ? '(dejar vacío para mantener el actual)' : ''}
+                  </label>
+                  <input
+                    id="tenant-client-secret"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={editingTenantId ? '••••••••' : ''}
+                    required={!editingTenantId}
+                    value={tenantForm.ms_client_secret}
+                    onChange={(e) => setTenantForm((f) => ({ ...f, ms_client_secret: e.target.value }))}
+                  />
+                </div>
+                <div className="field full">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={tenantForm.is_active}
+                      onChange={(e) => setTenantForm((f) => ({ ...f, is_active: e.target.checked }))}
+                    />
+                    Activo (disponible para conectar buzones nuevos)
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-labeled" onClick={closeTenantForm}>
+                ✕ Cancelar
+              </button>
+              <button type="submit" className="btn primary btn-labeled" disabled={savingTenant}>
+                {savingTenant ? 'Guardando…' : editingTenantId ? '✓ Guardar cambios' : '＋ Agregar tenant'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <ConfirmModal
+        open={deleteTenantTarget !== null}
+        title="Eliminar tenant"
+        description={
+          deleteTenantTarget
+            ? `Se elimina "${deleteTenantTarget.label}" de la lista de tenants registrados. Los buzones ya conectados con él siguen funcionando (guardan sus propias credenciales) — solo deja de estar disponible para conectar cuentas nuevas.`
+            : ''
+        }
+        confirmLabel="Eliminar tenant"
+        confirmingLabel="Eliminando…"
+        confirming={deletingTenant}
+        onCancel={() => setDeleteTenantTarget(null)}
+        onConfirm={handleDeleteTenant}
+      />
 
       <ConfirmModal
         open={deleteTarget !== null}
@@ -1747,10 +2158,8 @@ export function SettingsView() {
         description="La persona podrá ver los mensajes de este buzón (solo lectura), sin poder editarlo ni eliminarlo."
         allowEditPermission={false}
         existingShares={mailboxShares}
-        sharing={sharingMailbox}
-        revokingUserId={revokingMailboxShareUserId}
-        onShare={(userId) => handleShareMailboxConfirm(userId)}
-        onRevoke={handleRevokeMailboxShare}
+        saving={sharingMailbox}
+        onConfirm={handleConfirmMailboxShares}
         onClose={() => setShareMailboxTarget(null)}
       />
 

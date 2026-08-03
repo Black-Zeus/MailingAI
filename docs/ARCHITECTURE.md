@@ -44,6 +44,14 @@ La carpeta local `share` queda montada dentro del contenedor n8n en `/files`; lo
 
 Conectar un buzón real requiere guardar tokens OAuth2 de larga duración (`offline_access`) de Microsoft Graph. Aislar ese flujo en un microservicio propio, con su propia base de credenciales, mantiene tanto al `backend` como a `n8n` sin tocar el `client secret` de Microsoft directamente. Los nodos `HTTP Request` de n8n que llaman a Graph (`Graph: List Messages` y equivalentes) piden primero un token vigente a `identity-broker` (`GET http://identity-broker:8000/internal/token/{mailbox_account_id}`) y lo usan como header `Authorization: Bearer ...` armado a mano — **no** usan ninguna credencial OAuth2 propia de n8n. La credencial `n8n/credentials/mailingai-graph-oauth2.json` que crea el script de import es una plantilla heredada de una versión anterior de la arquitectura (cuando n8n sí manejaba su propio token): hoy ningún nodo la referencia, no hace falta completarla con datos reales para que el fetch de correos funcione.
 
+## Multi-tenant de Microsoft Entra ID (buzones, no login de usuarios)
+
+Cada buzón conectado guarda su propio `tenant_id`/`client_id`/`client_secret` en su fila de `identity.mailbox_accounts` (no una config global) — el refresh de token (`identity-broker/app/ms_oauth.py:refresh_access_token`) siempre lee esos tres valores de la fila, nunca de una variable de entorno. Eso permite que buzones de distintos tenants de Microsoft (distintas organizaciones, cada una con su propia App Registration) convivan en el mismo stack.
+
+`identity.tenant_configs` es el catálogo de tenants registrados desde Configuración → Buzones → Tenants de Microsoft (solo admin) — al conectar un buzón nuevo, el flujo OAuth2 (`/oauth/microsoft/start?tenant_config_id=...`) usa las credenciales de ese tenant en vez de una única global. Al arrancar, `identity-broker` siembra el primer tenant desde `MS_TENANT_ID`/`MS_CLIENT_ID`/`MS_CLIENT_SECRET` del `.env` si la tabla está vacía (ver [`AZURE_SETUP.md`](AZURE_SETUP.md)), así que un deploy existente sigue funcionando sin ningún paso manual.
+
+El **login SSO de usuarios** de la app (`backend/app/auth/ms_login.py`) es deliberadamente distinto: sigue atado en exclusiva al tenant del `.env`, no a `tenant_configs` — decisión de alcance explícita, ver [`STATUS.md`](STATUS.md). Ampliarlo a multi-tenant también es un cambio más grande (tocaría `identity.users`/`sessions`) que no se hizo.
+
 ## Por qué n8n concentra todo lo periódico y todo Graph
 
 Regla de diseño mantenida en todo el proyecto: **ninguna llamada a Microsoft Graph ni ningún trabajo programado vive en el backend FastAPI.** El backend es sincrónico y responde rápido a la UI; todo lo que puede tardar (indexar un buzón completo, generar gráficos, enviar un correo real) se dispara como webhook hacia n8n y el backend sigue sin bloquearse.
@@ -85,7 +93,8 @@ Una ruta nunca ejecuta SQL directo, y un repositorio nunca decide reglas de nego
 
 ```text
 identity.*   -- usuarios, sesiones, buzones conectados (mailbox_accounts), notificaciones,
-                permisos de acceso a buzones (mailbox_shares)
+                permisos de acceso a buzones (mailbox_shares), tenants de Microsoft
+                registrados (tenant_configs)
 mailing.*    -- correos indexados, expedientes (cases), mensajes por expediente,
                 línea de tiempo, notas/evidencia, log de auditoría, corridas de IA,
                 trabajos de análisis (jobs), vistas agregadas (v_case_summary, etc.)

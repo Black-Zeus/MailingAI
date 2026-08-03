@@ -120,6 +120,7 @@ Lista completa, en el orden en que deben aplicarse (archivos ya presentes en `co
 20260801_0010_mailing_cases_previous_owner_label.sql
 20260801_0011_mailing_case_summary_previous_owner.sql
 20260801_0012_mailing_case_summary_updated_at.sql
+20260803_0001_identity_tenant_configs.sql
 ```
 
 Consulta manual de ejemplo contra las tablas/vistas ya pobladas:

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MailboxProvider = Literal["microsoft"]
 
@@ -17,6 +17,7 @@ class MailboxAccountRead(BaseModel):
     updated_at: datetime
     owner_user_id: int | None
     is_notification_sender: bool
+    tenant_config_id: int | None = None
 
 
 class NotificationSenderUpdate(BaseModel):
@@ -26,6 +27,10 @@ class NotificationSenderUpdate(BaseModel):
 class MailboxAccountUpdate(BaseModel):
     label: str | None = None
     enabled: bool | None = None
+
+
+class MailboxTenantAssign(BaseModel):
+    tenant_config_id: int
 
 
 class TokenResponse(BaseModel):
@@ -59,3 +64,32 @@ class MailboxShareRead(BaseModel):
     permission: MailboxSharePermission
     shared_by_user_id: int | None
     created_at: datetime
+
+
+class TenantConfigRead(BaseModel):
+    tenant_config_id: int
+    label: str
+    ms_tenant_id: str
+    ms_client_id: str
+    has_client_secret: bool
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class TenantConfigCreate(BaseModel):
+    label: str = Field(min_length=1)
+    ms_tenant_id: str = Field(min_length=1)
+    ms_client_id: str = Field(min_length=1)
+    ms_client_secret: str = Field(min_length=1)
+    is_active: bool = True
+
+
+class TenantConfigUpdate(BaseModel):
+    label: str | None = None
+    ms_tenant_id: str | None = None
+    ms_client_id: str | None = None
+    # None = mantener el client secret existente -- mismo criterio que
+    # AIProviderUpdate.api_key (backend/app/schemas/ai_providers.py).
+    ms_client_secret: str | None = None
+    is_active: bool | None = None

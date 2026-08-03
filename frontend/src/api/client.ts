@@ -46,6 +46,7 @@ import type {
 import type { CaseAuditLogRead, CaseDashboardStats, CaseShareRead, CaseSharePermission } from '../types/cases'
 import type { NotificationRead } from '../types/notifications'
 import type { MailboxIndexRunRead } from '../types/mailboxIndex'
+import type { TenantConfigRead } from '../types/tenants'
 
 declare global {
   interface Window {
@@ -656,8 +657,40 @@ export function listMailboxes(): Promise<MailboxAccountRead[]> {
   return request<MailboxAccountRead[]>('/api/mailboxes')
 }
 
-export function getMailboxConnectUrl(label: string): Promise<{ url: string }> {
-  return request<{ url: string }>(`/api/mailboxes/connect-url?label=${encodeURIComponent(label)}`)
+export function getMailboxConnectUrl(label: string, tenantConfigId: number): Promise<{ url: string }> {
+  return request<{ url: string }>(
+    `/api/mailboxes/connect-url?label=${encodeURIComponent(label)}&tenant_config_id=${tenantConfigId}`,
+  )
+}
+
+export function listTenantConfigs(): Promise<TenantConfigRead[]> {
+  return request<TenantConfigRead[]>('/api/admin/tenants')
+}
+
+export interface TenantConfigPayload {
+  label: string
+  ms_tenant_id: string
+  ms_client_id: string
+  ms_client_secret?: string | null
+  is_active: boolean
+}
+
+export function createTenantConfig(payload: TenantConfigPayload): Promise<TenantConfigRead> {
+  return request<TenantConfigRead>('/api/admin/tenants', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateTenantConfig(tenantConfigId: number, payload: TenantConfigPayload): Promise<TenantConfigRead> {
+  return request<TenantConfigRead>(`/api/admin/tenants/${tenantConfigId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteTenantConfig(tenantConfigId: number): Promise<void> {
+  return request<void>(`/api/admin/tenants/${tenantConfigId}`, { method: 'DELETE' })
 }
 
 export function updateMailbox(
@@ -667,6 +700,13 @@ export function updateMailbox(
   return request<MailboxAccountRead>(`/api/mailboxes/${mailboxAccountId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  })
+}
+
+export function assignMailboxTenant(mailboxAccountId: number, tenantConfigId: number): Promise<MailboxAccountRead> {
+  return request<MailboxAccountRead>(`/api/mailboxes/${mailboxAccountId}/tenant`, {
+    method: 'PATCH',
+    body: JSON.stringify({ tenant_config_id: tenantConfigId }),
   })
 }
 

@@ -13,25 +13,25 @@ class MicrosoftOAuthError(Exception):
     pass
 
 
-def build_authorize_url(state: str) -> str:
+def build_authorize_url(state: str, *, tenant_id: str, client_id: str) -> str:
     settings = get_settings()
     params = {
-        "client_id": settings.ms_client_id,
+        "client_id": client_id,
         "response_type": "code",
         "redirect_uri": f"{settings.public_base_url}/oauth/microsoft/callback",
         "response_mode": "query",
         "scope": settings.ms_scope,
         "state": state,
     }
-    return f"https://login.microsoftonline.com/{settings.ms_tenant_id}/oauth2/v2.0/authorize?{urlencode(params)}"
+    return f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?{urlencode(params)}"
 
 
-async def exchange_code_for_tokens(code: str) -> dict[str, Any]:
+async def exchange_code_for_tokens(code: str, *, tenant_id: str, client_id: str, client_secret: str) -> dict[str, Any]:
     settings = get_settings()
-    token_url = f"https://login.microsoftonline.com/{settings.ms_tenant_id}/oauth2/v2.0/token"
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     data = {
-        "client_id": settings.ms_client_id,
-        "client_secret": settings.ms_client_secret,
+        "client_id": client_id,
+        "client_secret": client_secret,
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": f"{settings.public_base_url}/oauth/microsoft/callback",
