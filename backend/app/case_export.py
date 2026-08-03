@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -291,10 +292,20 @@ async def export_case_pdf(case_id: int, pool: PoolDep, user: CurrentUserDep) -> 
     evidence_records = await cases_repository.list_case_evidence_with_content(pool, case_id)
     owner_display = await _resolve_owner_display(pool, detail.owner_user_id)
     pdf_bytes = build_case_pdf(detail, evidence_records, owner_display=owner_display)
+    content_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    await cases_repository.insert_audit_entry(
+        pool,
+        case_id=case_id,
+        user_id=user.user_id,
+        description=f"Exportó el expediente a PDF (SHA-256: {content_hash})",
+    )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="expediente_{_safe_filename(detail.title)}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="expediente_{_safe_filename(detail.title)}.pdf"',
+            "X-Content-SHA256": content_hash,
+        },
     )
 
 
