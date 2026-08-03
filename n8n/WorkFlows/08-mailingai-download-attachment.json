@@ -14,7 +14,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "maiw0009download00-hook",
       "credentials": {
         "httpHeaderAuth": {
@@ -27,13 +30,24 @@
       "parameters": {
         "method": "GET",
         "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.body.mailbox_account_id || 1) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "99999999-9999-4999-8999-999999999999",
       "name": "Obtener Token de Buzón",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [125, 0]
+      "position": [
+        125,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
     },
     {
       "parameters": {
@@ -57,16 +71,31 @@
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 1500,
-      "position": [250, 0]
+      "position": [
+        250,
+        0
+      ]
     },
     {
       "parameters": {
         "mode": "manual",
         "assignments": {
           "assignments": [
-            { "name": "content_base64", "type": "string", "value": "={{ $json.contentBytes }}" },
-            { "name": "content_type", "type": "string", "value": "={{ $json.contentType }}" },
-            { "name": "file_name", "type": "string", "value": "={{ $json.name }}" }
+            {
+              "name": "content_base64",
+              "type": "string",
+              "value": "={{ $json.contentBytes }}"
+            },
+            {
+              "name": "content_type",
+              "type": "string",
+              "value": "={{ $json.contentType }}"
+            },
+            {
+              "name": "file_name",
+              "type": "string",
+              "value": "={{ $json.name }}"
+            }
           ]
         },
         "options": {}
@@ -75,18 +104,45 @@
       "name": "Set: Shape Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [500, 0]
+      "position": [
+        500,
+        0
+      ]
     }
   ],
   "connections": {
     "Webhook": {
-      "main": [[{ "node": "Obtener Token de Buzón", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Obtener Token de Buzón": {
-      "main": [[{ "node": "Graph: Get Attachment Content", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Graph: Get Attachment Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Graph: Get Attachment Content": {
-      "main": [[{ "node": "Set: Shape Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set: Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,

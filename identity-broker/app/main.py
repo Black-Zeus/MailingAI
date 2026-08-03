@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 import secrets
@@ -5,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi import status as http_status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -48,6 +49,18 @@ async def lifespan(app: FastAPI):
     finally:
         await disconnect()
 
+
+async def verify_internal_secret(request: Request) -> None:
+    """Mismo mecanismo que backend/app/auth/dependencies.py -- reusa el
+    secreto compartido de los webhooks de n8n en vez de confiar solo en el
+    aislamiento de red de Docker para estas rutas server-to-server."""
+    settings = get_settings()
+    provided = request.headers.get(settings.webhook_shared_secret_header, "")
+    if not settings.webhook_shared_secret or not hmac.compare_digest(provided, settings.webhook_shared_secret):
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Secreto interno invalido o ausente")
+
+
+internal_router = APIRouter(prefix="/internal", dependencies=[Depends(verify_internal_secret)])
 
 app = FastAPI(title="mailingai-identity-broker", lifespan=lifespan)
 
@@ -121,14 +134,14 @@ async def oauth_callback(
     )
 
 
-@app.get("/internal/mailboxes", response_model=list[MailboxAccountRead])
+@internal_router.get("/mailboxes", response_model=list[MailboxAccountRead])
 async def list_mailboxes() -> list[MailboxAccountRead]:
     pool = get_pool()
     records = await repository.list_mailboxes(pool)
     return [MailboxAccountRead(**dict(r)) for r in records]
 
 
-@app.patch("/internal/mailboxes/{mailbox_account_id}", response_model=MailboxAccountRead)
+@internal_router.patch("/mailboxes/{mailbox_account_id}", response_model=MailboxAccountRead)
 async def patch_mailbox(mailbox_account_id: int, payload: MailboxAccountUpdate) -> MailboxAccountRead:
     pool = get_pool()
     record = await repository.update_mailbox(
@@ -139,7 +152,7 @@ async def patch_mailbox(mailbox_account_id: int, payload: MailboxAccountUpdate) 
     return MailboxAccountRead(**dict(record))
 
 
-@app.delete("/internal/mailboxes/{mailbox_account_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+@internal_router.delete("/mailboxes/{mailbox_account_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 async def delete_mailbox(mailbox_account_id: int) -> None:
     pool = get_pool()
     deleted = await repository.delete_mailbox(pool, mailbox_account_id)
@@ -147,7 +160,7 @@ async def delete_mailbox(mailbox_account_id: int) -> None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
 
 
-@app.patch("/internal/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
+@internal_router.patch("/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
 async def claim_mailbox_owner(mailbox_account_id: int, payload: MailboxOwnerClaim) -> MailboxAccountRead:
     pool = get_pool()
     try:
@@ -163,7 +176,7 @@ async def claim_mailbox_owner(mailbox_account_id: int, payload: MailboxOwnerClai
     return MailboxAccountRead(**dict(record))
 
 
-@app.delete("/internal/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
+@internal_router.delete("/mailboxes/{mailbox_account_id}/owner", response_model=MailboxAccountRead)
 async def clear_mailbox_owner(mailbox_account_id: int) -> MailboxAccountRead:
     pool = get_pool()
     record = await repository.clear_mailbox_owner(pool, mailbox_account_id)
@@ -172,14 +185,14 @@ async def clear_mailbox_owner(mailbox_account_id: int) -> MailboxAccountRead:
     return MailboxAccountRead(**dict(record))
 
 
-@app.get("/internal/notification-sender", response_model=MailboxAccountRead | None)
+@internal_router.get("/notification-sender", response_model=MailboxAccountRead | None)
 async def get_notification_sender() -> MailboxAccountRead | None:
     pool = get_pool()
     record = await repository.get_notification_sender(pool)
     return MailboxAccountRead(**dict(record)) if record is not None else None
 
 
-@app.put("/internal/notification-sender", response_model=MailboxAccountRead | None)
+@internal_router.put("/notification-sender", response_model=MailboxAccountRead | None)
 async def set_notification_sender(payload: NotificationSenderUpdate) -> MailboxAccountRead | None:
     pool = get_pool()
     if payload.mailbox_account_id is not None:
@@ -190,14 +203,14 @@ async def set_notification_sender(payload: NotificationSenderUpdate) -> MailboxA
     return MailboxAccountRead(**dict(record)) if record is not None else None
 
 
-@app.get("/internal/mailboxes/{mailbox_account_id}/shares", response_model=list[MailboxShareRead])
+@internal_router.get("/mailboxes/{mailbox_account_id}/shares", response_model=list[MailboxShareRead])
 async def list_mailbox_shares(mailbox_account_id: int) -> list[MailboxShareRead]:
     pool = get_pool()
     records = await repository.list_mailbox_shares(pool, mailbox_account_id)
     return [MailboxShareRead(**dict(r)) for r in records]
 
 
-@app.post("/internal/mailboxes/{mailbox_account_id}/shares", response_model=MailboxShareRead)
+@internal_router.post("/mailboxes/{mailbox_account_id}/shares", response_model=MailboxShareRead)
 async def share_mailbox(
     mailbox_account_id: int, payload: MailboxShareCreate, shared_by_user_id: int = Query(...)
 ) -> MailboxShareRead:
@@ -212,7 +225,7 @@ async def share_mailbox(
     return MailboxShareRead(**dict(record))
 
 
-@app.delete("/internal/mailboxes/{mailbox_account_id}/shares/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+@internal_router.delete("/mailboxes/{mailbox_account_id}/shares/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 async def revoke_mailbox_share(mailbox_account_id: int, user_id: int) -> None:
     pool = get_pool()
     deleted = await repository.delete_mailbox_share(pool, mailbox_account_id, user_id)
@@ -263,12 +276,12 @@ async def _get_valid_token(mailbox_account_id: int) -> TokenResponse:
     return TokenResponse(access_token=new_access_token, expires_at=new_expires_at)
 
 
-@app.get("/internal/token/{mailbox_account_id}", response_model=TokenResponse)
+@internal_router.get("/token/{mailbox_account_id}", response_model=TokenResponse)
 async def get_token(mailbox_account_id: int) -> TokenResponse:
     return await _get_valid_token(mailbox_account_id)
 
 
-@app.get("/internal/mailboxes/{mailbox_account_id}/test", response_model=MailboxTestResponse)
+@internal_router.get("/mailboxes/{mailbox_account_id}/test", response_model=MailboxTestResponse)
 async def test_mailbox(mailbox_account_id: int) -> MailboxTestResponse:
     """Confirma que la cuenta realmente funciona: consigue/renueva un token y hace
     una llamada real a Graph (/me), no solo verifica que haya un token guardado."""
@@ -284,3 +297,6 @@ async def test_mailbox(mailbox_account_id: int) -> MailboxTestResponse:
         email_address=me.get("mail") or me.get("userPrincipalName"),
         display_name=me.get("displayName"),
     )
+
+
+app.include_router(internal_router)

@@ -85,6 +85,8 @@ services:
       MS_CLIENT_ID: ${MS_CLIENT_ID:?la variable MS_CLIENT_ID es obligatoria, ver .env}
       MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:?la variable MS_CLIENT_SECRET es obligatoria, ver .env}
       PUBLIC_BASE_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost/identity}
+      WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET:?la variable WEBHOOK_SHARED_SECRET es obligatoria, ver .env}
+      WEBHOOK_SHARED_SECRET_HEADER: ${WEBHOOK_SHARED_SECRET_HEADER:-X-MailingAI-Secret}
     networks:
       - mailingai_internal
     depends_on:
@@ -114,7 +116,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
       interval: 10s
       timeout: 5s
       retries: 5

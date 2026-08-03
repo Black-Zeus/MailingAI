@@ -19,7 +19,7 @@ from app.api.messages import router as messages_router
 from app.api.notifications import router as notifications_router
 from app.api.system import router as system_router
 from app.api.users import router as users_router
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, verify_internal_secret
 from app.case_export import router as case_export_router
 from app.charts import router as charts_router
 from app.db import connect, disconnect, get_pool
@@ -80,7 +80,10 @@ app.add_middleware(
 # son server-to-server: los llama n8n directo (http://backend:8000/...) sin
 # cookie de sesion de ningun usuario -- exigirla ahi rompe esas llamadas.
 # internal_router ademas NO esta mapeado en proxy/nginx.conf a proposito, asi
-# que ni siquiera queda alcanzable desde afuera del stack (ver ese archivo).
+# que ni siquiera queda alcanzable desde afuera del stack (ver ese archivo) --
+# y ahora tambien exige el mismo secreto compartido que ya validan los
+# webhooks de n8n (verify_internal_secret), en vez de depender solo de ese
+# aislamiento de red (ver docs/SECURITY.md).
 # Todo el resto de routers de negocio exige sesion valida vía este guard
 # global; el filtrado fino por dueño/permisos se agrega router por router en
 # fases siguientes (Fase 4 en adelante) -- aca solo "hay que estar logueado".
@@ -89,7 +92,7 @@ app.include_router(auth_router)
 app.include_router(admin_users_router)
 app.include_router(admin_mailbox_index_router)
 app.include_router(charts_router)
-app.include_router(internal_router)
+app.include_router(internal_router, dependencies=[Depends(verify_internal_secret)])
 app.include_router(jobs_router, dependencies=_require_session)
 app.include_router(messages_router, dependencies=_require_session)
 app.include_router(cases_router, dependencies=_require_session)

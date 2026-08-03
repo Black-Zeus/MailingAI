@@ -13,6 +13,14 @@ class IdentityBrokerError(Exception):
     pass
 
 
+def _headers() -> dict[str, str]:
+    """Mismo secreto compartido que ya validan los webhooks de n8n -- el
+    identity-broker ahora exige este header en /internal/* en vez de confiar
+    solo en el aislamiento de red de Docker (ver docs/SECURITY.md)."""
+    settings = get_settings()
+    return {settings.webhook_shared_secret_header: settings.webhook_shared_secret}
+
+
 def build_connect_url(label: str) -> str:
     """URL publica (alcanzable desde el navegador) para iniciar el consentimiento
     OAuth2 de una cuenta nueva -- el frontend navega directo ahi, no pasa por
@@ -25,7 +33,7 @@ def build_connect_url(label: str) -> str:
 async def list_mailboxes() -> list[dict[str, Any]]:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.get(f"{settings.identity_broker_url}/internal/mailboxes")
             response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -38,7 +46,7 @@ async def update_mailbox(mailbox_account_id: int, *, label: str | None, enabled:
     settings = get_settings()
     payload = {"label": label, "enabled": enabled}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.patch(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}", json=payload
             )
@@ -54,7 +62,7 @@ async def update_mailbox(mailbox_account_id: int, *, label: str | None, enabled:
 async def test_mailbox(mailbox_account_id: int) -> dict[str, Any] | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=20.0, headers=_headers()) as client:
             response = await client.get(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/test"
             )
@@ -78,7 +86,7 @@ async def test_mailbox(mailbox_account_id: int) -> dict[str, Any] | None:
 async def delete_mailbox(mailbox_account_id: int) -> bool:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.delete(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}"
             )
@@ -98,7 +106,7 @@ class MailboxAlreadyClaimedError(Exception):
 async def claim_mailbox_owner(mailbox_account_id: int, *, owner_user_id: int) -> dict[str, Any] | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.patch(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/owner",
                 json={"owner_user_id": owner_user_id, "force": False},
@@ -117,7 +125,7 @@ async def claim_mailbox_owner(mailbox_account_id: int, *, owner_user_id: int) ->
 async def clear_mailbox_owner(mailbox_account_id: int) -> dict[str, Any] | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.delete(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/owner"
             )
@@ -133,7 +141,7 @@ async def clear_mailbox_owner(mailbox_account_id: int) -> dict[str, Any] | None:
 async def get_notification_sender() -> dict[str, Any] | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.get(f"{settings.identity_broker_url}/internal/notification-sender")
             response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -146,7 +154,7 @@ async def get_notification_sender() -> dict[str, Any] | None:
 async def set_notification_sender(mailbox_account_id: int | None) -> dict[str, Any] | None:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.put(
                 f"{settings.identity_broker_url}/internal/notification-sender",
                 json={"mailbox_account_id": mailbox_account_id},
@@ -164,7 +172,7 @@ async def set_notification_sender(mailbox_account_id: int | None) -> dict[str, A
 async def list_mailbox_shares(mailbox_account_id: int) -> list[dict[str, Any]]:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.get(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares"
             )
@@ -180,7 +188,7 @@ async def share_mailbox(
 ) -> dict[str, Any]:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.post(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares",
                 params={"shared_by_user_id": shared_by_user_id},
@@ -196,7 +204,7 @@ async def share_mailbox(
 async def revoke_mailbox_share(mailbox_account_id: int, user_id: int) -> bool:
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
             response = await client.delete(
                 f"{settings.identity_broker_url}/internal/mailboxes/{mailbox_account_id}/shares/{user_id}"
             )

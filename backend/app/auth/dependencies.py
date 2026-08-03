@@ -1,3 +1,4 @@
+import hmac
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -51,3 +52,18 @@ async def require_admin(user: Annotated[CurrentUser, Depends(get_current_user)])
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 AdminUserDep = Annotated[CurrentUser, Depends(require_admin)]
+
+
+async def verify_internal_secret(request: Request) -> None:
+    """Reusa el mismo secreto compartido que ya validan los webhooks de n8n
+    (WEBHOOK_SHARED_SECRET/WEBHOOK_SHARED_SECRET_HEADER) para las rutas
+    server-to-server (/internal/*): antes su unica proteccion era no estar
+    mapeadas en proxy/nginx.conf, dependiendo solo del aislamiento de red de
+    Docker. hmac.compare_digest evita filtrar el secreto por timing."""
+    settings = get_settings()
+    provided = request.headers.get(settings.webhook_shared_secret_header, "")
+    if not settings.webhook_shared_secret or not hmac.compare_digest(provided, settings.webhook_shared_secret):
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Secreto interno invalido o ausente")
+
+
+InternalSecretDep = Depends(verify_internal_secret)

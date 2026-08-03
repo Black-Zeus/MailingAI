@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # renovarlo proactivamente (Microsoft los emite con ~1h de vigencia).
     token_refresh_margin_seconds: int = 300
 
+    # Mismo secreto compartido que ya usan los webhooks de n8n (ver
+    # backend/app/config.py) -- las rutas /internal/* (las llama el backend
+    # y n8n directo por la red de Docker) ahora lo exigen en vez de confiar
+    # solo en que no estan mapeadas en proxy/nginx.conf (ver docs/SECURITY.md).
+    webhook_shared_secret: str = ""
+    webhook_shared_secret_header: str = "X-MailingAI-Secret"
+
 
 @lru_cache
 def get_settings() -> Settings:

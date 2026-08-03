@@ -17,7 +17,9 @@
       "parameters": {
         "method": "GET",
         "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.mailbox_account_id || 1) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa99",
       "name": "Obtener Token de Buzón",
@@ -26,7 +28,13 @@
       "position": [
         250,
         -300
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
     },
     {
       "parameters": {

@@ -14,7 +14,10 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "maiw0011retrace000-hook",
       "credentials": {
         "httpHeaderAuth": {
@@ -27,13 +30,24 @@
       "parameters": {
         "method": "GET",
         "url": "={{ 'http://identity-broker:8000/internal/token/' + ($json.body.mailbox_account_id || 1) }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb99",
       "name": "Obtener Token de Buzón",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [250, -200]
+      "position": [
+        250,
+        -200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
     },
     {
       "parameters": {
@@ -47,7 +61,10 @@
       "name": "Postgres: Insert fetch_runs",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [250, 0],
+      "position": [
+        250,
+        0
+      ],
       "credentials": {
         "postgres": {
           "id": "cred0001postgres000",
@@ -86,7 +103,10 @@
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000,
-      "position": [500, 0]
+      "position": [
+        500,
+        0
+      ]
     },
     {
       "parameters": {
@@ -98,7 +118,10 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "alwaysOutputData": true,
-      "position": [750, 0]
+      "position": [
+        750,
+        0
+      ]
     },
     {
       "parameters": {
@@ -127,7 +150,10 @@
       "name": "Filter: Es Adjunto Real",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2.2,
-      "position": [875, 100]
+      "position": [
+        875,
+        100
+      ]
     },
     {
       "parameters": {
@@ -197,7 +223,10 @@
       "name": "Set: Parse Attachment Name",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1000, 0]
+      "position": [
+        1000,
+        0
+      ]
     },
     {
       "parameters": {
@@ -226,7 +255,10 @@
       "name": "Filter: Formatos Soportados",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2.2,
-      "position": [1250, 0]
+      "position": [
+        1250,
+        0
+      ]
     },
     {
       "parameters": {
@@ -240,7 +272,10 @@
       "name": "Postgres: Upsert mailing.message_attachments",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1500, 0],
+      "position": [
+        1500,
+        0
+      ],
       "credentials": {
         "postgres": {
           "id": "cred0001postgres000",
@@ -259,7 +294,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "alwaysOutputData": true,
-      "position": [1750, 0]
+      "position": [
+        1750,
+        0
+      ]
     },
     {
       "parameters": {
@@ -273,7 +311,10 @@
       "name": "Postgres: Update fetch_runs",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [2000, 0],
+      "position": [
+        2000,
+        0
+      ],
       "credentials": {
         "postgres": {
           "id": "cred0001postgres000",
@@ -299,7 +340,10 @@
       "name": "Set: Shape Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2250, 0]
+      "position": [
+        2250,
+        0
+      ]
     },
     {
       "parameters": {
@@ -311,48 +355,143 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2500, 0]
+      "position": [
+        2500,
+        0
+      ]
     }
   ],
   "connections": {
     "Webhook": {
-      "main": [[{ "node": "Obtener Token de Buzón", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Obtener Token de Buzón",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Obtener Token de Buzón": {
-      "main": [[{ "node": "Postgres: Insert fetch_runs", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Postgres: Insert fetch_runs": {
-      "main": [[{ "node": "Graph: List Message Attachments", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Graph: List Message Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Graph: List Message Attachments": {
-      "main": [[{ "node": "Split Out Attachments", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Split Out Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Split Out Attachments": {
-      "main": [[
-        { "node": "Filter: Es Adjunto Real", "type": "main", "index": 0 },
-        { "node": "Aggregate: Traced", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Filter: Es Adjunto Real",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate: Traced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Filter: Es Adjunto Real": {
-      "main": [[{ "node": "Set: Parse Attachment Name", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set: Parse Attachment Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set: Parse Attachment Name": {
-      "main": [[{ "node": "Filter: Formatos Soportados", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Filter: Formatos Soportados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Filter: Formatos Soportados": {
-      "main": [[{ "node": "Postgres: Upsert mailing.message_attachments", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Postgres: Upsert mailing.message_attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Postgres: Upsert mailing.message_attachments": {
-      "main": [[]]
+      "main": [
+        []
+      ]
     },
     "Aggregate: Traced": {
-      "main": [[{ "node": "Postgres: Update fetch_runs", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Postgres: Update fetch_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Postgres: Update fetch_runs": {
-      "main": [[{ "node": "Set: Shape Response", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set: Shape Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set: Shape Response": {
-      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   }
 }

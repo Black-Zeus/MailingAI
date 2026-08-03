@@ -19,7 +19,10 @@
       "name": "Schedule: Diario 06:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
@@ -33,7 +36,10 @@
       "name": "Webhook: Forzar sincronizacion",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [0, 250],
+      "position": [
+        0,
+        250
+      ],
       "webhookId": "maiw0016mailboxdelta-hook",
       "credentials": {
         "httpHeaderAuth": {
@@ -52,7 +58,10 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [250, 250]
+      "position": [
+        250,
+        250
+      ]
     },
     {
       "parameters": {
@@ -72,7 +81,10 @@
       "name": "Set: Normalizar parametros",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [125, 125]
+      "position": [
+        125,
+        125
+      ]
     },
     {
       "parameters": {
@@ -86,7 +98,10 @@
       "name": "Postgres: Buzones a sincronizar",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [250, 0],
+      "position": [
+        250,
+        0
+      ],
       "credentials": {
         "postgres": {
           "id": "cred0001postgres000",
@@ -120,7 +135,10 @@
       "name": "Execute: 02 Fetch Message Series",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [500, 0]
+      "position": [
+        500,
+        0
+      ]
     },
     {
       "parameters": {
@@ -134,7 +152,10 @@
       "name": "Postgres: Actualizar last_synced_at",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [750, 0],
+      "position": [
+        750,
+        0
+      ],
       "credentials": {
         "postgres": {
           "id": "cred0001postgres000",
@@ -170,7 +191,10 @@
       "name": "Set: Detalle por buzon",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [750, 250]
+      "position": [
+        750,
+        250
+      ]
     },
     {
       "parameters": {
@@ -182,7 +206,10 @@
       "name": "Aggregate: Detalle de la corrida",
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
-      "position": [1000, 250]
+      "position": [
+        1000,
+        250
+      ]
     },
     {
       "parameters": {
@@ -191,42 +218,119 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ { details: $json.details } }}",
-        "options": {}
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "ffffffff-ffff-4fff-8fff-fffffffffff9",
       "name": "Backend: Notificar sincronizacion completada",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1250, 250]
+      "position": [
+        1250,
+        250
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cred0004webhooksecret",
+          "name": "MailingAI Webhook Secret"
+        }
+      }
     }
   ],
   "connections": {
     "Schedule: Diario 06:00": {
-      "main": [[{ "node": "Set: Normalizar parametros", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set: Normalizar parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Webhook: Forzar sincronizacion": {
-      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Respond to Webhook": {
-      "main": [[{ "node": "Set: Normalizar parametros", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set: Normalizar parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set: Normalizar parametros": {
-      "main": [[{ "node": "Postgres: Buzones a sincronizar", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Postgres: Buzones a sincronizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Postgres: Buzones a sincronizar": {
-      "main": [[{ "node": "Execute: 02 Fetch Message Series", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Execute: 02 Fetch Message Series",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Execute: 02 Fetch Message Series": {
-      "main": [[
-        { "node": "Postgres: Actualizar last_synced_at", "type": "main", "index": 0 },
-        { "node": "Set: Detalle por buzon", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Postgres: Actualizar last_synced_at",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Set: Detalle por buzon",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set: Detalle por buzon": {
-      "main": [[{ "node": "Aggregate: Detalle de la corrida", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Aggregate: Detalle de la corrida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Aggregate: Detalle de la corrida": {
-      "main": [[{ "node": "Backend: Notificar sincronizacion completada", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Backend: Notificar sincronizacion completada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
