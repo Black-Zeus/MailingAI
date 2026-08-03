@@ -34,7 +34,7 @@ Tres grupos de rutas no exigen `mailingai_session`, cada uno por una razón dist
 
 - **`/api/auth/*`** — obvio, es el propio login (no puede exigir la sesión que todavía no existe).
 - **`/charts/*`** (backend) — no expone datos sensibles ni acceso a la base; solo genera una imagen a partir de los puntos que se le mandan en el body. Está **mapeada públicamente a propósito** en `proxy/nginx.conf`, pensada para ser llamada por n8n server-to-server pero también probable a mano.
-- **`/internal/*`** (backend) y `/internal/token/*` (`identity-broker`) — estas sí son sensibles (la segunda entrega un token de Graph vigente para un buzón). Su única protección es que **no están mapeadas en `proxy/nginx.conf`**, así que no son alcanzables desde fuera del stack — dependen enteramente del aislamiento de red de Docker (`mailingai_internal`), no tienen autenticación propia. **Esto no es una autenticación por sí sola**: cualquier proceso que logre correr dentro de esa red (un contenedor comprometido, por ejemplo) puede llamarlas sin credenciales. Es una limitación conocida, no un descuido — endurecerla (ej. un secreto compartido también para estas rutas, como ya existe para los webhooks que dispara el backend hacia n8n) es una mejora pendiente, no algo resuelto hoy.
+- **`/internal/*`** (backend) y `/internal/*` (`identity-broker`, incluido `/internal/token/{id}`, que entrega un token de Graph vigente para un buzón) — no están mapeadas en `proxy/nginx.conf` (no alcanzables desde fuera del stack) **y además** exigen el mismo secreto compartido que ya validan los webhooks de n8n (`WEBHOOK_SHARED_SECRET`/`WEBHOOK_SHARED_SECRET_HEADER`, dependencia `verify_internal_secret` en ambos servicios). Doble capa: aislamiento de red + secreto propio — ya no dependen solo de que un atacante no logre correr dentro de `mailingai_internal`.
 
 `/webhook/*` de n8n (workflows `07`, `08`, `10`, `12`, `15`) sí valida un header (`X-MailingAI-Secret`) contra `WEBHOOK_SHARED_SECRET` vía credencial `httpHeaderAuth` — estas rutas están pensadas para ser alcanzadas desde el backend, y la validación del secreto es la barrera real (no solo el aislamiento de red).
 
@@ -55,7 +55,7 @@ Sin roles intermedios: un usuario es `admin` o no. Un admin ve y gestiona todo e
 
 ## Hardening de contenedores
 
-Ningún `Dockerfile` propio del proyecto (`backend/`, `frontend/`, `identity-broker/`) declara `USER` — corren con el usuario por defecto de su imagen base (típicamente root en las imágenes `python:slim`/`node`/`nginx` sin configuración adicional). No hay límites de recursos (`cpus`/`mem_limit`) declarados en `docker-compose.yml`. Ninguno de los dos es un incidente, pero son mejoras de hardening pendientes, no resueltas hoy.
+`backend/Dockerfile` e `identity-broker/Dockerfile` corren como `appuser` (no-root, `useradd -m -u 1000`). `frontend/Dockerfile` usa `nginxinc/nginx-unprivileged:1.27-alpine` (bindea `8080` en vez de `80`, corre como el usuario `nginx` desde el arranque, no solo para los workers). No hay límites de recursos (`cpus`/`mem_limit`) declarados en `docker-compose.yml` — eso sigue pendiente.
 
 ## Reporte de vulnerabilidades
 
@@ -65,8 +65,7 @@ No existe hoy un canal formal de reporte responsable (sin `SECURITY.md` de conta
 
 - HTTP plano por defecto — sin TLS, ver [`INSTALL.md`](INSTALL.md#antes-de-exponer-esto-a-una-red-real).
 - Sin token CSRF explícito (solo `SameSite=Lax`).
-- `/internal/*` depende solo de aislamiento de red, no de un secreto propio.
-- Sin rate limiting en login ni en el resto de la API.
+- Sin rate limiting propio en `proxy/nginx.conf`/backend — se delega al Nginx Proxy Manager externo que termina el TLS (ver [`OPERATIONS.md`](OPERATIONS.md#rate-limiting)); si ese NPM no está configurado con un límite, el login local sigue sin ninguna protección real contra fuerza bruta.
 - Sin rotación automatizada de secretos.
-- Contenedores sin usuario no-root declarado.
+- Sin límites de recursos (`cpus`/`mem_limit`) por contenedor en `docker-compose.yml`.
 - Sin recuperación de contraseña por email para cuentas locales.

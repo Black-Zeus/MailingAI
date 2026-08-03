@@ -14,7 +14,8 @@ Matriz honesta de qué funciona hoy, qué es una versión intermedia (funciona p
 | Log de auditoría por expediente | Implementado | Cubre ediciones directas (estado, conclusión, notas, evidencia, resumen IA); no cubre fusiones de casos ni marcado automático de `ai_stale` |
 | TLS/HTTPS | **Pendiente** | Ver [`INSTALL.md`](INSTALL.md#antes-de-exponer-esto-a-una-red-real) — el despliegue de referencia es HTTP plano |
 | Protección CSRF con token | **No implementado** | Mitigación actual es `SameSite=Lax` en la cookie de sesión, sin token CSRF explícito — ver [`SECURITY.md`](SECURITY.md) |
-| Rate limiting en login/API | **No implementado** | Ni el login local ni el resto de la API tienen límite de intentos |
+| Autenticación de rutas internas (`/internal/*`) | Implementado | Secreto compartido (`WEBHOOK_SHARED_SECRET`) además del aislamiento de red — ver [`SECURITY.md`](SECURITY.md) |
+| Rate limiting en login/API | Delegado a infraestructura externa | Se configura en el Nginx Proxy Manager que termina el TLS, no en el stack — ver [`OPERATIONS.md`](OPERATIONS.md#rate-limiting) |
 
 ## Indexación de buzones (Microsoft Graph / n8n)
 
@@ -35,12 +36,12 @@ Matriz honesta de qué funciona hoy, qué es una versión intermedia (funciona p
 |---|---|---|
 | Correlación automática de correos relacionados | Implementado | Requiere un correo semilla — no hay un proceso que cree casos sin intervención humana |
 | Línea de tiempo, notas, evidencia | Implementado | — |
-| Exportación a PDF | Implementado | WeasyPrint + Jinja2; no incluye hash de integridad ni firma digital |
+| Exportación a PDF | Implementado | WeasyPrint + Jinja2, con hash SHA-256 del archivo generado (auditoría + header `X-Content-SHA256`); sin firma digital ni sello de tiempo |
 | Dashboard ejecutivo | Implementado | Conteos reales por outcome/status |
 | Recordatorio de revisión vencida | Implementado, parcial | Solo notificación in-app — **no envía email** |
 | Reasignación manual de dueño | Implementado | — |
 | Gobierno formal del caso (reglas de cierre, retención, disposición, reapertura) | **No implementado / no decidido** | El sistema permite cerrar/reabrir un expediente sin ninguna política formal detrás — ver hallazgo en la revisión de documentación |
-| Cadena de custodia forense del PDF exportado | **No implementado** | El PDF es un documento de trabajo, no un artefacto forense (sin hash, sin sello de tiempo) |
+| Cadena de custodia forense del PDF exportado | Parcial | Hay hash SHA-256 verificable (ver arriba), pero sin sello de tiempo ni firma digital — sigue siendo un documento de trabajo, no un artefacto forense completo |
 
 ## Inteligencia artificial
 
@@ -69,5 +70,5 @@ Matriz honesta de qué funciona hoy, qué es una versión intermedia (funciona p
 | TLS en el proxy | **Pendiente** | Ver [`INSTALL.md`](INSTALL.md#antes-de-exponer-esto-a-una-red-real) |
 | Migraciones de base de datos versionadas con runner | **No implementado** | Lista manual de archivos a aplicar en orden (ver [`INSTALL.md`](INSTALL.md)) — sin tabla de control de versión, sin comando de rollback |
 | Backup y restauración documentados/automatizados | **No implementado / no documentado** | No hay procedimiento de respaldo de Postgres, credenciales de n8n ni `share/` |
-| Hardening de contenedores (usuario no-root, etc.) | **No implementado** | Ningún `Dockerfile` propio del proyecto declara `USER` — corren con el usuario por defecto de la imagen base |
+| Hardening de contenedores (usuario no-root) | Implementado | `backend`/`identity-broker` corren como `appuser`; `frontend` usa `nginxinc/nginx-unprivileged`. Sin límites de recursos (`cpus`/`mem_limit`) todavía |
 | Runbook operacional (jobs atascados, rotación de secretos, etc.) | Implementado | Ver [`OPERATIONS.md`](OPERATIONS.md) |

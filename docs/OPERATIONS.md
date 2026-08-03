@@ -12,6 +12,10 @@ Reinicio seguro de un servicio puntual, sin bajar el resto del stack:
 docker compose restart backend
 ```
 
+## Rate limiting
+
+El stack no aplica ningún límite de intentos, ni en `proxy/nginx.conf` ni en el backend — el punto más expuesto es `POST /api/auth/local-login`, que hoy acepta intentos ilimitados sin bloqueo temporal. En este despliegue el edge real de la red es un **Nginx Proxy Manager externo al stack** (ahí también se termina el TLS, ver [`INSTALL.md`](INSTALL.md#antes-de-exponer-esto-a-una-red-real)) — el rate limiting se configura ahí, no en el `proxy` interno del proyecto. En NPM: **Access Lists** o la directiva `limit_req` en la configuración avanzada del host, apuntado especialmente a la ruta `/api/auth/local-login`. El login SSO no lo necesita con la misma urgencia — esa protección ya la aplica Microsoft del otro lado.
+
 ## Comprobación de salud
 
 ```sh
