@@ -8,7 +8,7 @@ import asyncpg
 
 from app.repositories import mailbox_index_repository, messages_repository, notifications_repository, users_repository
 from app.schemas.mailbox_index import MailboxDeltaSyncDetail, MailboxIndexFolderRead, MailboxIndexRunRead
-from app.services import jobs_service, notification_email_service
+from app.services import email_templates, jobs_service, notification_email_service
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +381,18 @@ async def notify_delta_sync_done(pool: asyncpg.Pool, *, details: list[MailboxDel
     else:
         message = "Sincronización de buzones completada: sin correos nuevos."
 
+    email_details = [(d.label, f"{d.new_messages} correo(s) nuevo(s)") for d in details if d.new_messages > 0]
+    email_body = email_templates.render_system_notification_email(
+        eyebrow="Sincronización de buzones",
+        title="Sincronización completada",
+        message=(
+            f"Se encontraron {total} correo(s) nuevo(s) en total."
+            if total > 0
+            else "No se encontraron correos nuevos en esta corrida."
+        ),
+        details=email_details or None,
+    )
+
     admins = await users_repository.list_enabled_admins(pool)
     for admin in admins:
         await notifications_repository.insert_notification(
@@ -393,5 +405,5 @@ async def notify_delta_sync_done(pool: asyncpg.Pool, *, details: list[MailboxDel
         await notification_email_service.try_send_email(
             to_email=admin["email_address"],
             subject="MailingAI — sincronización de buzones completada",
-            body=message,
+            body=email_body,
         )

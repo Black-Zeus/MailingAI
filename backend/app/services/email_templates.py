@@ -98,6 +98,32 @@ def render_case_message_email(
     )
 
 
+def render_system_notification_email(
+    *,
+    eyebrow: str,
+    title: str,
+    message: str,
+    details: list[tuple[str, str]] | None = None,
+    show_cta: bool = True,
+) -> str:
+    """Plantilla generica para avisos de estado del sistema (sincronizacion de
+    buzones, analisis de IA terminado, correo de prueba) -- a diferencia de
+    case_shared/mailbox_shared/account_created (datos fijos, un solo caso de
+    uso cada una), esta acepta un mensaje y una lista opcional de pares
+    label/valor para no tener que crear un .jinja nuevo por cada aviso de
+    este estilo."""
+    template = _env.get_template("system_notification.html.jinja")
+    return template.render(
+        eyebrow=eyebrow,
+        title=title,
+        message=message,
+        details=details or [],
+        show_cta=show_cta,
+        app_url=get_settings().frontend_url,
+        current_year=datetime.now().year,
+    )
+
+
 def render_account_created_email(
     *,
     recipient_name: str,

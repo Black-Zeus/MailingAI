@@ -14,7 +14,7 @@ from app.repositories import (
     users_repository,
 )
 from app.schemas.ai import AIAnalyzeResponse, AICaseSummary, AIHealthResponse
-from app.services import notification_email_service
+from app.services import email_templates, notification_email_service
 from app.services.ai.base import ProviderUnavailableError
 from app.services.ai.factory import get_provider_instance
 from app.services.ai_providers_service import is_local_provider_type, to_provider_read
@@ -399,6 +399,12 @@ async def _notify_ai_done(
     )
     requester = await users_repository.get_user_by_id(pool, user_id)
     if requester is not None and requester["email_address"]:
+        email_body = email_templates.render_system_notification_email(
+            eyebrow="Análisis de IA",
+            title="Análisis finalizado" if succeeded else "Análisis fallido",
+            message=message,
+            details=[("Expediente", case_title)],
+        )
         await notification_email_service.try_send_email(
-            to_email=requester["email_address"], subject="MailingAI — análisis de IA finalizado", body=message
+            to_email=requester["email_address"], subject="MailingAI — análisis de IA finalizado", body=email_body
         )
