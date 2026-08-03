@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-NotificationKind = Literal["case_shared", "mailbox_shared"]
+NotificationKind = Literal["case_shared", "mailbox_shared", "mailbox_delta_sync_done", "ai_analysis_done"]
 
 
 class NotificationRead(BaseModel):

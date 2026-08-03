@@ -1,4 +1,4 @@
-export type NotificationKind = 'case_shared' | 'mailbox_shared'
+export type NotificationKind = 'case_shared' | 'mailbox_shared' | 'mailbox_delta_sync_done' | 'ai_analysis_done'
 
 export interface NotificationRead {
   notification_id: number

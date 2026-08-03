@@ -61,3 +61,10 @@ async def mark_all_read(pool: asyncpg.Pool, user_id: int) -> int:
     async with pool.acquire() as conn:
         rows = await conn.fetch(query, user_id)
     return len(rows)
+
+
+async def delete_all(pool: asyncpg.Pool, user_id: int) -> int:
+    query = "DELETE FROM identity.notifications WHERE user_id = $1 RETURNING notification_id;"
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, user_id)
+    return len(rows)

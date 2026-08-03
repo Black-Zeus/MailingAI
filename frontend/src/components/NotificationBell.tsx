@@ -1,13 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Trash2 } from 'lucide-react'
 import {
+  clearAllNotifications,
   getUnreadNotificationCount,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
 } from '../api/client'
-import type { NotificationRead } from '../types/notifications'
+import { useToast } from '../context/ToastContext'
+import { useModalBehavior } from '../utils/modalScrollLock'
+import { ActionButton } from './ActionButton'
+import { ConfirmModal } from './ConfirmModal'
+import { LabeledButton } from './LabeledButton'
+import type { NotificationKind, NotificationRead } from '../types/notifications'
 
 const POLL_MS = 20000
+
+const KIND_LABELS: Record<NotificationKind, string> = {
+  case_shared: 'Expediente compartido',
+  mailbox_shared: 'Buzón compartido',
+  mailbox_delta_sync_done: 'Sincronización de buzón',
+  ai_analysis_done: 'Análisis de IA',
+}
 
 function timeAgo(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime()
@@ -20,10 +35,51 @@ function timeAgo(iso: string): string {
   return `hace ${days} d`
 }
 
+function NotificationDetailModal({
+  notification,
+  onClose,
+}: {
+  notification: NotificationRead | null
+  onClose: () => void
+}) {
+  const titleId = useId()
+  const open = notification !== null
+  const modalRef = useModalBehavior(open, onClose)
+
+  // Portal a document.body: NotificationBell vive dentro de <aside>, que tiene
+  // backdrop-filter -- eso crea un containing block nuevo para descendientes
+  // position:fixed (mismo efecto que transform/filter), así que sin el portal
+  // el backdrop quedaba acotado al tamaño de <aside> en vez de cubrir toda la
+  // pantalla como el resto de los modales.
+  return createPortal(
+    <div className={`modal-backdrop${open ? ' open' : ''}`}>
+      {notification && (
+        <div className="modal narrow" ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+          <div className="modal-body">
+            <h3 id={titleId}>{KIND_LABELS[notification.kind] ?? 'Notificación'}</h3>
+            <p style={{ marginTop: 10 }}>{notification.message}</p>
+            <p className="text-muted mt-4" style={{ fontSize: 11.5 }}>
+              {new Date(notification.created_at).toLocaleString()}
+            </p>
+          </div>
+          <div className="modal-actions">
+            <LabeledButton onClick={onClose}>✕ Cerrar</LabeledButton>
+          </div>
+        </div>
+      )}
+    </div>,
+    document.body,
+  )
+}
+
 export function NotificationBell() {
+  const { showToast } = useToast()
   const [open, setOpen] = useState(false)
   const [unread, setUnread] = useState(0)
   const [notifications, setNotifications] = useState<NotificationRead[] | null>(null)
+  const [detailNotification, setDetailNotification] = useState<NotificationRead | null>(null)
+  const [clearModalOpen, setClearModalOpen] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -76,6 +132,11 @@ export function NotificationBell() {
     }
   }
 
+  function handleOpenDetail(n: NotificationRead) {
+    setDetailNotification(n)
+    handleMarkRead(n)
+  }
+
   async function handleMarkAllRead() {
     try {
       await markAllNotificationsRead()
@@ -86,7 +147,22 @@ export function NotificationBell() {
     }
   }
 
+  async function handleClearAll() {
+    setClearing(true)
+    try {
+      await clearAllNotifications()
+      setNotifications([])
+      setUnread(0)
+      setClearModalOpen(false)
+    } catch {
+      showToast('No se pudieron limpiar las notificaciones.', true)
+    } finally {
+      setClearing(false)
+    }
+  }
+
   return (
+    <>
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button
         type="button"
@@ -102,7 +178,7 @@ export function NotificationBell() {
               top: -6,
               right: -6,
               background: 'var(--danger)',
-              color: '#fff',
+              color: 'var(--on-accent-text)',
               borderRadius: 999,
               fontSize: 10,
               fontWeight: 700,
@@ -130,17 +206,28 @@ export function NotificationBell() {
             width: 300,
             maxHeight: 360,
             overflowY: 'auto',
-            zIndex: 40,
+            zIndex: 'var(--z-dropdown)',
             boxShadow: 'var(--shadow)',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 }}>
             <strong style={{ fontSize: 12.5 }}>Notificaciones</strong>
-            {unread > 0 && (
-              <button type="button" className="btn small btn-labeled" onClick={handleMarkAllRead}>
-                ✓ Marcar todas leídas
-              </button>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {unread > 0 && (
+                <button type="button" className="btn small btn-labeled" onClick={handleMarkAllRead}>
+                  ✓ Marcar todas leídas
+                </button>
+              )}
+              {notifications !== null && notifications.length > 0 && (
+                <ActionButton
+                  icon={Trash2}
+                  label="Limpiar notificaciones"
+                  size="sm"
+                  variant="danger"
+                  onClick={() => setClearModalOpen(true)}
+                />
+              )}
+            </div>
           </div>
           {notifications === null ? (
             <p style={{ color: 'var(--muted)', fontSize: 12 }}>Cargando…</p>
@@ -150,11 +237,19 @@ export function NotificationBell() {
             notifications.map((n) => (
               <div
                 key={n.notification_id}
-                onClick={() => handleMarkRead(n)}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpenDetail(n)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleOpenDetail(n)
+                  }
+                }}
                 style={{
                   padding: '8px 6px',
                   borderBottom: '1px solid var(--line)',
-                  cursor: n.read_at ? 'default' : 'pointer',
+                  cursor: 'pointer',
                   opacity: n.read_at ? 0.55 : 1,
                 }}
               >
@@ -166,5 +261,18 @@ export function NotificationBell() {
         </div>
       )}
     </div>
+    <NotificationDetailModal notification={detailNotification} onClose={() => setDetailNotification(null)} />
+    <ConfirmModal
+      open={clearModalOpen}
+      title="Limpiar notificaciones"
+      description="Se eliminan todas tus notificaciones, leídas y no leídas. Esta acción no se puede deshacer."
+      confirmLabel="Limpiar"
+      confirmingLabel="Limpiando…"
+      confirmIcon="🗑"
+      confirming={clearing}
+      onCancel={() => setClearModalOpen(false)}
+      onConfirm={handleClearAll}
+    />
+    </>
   )
 }

@@ -35,3 +35,9 @@ async def mark_read(notification_id: int, pool: PoolDep, user: CurrentUserDep) -
 @router.post("/read-all", status_code=http_status.HTTP_204_NO_CONTENT)
 async def mark_all_read(pool: PoolDep, user: CurrentUserDep) -> None:
     await notifications_repository.mark_all_read(pool, user.user_id)
+
+
+@router.delete("", status_code=http_status.HTTP_200_OK)
+async def delete_all_notifications(pool: PoolDep, user: CurrentUserDep) -> dict[str, int]:
+    deleted = await notifications_repository.delete_all(pool, user.user_id)
+    return {"deleted": deleted}

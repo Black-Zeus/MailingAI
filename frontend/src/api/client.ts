@@ -816,6 +816,10 @@ export function markAllNotificationsRead(): Promise<void> {
   return request<void>('/api/notifications/read-all', { method: 'POST' })
 }
 
+export function clearAllNotifications(): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>('/api/notifications', { method: 'DELETE' })
+}
+
 // --- Comparticion de expedientes ---
 
 export function listCaseShares(caseId: number): Promise<CaseShareRead[]> {
