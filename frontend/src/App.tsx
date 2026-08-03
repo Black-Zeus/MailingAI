@@ -13,6 +13,8 @@ import { AttachmentsView } from './views/AttachmentsView'
 import { SettingsView } from './views/SettingsView'
 import { getAIHealth } from './api/client'
 import type { CaseSeedPrefill } from './types/cases'
+import type { AIHealthResponse } from './types/ai'
+import { AI_PROVIDER_TYPE_LABELS } from './types/ai'
 
 const TITLES: Record<ViewName, { title: string; subtitle: string }> = {
   new: { title: 'Nueva consulta', subtitle: 'Definí el alcance de un nuevo trabajo de análisis.' },
@@ -28,15 +30,15 @@ function AppShell() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const [view, setView] = useState<ViewName>('dashboard')
-  const [aiPolicy, setAiPolicy] = useState<string | null>(null)
+  const [aiHealth, setAiHealth] = useState<AIHealthResponse | null>(null)
   const [refreshJobs, setRefreshJobs] = useState(0)
   const [casePrefill, setCasePrefill] = useState<CaseSeedPrefill | null>(null)
   const [openCaseId, setOpenCaseId] = useState<number | null>(null)
 
   useEffect(() => {
     getAIHealth()
-      .then((h) => setAiPolicy(h.policy))
-      .catch(() => setAiPolicy(null))
+      .then(setAiHealth)
+      .catch(() => setAiHealth(null))
   }, [])
 
   // Defensa extra ademas de ocultar el item del menu (Sidebar.tsx): un
@@ -75,7 +77,12 @@ function AppShell() {
             <h1>{title}</h1>
             <p>{subtitle}</p>
           </div>
-          {aiPolicy && <div className="scope-pill">● Política IA: {aiPolicy === 'local_only' ? 'solo local' : aiPolicy}</div>}
+          {aiHealth && (
+            <div className="scope-pill">
+              ● Política IA: {aiHealth.policy === 'local_only' ? 'solo local' : 'IA remota permitida'}
+              {aiHealth.active_provider && ` (${AI_PROVIDER_TYPE_LABELS[aiHealth.active_provider.provider_type]})`}
+            </div>
+          )}
         </header>
         <div className="content">
           {view === 'new' && <NewJobView onJobCreated={goToJobs} />}
