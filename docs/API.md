@@ -112,6 +112,20 @@ Al revocar el acceso de un usuario a un buzón (`DELETE /api/mailboxes/{id}/shar
 
 Compartir un expediente o un buzón genera una notificación in-app (`GET /api/notifications`) y, si hay un buzón configurado como remitente de notificaciones (Configuración, solo admin), también un correo real con plantilla HTML. Revocar un acceso no genera notificación, solo compartirlo.
 
+## Notificaciones (`/api/notifications`)
+
+```powershell
+curl http://<host>/api/notifications
+curl http://<host>/api/notifications/unread-count
+curl -X POST http://<host>/api/notifications/<notification_id>/read
+curl -X POST http://<host>/api/notifications/read-all
+curl -X DELETE http://<host>/api/notifications
+```
+
+`GET /api/notifications` devuelve hasta 50 notificaciones del usuario autenticado (leídas y no leídas, más recientes primero) — nunca las de otro usuario. `GET /api/notifications/unread-count` es el número que muestra la campanita del frontend, con polling propio (no depende de tener el listado abierto). `kind` es uno de `case_shared`, `mailbox_shared`, `mailbox_delta_sync_done`, `ai_analysis_done` — cualquier valor fuera de esa lista rompe la validación de `GET /api/notifications` (ver [`STATUS.md`](STATUS.md) si se agrega un tipo nuevo: hay que sumarlo tanto al `CHECK` de la tabla como al `Literal` de `NotificationRead`, quedaron desincronizados una vez).
+
+`POST /api/notifications/{id}/read` marca una notificación puntual como leída (`204`, idempotente — repetirlo sobre una ya leída no falla, simplemente no vuelve a tocar `read_at`). `POST /api/notifications/read-all` marca todas las del usuario. `DELETE /api/notifications` borra **todas** las notificaciones del usuario autenticado, leídas y no leídas — no hay borrado selectivo por `id` ni por rango de fecha. Devuelve `{"deleted": N}`. En el frontend, botón "Limpiar notificaciones" (con confirmación) en el desplegable de la campanita.
+
 ## Probar el backend de gráficos de forma aislada
 
 ```powershell

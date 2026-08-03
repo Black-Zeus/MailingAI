@@ -39,6 +39,8 @@ No hay registro por tu cuenta — si no puedes entrar, pídele a un administrado
 
 La campanita del panel lateral avisa de eventos como: te compartieron un expediente o un buzón, un análisis de IA terminó, un expediente tuyo tiene la revisión vencida, o una sincronización de buzones trajo correos nuevos. Si hay un remitente de notificaciones configurado (Configuración, solo admin), algunos de esos avisos también llegan por correo real: expedientes o buzones compartidos, cuentas creadas, análisis de IA terminados y sincronizaciones de buzones. Los recordatorios de revisión vencida, por ahora, se muestran solo dentro de la aplicación.
 
+Al hacer clic en una notificación del listado se abre en un panel más grande, con el mensaje completo y la fecha exacta, y de paso queda marcada como leída. El botón "Limpiar notificaciones" (con confirmación previa) borra todo el historial de una vez, leídas y no leídas — no hay forma de recuperarlas después.
+
 ## Formato de texto (Markdown)
 
 Los campos de texto largo (notas, seguimiento, cuerpo de correo al enviar un expediente) aceptan Markdown — junto a cada uno de esos campos hay un botón de ayuda (ícono "?") con una chuleta rápida: títulos, **negrita**, *cursiva*, listas, citas, bloques de código, enlaces y tablas simples.

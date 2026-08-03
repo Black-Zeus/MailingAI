@@ -30,7 +30,7 @@ ollama              -- IA local (resumen de expedientes), CPU-only
 `proxy` (`nginx:1.27.3-alpine`, config en `proxy/nginx.conf`) es el único servicio con puerto publicado al host (`PROXY_PORT`, default `80`):
 
 ```text
-http://<host>/                  -> frontend:80        (SPA)
+http://<host>/                  -> frontend:8080      (SPA, nginx no-root)
 http://<host>/api/*             -> backend:8000/api/*  (API + callback de login SSO)
 http://<host>/identity/oauth/*  -> identity-broker:8000/oauth/*   (solo el flujo de conectar buzones)
 http://<host>/n8n/*             -> n8n:5678/*          (editor de workflows, protegido con Basic Auth propia)
@@ -123,7 +123,11 @@ mailing.v_cr_attachment_traceability, v_mail_folders_tree, v_case_summary   -- v
 
 ## Frontend
 
-React + TypeScript + Vite, sin librería de routing — la vista activa es estado de React (`Sidebar` + `App.tsx`), no hay deep-linking por URL. Se sirve como archivos estáticos vía nginx en el contenedor `frontend`, detrás del mismo proxy único. `VITE_API_URL` se hornea en build time (cambiarla exige reconstruir la imagen).
+React + TypeScript + Vite, sin librería de routing — la vista activa es estado de React (`Sidebar` + `App.tsx`), no hay deep-linking por URL. Se sirve como archivos estáticos vía nginx en el contenedor `frontend` (imagen `nginxinc/nginx-unprivileged`, puerto `8080` interno), detrás del mismo proxy único. `VITE_API_URL` se hornea en build time (cambiarla exige reconstruir la imagen).
+
+CSS plano (sin Tailwind/CSS Modules/styled-components), organizado en archivos temáticos bajo `frontend/src/styles/` (`tokens`, `base`, `layout`, `forms`, `buttons`, `tables`, `components`, `modals`, `utilities`, `responsive`), importados en orden de cascada desde `index.css` — `responsive.css` siempre al final, porque sus `@media` necesitan pisar reglas base con la misma especificidad. `tokens.css` define la escala de espaciado/tipografía/z-index/color usada en el resto (`--space-*`, `--text-*`, `--z-*`); valores que no calzan en la escala se dejan como literales a propósito en vez de forzarlos.
+
+Dos componentes de botón compartidos evitan reimplementar el mismo patrón vista por vista: `ActionButton` (solo ícono, con tooltip + `aria-label` sincronizados desde un único `label`) y `LabeledButton` (ícono + texto, usado en los pares Cancelar/Confirmar de los modales). Los modales comparten `useModalBehavior` (`utils/modalScrollLock.ts`: bloqueo de scroll + cierre con Escape + devolución de foco) y, cuando el componente puede quedar anidado dentro de un ancestro con `backdrop-filter`/`filter`/`transform` (ej. `NotificationBell` dentro de `<aside>`), se renderizan con `createPortal` a `document.body` — ese tipo de ancestro crea un containing block nuevo para `position: fixed` y descentra el modal si no se hace portal.
 
 ## IA (Ollama, local por defecto)
 
