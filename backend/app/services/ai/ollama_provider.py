@@ -11,13 +11,12 @@ class OllamaProvider(AIProvider):
         self._model = model
         self.model = model
 
-    async def analyze(self, system_prompt: str, user_content: str) -> str:
+    async def analyze(self, system_prompt: str, user_content: str, *, json_mode: bool = True) -> str:
         payload = {
             "model": self._model,
             "system": system_prompt,
             "prompt": user_content,
             "stream": False,
-            "format": "json",
             # Temperatura baja a proposito: esto es analisis factual (citar lo
             # que ya esta en el contenido), no generacion creativa -- una
             # temperatura alta hacia que la calidad del resumen variara mucho
@@ -25,6 +24,8 @@ class OllamaProvider(AIProvider):
             # concreta, a veces la diluia en una frase vaga).
             "options": {"temperature": 0.2},
         }
+        if json_mode:
+            payload["format"] = "json"
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(f"{self._base_url}/api/generate", json=payload)

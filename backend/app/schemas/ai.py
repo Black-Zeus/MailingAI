@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.ai_providers import AIProviderRead
 from app.schemas.case_enums import CaseOutcome
@@ -53,6 +53,16 @@ class AIAnalyzeResponse(BaseModel):
     result: AICaseSummary | None = None
     error_message: str | None = None
     analyzed_at: datetime | None = None
+
+
+class AskCaseQuestionRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class AskCaseQuestionResponse(BaseModel):
+    answer: str
+    provider: str
+    model: str
 
 
 class AIHealthResponse(BaseModel):

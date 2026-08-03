@@ -17,8 +17,11 @@ class AIProvider(ABC):
     model: str
 
     @abstractmethod
-    async def analyze(self, system_prompt: str, user_content: str) -> str:
-        """Devuelve la respuesta cruda del modelo (texto). El llamador valida/parsea."""
+    async def analyze(self, system_prompt: str, user_content: str, *, json_mode: bool = True) -> str:
+        """Devuelve la respuesta cruda del modelo (texto). El llamador valida/parsea.
+        json_mode=False pide texto libre en vez de forzar JSON a nivel de API
+        (usado por preguntas-respuesta sobre un expediente, donde la salida
+        es una respuesta en prosa, no un objeto estructurado)."""
 
     @abstractmethod
     async def health_check(self) -> bool:

@@ -113,3 +113,22 @@ async def get_case_messages_for_ai(pool: asyncpg.Pool, case_id: int) -> list[asy
     """
     async with pool.acquire() as conn:
         return await conn.fetch(query, case_id)
+
+
+async def get_case_messages_with_body(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
+    """Como get_case_messages_for_ai, pero con el cuerpo completo del correo
+    (body_content) en vez del preview de 600 caracteres -- usado por
+    preguntas-respuesta sobre un expediente, donde el preview no alcanza
+    para contestar algo puntual (ej. una direccion, quien confirmo algo).
+    LIMIT generoso como valvula de seguridad, no un tope real para el uso
+    normal (un expediente con mas de 300 correos ya es un caso atipico)."""
+    query = """
+        SELECT m.subject, m.from_address, m.from_name, m.sent_datetime, m.body_content, m.body_content_type
+        FROM mailing.case_messages cm
+        JOIN mailing.messages m ON m.message_id = cm.message_id
+        WHERE cm.case_id = $1
+        ORDER BY m.sent_datetime ASC NULLS LAST
+        LIMIT 300;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(query, case_id)

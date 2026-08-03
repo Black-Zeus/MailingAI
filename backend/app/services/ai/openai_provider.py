@@ -16,19 +16,20 @@ class OpenAIProvider(AIProvider):
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"}
 
-    async def analyze(self, system_prompt: str, user_content: str) -> str:
+    async def analyze(self, system_prompt: str, user_content: str, *, json_mode: bool = True) -> str:
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            "response_format": {"type": "json_object"},
             # Analisis factual (citar lo que ya esta en el contenido), no
             # generacion creativa -- temperatura baja para resultados
             # consistentes entre corridas identicas.
             "temperature": 0.2,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(

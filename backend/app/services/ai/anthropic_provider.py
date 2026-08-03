@@ -21,7 +21,11 @@ class AnthropicProvider(AIProvider):
             "content-type": "application/json",
         }
 
-    async def analyze(self, system_prompt: str, user_content: str) -> str:
+    async def analyze(self, system_prompt: str, user_content: str, *, json_mode: bool = True) -> str:
+        # json_mode no aplica aca -- Claude nunca fuerza JSON a nivel de API
+        # (supports_structured_output() ya devuelve False), siempre es texto
+        # libre; el parseo/validacion lo hace el llamador si lo necesita.
+        del json_mode
         payload = {
             "model": self.model,
             "max_tokens": 1024,

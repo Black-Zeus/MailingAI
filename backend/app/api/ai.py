@@ -7,7 +7,7 @@ from fastapi import status as http_status
 
 from app.auth.dependencies import AdminUserDep, CurrentUserDep
 from app.db import get_pool
-from app.schemas.ai import AIAnalyzeResponse, AIBatchRunRead, AIHealthResponse
+from app.schemas.ai import AIAnalyzeResponse, AIBatchRunRead, AIHealthResponse, AskCaseQuestionRequest, AskCaseQuestionResponse
 from app.schemas.ai_providers import (
     AIPolicyRead,
     AIPolicyUpdate,
@@ -47,6 +47,26 @@ async def analyze_case(
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     if finish is not None:
         background_tasks.add_task(finish)
+    return result
+
+
+@router.post("/cases/{case_id}/ask", response_model=AskCaseQuestionResponse)
+async def ask_case_question(
+    case_id: int, payload: AskCaseQuestionRequest, pool: PoolDep, user: CurrentUserDep
+) -> AskCaseQuestionResponse:
+    """Pregunta-respuesta de una sola vuelta sobre los correos de un
+    expediente (solo lectura, sin historial -- cada pregunta es
+    independiente, ver gateway.ask_case_question)."""
+    try:
+        result = await gateway.ask_case_question(
+            pool, case_id, payload.question, user_id=user.user_id, is_admin=user.is_admin
+        )
+    except gateway.AIQuestionBlockedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ProviderUnavailableError as exc:
+        raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return result
 
 

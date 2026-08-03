@@ -48,6 +48,7 @@ import { KpiCard } from '../components/KpiCard'
 import { PRIORITY_LABELS } from '../types/ai'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { ShareModal, type PendingShareChanges } from '../components/ShareModal'
+import { AskCaseModal } from '../components/AskCaseModal'
 import { AttachmentItem } from '../components/AttachmentItem'
 import { MessageBodyModal, MessageBodyView, type MessageBodyModalState } from '../components/MessageBodyModal'
 import { ActionButton } from '../components/ActionButton'
@@ -66,6 +67,7 @@ import {
   UserCog,
   Lock,
   Mail,
+  MessageCircleQuestion,
   Paperclip,
   Pencil,
   Plus,
@@ -215,6 +217,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   }, [prefill])
 
   const [analyzingId, setAnalyzingId] = useState<number | null>(null)
+  const [askCaseTarget, setAskCaseTarget] = useState<CaseSummary | null>(null)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const [editingAiSummaryId, setEditingAiSummaryId] = useState<number | null>(null)
   const [aiSummaryDraft, setAiSummaryDraft] = useState('')
@@ -1854,6 +1857,11 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         onClick={() => handleAnalyze(c.case_id)}
                       />
                       <ActionButton
+                        icon={MessageCircleQuestion}
+                        label="Consultar expediente"
+                        onClick={() => setAskCaseTarget(c)}
+                      />
+                      <ActionButton
                         icon={FileDown}
                         label={exportingCaseId === c.case_id ? 'Generando PDF…' : 'Exportar expediente (PDF)'}
                         loading={exportingCaseId === c.case_id}
@@ -2722,6 +2730,13 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         saving={sharingCase}
         onConfirm={handleConfirmCaseShares}
         onClose={() => setShareCaseTarget(null)}
+      />
+
+      <AskCaseModal
+        open={askCaseTarget !== null}
+        caseId={askCaseTarget?.case_id ?? null}
+        caseTitle={askCaseTarget?.title ?? ''}
+        onClose={() => setAskCaseTarget(null)}
       />
 
       <ConfirmModal

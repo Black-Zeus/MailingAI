@@ -498,6 +498,19 @@ export function analyzeCaseWithAI(caseId: number): Promise<AIAnalyzeResponse> {
   return request<AIAnalyzeResponse>(`/api/ai/cases/${caseId}/analyze`, { method: 'POST' })
 }
 
+export interface AskCaseQuestionResponse {
+  answer: string
+  provider: string
+  model: string
+}
+
+export function askCaseQuestion(caseId: number, question: string): Promise<AskCaseQuestionResponse> {
+  return request<AskCaseQuestionResponse>(`/api/ai/cases/${caseId}/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ question }),
+  })
+}
+
 export function updateAiSummary(
   caseId: number,
   summary: string,
