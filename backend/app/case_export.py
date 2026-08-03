@@ -244,11 +244,7 @@ def _build_context(
         "participant_count": len(senders),
         "outcome_label": _OUTCOME_LABELS.get(detail.outcome, "Sin conclusión definida"),
         "pending_action_html": markdown_to_safe_html(detail.pending_action) if detail.pending_action else None,
-        "next_review_label": (
-            _fmt_day(detail.next_review_at)
-            if detail.next_review_at
-            else "No definida. Se recomienda asignar responsable y fecha objetivo."
-        ),
+        "next_review_label": _fmt_day(detail.next_review_at) if detail.next_review_at else "-",
         "document_version": _DOCUMENT_VERSION,
         "thread_duration_label": thread_duration_label,
         "direct_count": direct_count,

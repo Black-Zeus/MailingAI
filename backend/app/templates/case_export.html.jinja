@@ -224,7 +224,7 @@
     <div class="decision">
       <strong>Conclusión</strong><div>{{ outcome_label }}</div>
       <strong>Estado del caso</strong><div><span class="badge {{ status_badge_class }}">{{ status_label }}</span></div>
-      <strong>Acción pendiente</strong><div class="md-content">{{ pending_action_html | safe if pending_action_html else "No definida." }}</div>
+      <strong>Acción pendiente</strong><div class="md-content">{{ pending_action_html | safe if pending_action_html else "-" }}</div>
       <strong>Próxima revisión</strong><div>{{ next_review_label }}</div>
     </div>
   </section>
