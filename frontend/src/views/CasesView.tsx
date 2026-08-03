@@ -47,7 +47,7 @@ import type { MailboxAccountRead } from '../types/mailboxes'
 import { KpiCard } from '../components/KpiCard'
 import { PRIORITY_LABELS } from '../types/ai'
 import { ConfirmModal } from '../components/ConfirmModal'
-import { ShareModal } from '../components/ShareModal'
+import { ShareModal, type PendingShareChanges } from '../components/ShareModal'
 import { AttachmentItem } from '../components/AttachmentItem'
 import { MessageBodyModal, MessageBodyView, type MessageBodyModalState } from '../components/MessageBodyModal'
 import { ActionButton } from '../components/ActionButton'
@@ -115,7 +115,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [shareCaseTarget, setShareCaseTarget] = useState<CaseSummary | null>(null)
   const [caseShares, setCaseShares] = useState<CaseShareRead[]>([])
   const [sharingCase, setSharingCase] = useState(false)
-  const [revokingCaseShareUserId, setRevokingCaseShareUserId] = useState<number | null>(null)
   const [reassignOwnerTarget, setReassignOwnerTarget] = useState<CaseSummary | null>(null)
   const [reassigningOwner, setReassigningOwner] = useState(false)
   const [conflictModal, setConflictModal] = useState<{ caseId: number; message: string } | null>(null)
@@ -131,17 +130,31 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     }
   }
 
-  async function handleShareCaseConfirm(userId: number, permission: 'read' | 'edit') {
+  async function handleConfirmCaseShares(changes: PendingShareChanges) {
     if (!shareCaseTarget) return
     setSharingCase(true)
-    try {
-      await shareCase(shareCaseTarget.case_id, userId, permission)
-      showToast('Expediente compartido.')
-      setCaseShares(await listCaseShares(shareCaseTarget.case_id))
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo compartir el expediente.', true)
-    } finally {
-      setSharingCase(false)
+    let failCount = 0
+    for (const add of changes.adds) {
+      try {
+        await shareCase(shareCaseTarget.case_id, add.userId, add.permission)
+      } catch {
+        failCount += 1
+      }
+    }
+    for (const userId of changes.removeUserIds) {
+      try {
+        await revokeCaseShare(shareCaseTarget.case_id, userId)
+      } catch {
+        failCount += 1
+      }
+    }
+    setCaseShares(await listCaseShares(shareCaseTarget.case_id))
+    setSharingCase(false)
+    if (failCount === 0) {
+      showToast('Cambios guardados.')
+      setShareCaseTarget(null)
+    } else {
+      showToast(`${failCount} cambio(s) no se pudieron aplicar — revisa la lista e intenta de nuevo.`, true)
     }
   }
 
@@ -177,19 +190,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     }
   }
 
-  async function handleRevokeCaseShare(userId: number) {
-    if (!shareCaseTarget) return
-    setRevokingCaseShareUserId(userId)
-    try {
-      await revokeCaseShare(shareCaseTarget.case_id, userId)
-      showToast('Acceso revocado.')
-      setCaseShares(await listCaseShares(shareCaseTarget.case_id))
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo revocar el acceso.', true)
-    } finally {
-      setRevokingCaseShareUserId(null)
-    }
-  }
 
   const [cases, setCases] = useState<CaseSummary[] | null>(null)
   const [openCaseIds, setOpenCaseIds] = useState<Set<number>>(new Set())
@@ -2719,10 +2719,8 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         description="Elige con quién compartir este expediente y con qué permiso."
         allowEditPermission
         existingShares={caseShares}
-        sharing={sharingCase}
-        revokingUserId={revokingCaseShareUserId}
-        onShare={handleShareCaseConfirm}
-        onRevoke={handleRevokeCaseShare}
+        saving={sharingCase}
+        onConfirm={handleConfirmCaseShares}
         onClose={() => setShareCaseTarget(null)}
       />
 
