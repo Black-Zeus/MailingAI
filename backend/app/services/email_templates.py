@@ -77,6 +77,27 @@ def render_mailbox_shared_email(
     )
 
 
+def render_case_message_email(
+    *,
+    subject: str,
+    case_title: str,
+    external_code: str | None,
+    case_status: str,
+    sent_by: str,
+    body_html: str,
+) -> str:
+    template = _env.get_template("case_message.html.jinja")
+    return template.render(
+        subject=subject,
+        case_title=case_title,
+        external_code=external_code,
+        case_status="Abierto" if case_status == "open" else "Cerrado",
+        sent_by=sent_by,
+        body_html=body_html,
+        current_year=datetime.now().year,
+    )
+
+
 def render_account_created_email(
     *,
     recipient_name: str,

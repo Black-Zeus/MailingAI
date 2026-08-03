@@ -17,7 +17,7 @@ from app.auth.dependencies import CurrentUserDep
 from app.db import get_pool
 from app.repositories import cases_repository, users_repository
 from app.schemas.cases import CaseDetail, CaseSendEmailResponse, TimelineEventRead
-from app.services import cases_service, n8n_client
+from app.services import cases_service, email_templates, n8n_client
 from app.services.markdown_render import html_to_plain_text, markdown_to_safe_html
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
@@ -378,13 +378,21 @@ async def send_case_email(
             }
         )
 
+    email_html = email_templates.render_case_message_email(
+        subject=subject,
+        case_title=detail.title,
+        external_code=detail.external_code,
+        case_status=detail.status,
+        sent_by=user.display_name or user.email_address,
+        body_html=markdown_to_safe_html(body),
+    )
     try:
         await n8n_client.send_case_email(
             mailbox_account_id=mailbox_account_id,
             to=to_list,
             cc=cc_list,
             subject=subject,
-            body=markdown_to_safe_html(body),
+            body=email_html,
             attachments=email_attachments,
         )
     except n8n_client.SendEmailError as exc:
