@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { listUserDirectory } from '../api/client'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 import type { UserDirectoryEntry } from '../types/users'
+import { LabeledButton } from './LabeledButton'
 
 interface ReassignOwnerModalProps {
   open: boolean
@@ -22,7 +23,8 @@ export function ReassignOwnerModal({
   onConfirm,
   onClose,
 }: ReassignOwnerModalProps) {
-  useBodyScrollLock(open)
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onClose)
   const [directory, setDirectory] = useState<UserDirectoryEntry[]>([])
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -49,16 +51,23 @@ export function ReassignOwnerModal({
 
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal medium">
+      <div
+        className="modal medium"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          <h3>Reasignar dueño de "{caseTitle}"</h3>
+          <h3 id={titleId}>Reasignar dueño de "{caseTitle}"</h3>
           {previousOwnerLabel && (
             <p style={{ color: 'var(--muted)', fontSize: 13 }}>
               Este expediente quedó a nombre de un admin tras eliminarse una cuenta — el dueño original era{' '}
               <strong>{previousOwnerLabel}</strong>.
             </p>
           )}
-          <div className="field full" style={{ marginTop: 12 }}>
+          <div className="field full mt-5">
             <label htmlFor="reassign-owner-input">Nuevo dueño</label>
             <input
               id="reassign-owner-input"
@@ -79,15 +88,13 @@ export function ReassignOwnerModal({
               ))}
             </datalist>
           </div>
-          {error && <p className="form-error" style={{ marginTop: 10 }}>{error}</p>}
+          {error && <p className="form-error mt-4">{error}</p>}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn-labeled" onClick={onClose}>
-            ✕ Cancelar
-          </button>
-          <button type="button" className="btn primary btn-labeled" disabled={reassigning} onClick={handleConfirm}>
-            {reassigning ? 'Reasignando…' : '✓ Reasignar'}
-          </button>
+          <LabeledButton onClick={onClose}>✕ Cancelar</LabeledButton>
+          <LabeledButton variant="primary" loading={reassigning} loadingText="Reasignando…" onClick={handleConfirm}>
+            ✓ Reasignar
+          </LabeledButton>
         </div>
       </div>
     </div>

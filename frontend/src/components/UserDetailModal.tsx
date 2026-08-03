@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { clearMailboxOwner, listMailboxes, listUserMailboxes, revokeMailboxShare, shareMailbox } from '../api/client'
 import { useToast } from '../context/ToastContext'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 import { ActionButton } from './ActionButton'
+import { LabeledButton } from './LabeledButton'
 import { Undo2, X } from 'lucide-react'
 import type { UserRead, UserMailboxAccessEntry } from '../types/users'
 import type { MailboxAccountRead } from '../types/mailboxes'
@@ -16,7 +17,8 @@ interface UserDetailModalProps {
 const DATALIST_ID = 'user-detail-mailbox-options'
 
 export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
-  useBodyScrollLock(open)
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, () => handleCancel())
   const { showToast } = useToast()
   const [access, setAccess] = useState<UserMailboxAccessEntry[]>([])
   const [allMailboxes, setAllMailboxes] = useState<MailboxAccountRead[]>([])
@@ -147,9 +149,16 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
 
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal medium">
+      <div
+        className="modal medium"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          <h3>{user ? user.display_name || user.email_address : 'Usuario'}</h3>
+          <h3 id={titleId}>{user ? user.display_name || user.email_address : 'Usuario'}</h3>
           {user && <p>{user.email_address} · {user.role === 'admin' ? 'Admin' : 'Usuario'} · {user.enabled ? 'Activo' : 'Desactivado'}</p>}
 
           <h3 style={{ marginTop: 20, fontSize: 13 }}>Compartir un buzón nuevo</h3>
@@ -157,6 +166,7 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
             <div className="field full">
               <input
                 type="text"
+                aria-label="Buscar buzón para compartir"
                 list={DATALIST_ID}
                 placeholder="Escribe el nombre o email del buzón…"
                 value={query}
@@ -165,15 +175,17 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
               />
               <datalist id={DATALIST_ID}>
                 {selectableMailboxes.map((m) => (
-                  <option key={m.mailbox_account_id} value={labelFor(m)} />
+                  <option key={m.mailbox_account_id} value={labelFor(m)}>
+                    {labelFor(m)}
+                  </option>
                 ))}
               </datalist>
             </div>
           </div>
-          <div className="actions" style={{ marginTop: 10 }}>
-            <button type="button" className="btn primary btn-labeled" disabled={saving} onClick={handleStageAdd}>
+          <div className="actions mt-4">
+            <LabeledButton variant="primary" disabled={saving} onClick={handleStageAdd}>
               ＋ Agregar a la lista
-            </button>
+            </LabeledButton>
           </div>
 
           <h3 style={{ marginTop: 24, fontSize: 13 }}>Buzones a los que tiene acceso</h3>
@@ -187,10 +199,10 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
               <table>
                 <thead>
                   <tr>
-                    <th>Buzón</th>
-                    <th>Correo</th>
-                    <th style={{ width: 130 }}>Relación</th>
-                    <th style={{ width: 76 }}></th>
+                    <th scope="col">Buzón</th>
+                    <th scope="col">Correo</th>
+                    <th scope="col" style={{ width: 130 }}>Relación</th>
+                    <th scope="col" style={{ width: 76 }} aria-label="Acciones"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,7 +215,7 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
                         <td>
                           {a.relation === 'owner' ? 'Dueño' : 'Solo lectura'}
                           {isPendingRemoval && (
-                            <span className="badge failed" style={{ marginLeft: 6 }}>
+                            <span className="badge failed ml-2">
                               se quitará
                             </span>
                           )}
@@ -235,7 +247,7 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
                       <td className="mono" style={{ fontSize: 12 }}>{m.email_address || '—'}</td>
                       <td>
                         Solo lectura
-                        <span className="badge success" style={{ marginLeft: 6 }}>
+                        <span className="badge success ml-2">
                           nuevo
                         </span>
                       </td>
@@ -256,17 +268,16 @@ export function UserDetailModal({ open, user, onClose }: UserDetailModalProps) {
           </p>
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn-labeled" disabled={saving} onClick={handleCancel}>
-            ✕ Cancelar
-          </button>
-          <button
-            type="button"
-            className="btn primary btn-labeled"
-            disabled={saving || !hasPendingChanges}
+          <LabeledButton disabled={saving} onClick={handleCancel}>✕ Cancelar</LabeledButton>
+          <LabeledButton
+            variant="primary"
+            disabled={!hasPendingChanges}
+            loading={saving}
+            loadingText="Guardando…"
             onClick={handleConfirm}
           >
-            {saving ? 'Guardando…' : '✓ Confirmar'}
-          </button>
+            ✓ Confirmar
+          </LabeledButton>
         </div>
       </div>
     </div>

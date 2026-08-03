@@ -605,13 +605,13 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
         <table className="table-wide">
           <thead>
             <tr>
-              <th>Trabajo</th>
-              <th>Operación</th>
-              <th>Buzón</th>
-              <th>Estado</th>
-              <th>Mensajes</th>
-              <th>Creación</th>
-              <th></th>
+              <th scope="col">Trabajo</th>
+              <th scope="col">Operación</th>
+              <th scope="col">Buzón</th>
+              <th scope="col">Estado</th>
+              <th scope="col">Mensajes</th>
+              <th scope="col">Creación</th>
+              <th scope="col" aria-label="Acciones"></th>
             </tr>
           </thead>
           <tbody>
@@ -752,14 +752,14 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                         {job.job_type === 'discover_mail_folders' && (
                           <>
                             {foldersError && <p className="form-error">{foldersError}</p>}
-                            {loadingFolders && <p style={{ color: 'var(--muted)' }}>Cargando carpetas…</p>}
+                            {loadingFolders && <p className="text-muted">Cargando carpetas…</p>}
                             {folders && <FolderTree nodes={folders} selected={new Set()} onChange={() => {}} readOnly />}
                           </>
                         )}
                         {job.job_type === 'generate_activity_charts' && (
                           <>
                             {job.chart_id === null ? (
-                              <p style={{ color: 'var(--muted)' }}>
+                              <p className="text-muted">
                                 Este trabajo no tiene un gráfico vinculado (probablemente se ejecutó antes de esta mejora).
                               </p>
                             ) : (
@@ -775,10 +775,10 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                           <>
                         {resultsError && <p className="form-error">{resultsError}</p>}
                         {loadingResultsId === job.job_id && (
-                          <p style={{ color: 'var(--muted)' }}>Cargando resultados…</p>
+                          <p className="text-muted">Cargando resultados…</p>
                         )}
                         {results[job.job_id] && results[job.job_id].length === 0 && (
-                          <p style={{ color: 'var(--muted)' }}>
+                          <p className="text-muted">
                             Este trabajo no encontró mensajes con esos parámetros.
                           </p>
                         )}
@@ -832,22 +832,23 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                             </div>
                             {getFilteredResults(job.job_id).length === 0 &&
                               ((results[job.job_id]?.length ?? 0) === 0 && job.result_count ? (
-                                <p style={{ color: 'var(--muted)' }}>
+                                <p className="text-muted">
                                   Este trabajo indexó {job.result_count} mensaje(s) en su momento, pero ya no
                                   aparecen aquí — probablemente un trabajo más reciente con fechas solapadas los
                                   volvió a traer, y quedaron asociados a ese trabajo en vez de a este. Los mensajes
                                   siguen indexados igual, solo cambió a qué trabajo se atribuyen.
                                 </p>
                               ) : (
-                                <p style={{ color: 'var(--muted)' }}>Ningún mensaje coincide con el filtro.</p>
+                                <p className="text-muted">Ningún mensaje coincide con el filtro.</p>
                               ))}
                             {getFilteredResults(job.job_id).length > 0 && (
                             <table className="table-wide">
                               <thead>
                                 <tr>
-                                  <th style={{ width: 28 }}>
+                                  <th scope="col" style={{ width: 28 }}>
                                     <input
                                       type="checkbox"
+                                      aria-label="Seleccionar todos los mensajes"
                                       checked={
                                         getFilteredResults(job.job_id).length > 0 &&
                                         getFilteredResults(job.job_id).every((m) => selectedByJob[job.job_id]?.has(m.message_id))
@@ -855,12 +856,12 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                       onChange={() => toggleSelectAll(job.job_id, getFilteredResults(job.job_id))}
                                     />
                                   </th>
-                                  <th>Asunto</th>
-                                  <th>De</th>
-                                  <th>Enviado</th>
-                                  <th>Carpeta</th>
-                                  <th>Adjuntos</th>
-                                  <th></th>
+                                  <th scope="col">Asunto</th>
+                                  <th scope="col">De</th>
+                                  <th scope="col">Enviado</th>
+                                  <th scope="col">Carpeta</th>
+                                  <th scope="col">Adjuntos</th>
+                                  <th scope="col" aria-label="Acciones"></th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -869,6 +870,7 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                     <td>
                                       <input
                                         type="checkbox"
+                                        aria-label={`Seleccionar mensaje: ${m.subject || '(sin asunto)'}`}
                                         checked={selectedByJob[job.job_id]?.has(m.message_id) ?? false}
                                         onChange={() => toggleSelected(job.job_id, m.message_id)}
                                       />
@@ -878,10 +880,10 @@ export function JobsView({ refreshSignal, onCreateNew, onCreateCase }: JobsViewP
                                     <td>{formatDateTime(m.sent_datetime)}</td>
                                     <td>{m.folder_path || '—'}</td>
                                     <td>
-                                      {!m.has_attachments && <span style={{ color: 'var(--muted)' }}>Sin adjunto</span>}
+                                      {!m.has_attachments && <span className="text-muted">Sin adjunto</span>}
                                       {m.has_attachments && m.attachments.length === 0 && (
                                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                          <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
+                                          <span className="text-muted">Adjunto no trazado</span>
                                           <ActionButton
                                             icon={Paperclip}
                                             label={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}

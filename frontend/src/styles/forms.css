@@ -1,0 +1,108 @@
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px;
+}
+
+.field.full {
+  grid-column: 1 / -1;
+}
+
+.search-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px;
+  align-items: start;
+}
+
+label {
+  display: block;
+  margin: 0 0 7px;
+  color: var(--label-text);
+  font-size: var(--text-base);
+  font-weight: 650;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  color: var(--text);
+  background: var(--surface-input);
+  padding: 11px 12px;
+  transition: 0.15s border-color, 0.15s box-shadow;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 78px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.12);
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  background: rgba(8, 17, 31, 0.45);
+  border-radius: 10px;
+  color: var(--label-text);
+  font-size: var(--text-base);
+}
+
+.check input {
+  width: 15px;
+  accent-color: var(--accent);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 5px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.toolbar input {
+  max-width: 390px;
+}
+
+.toolbar select {
+  width: 180px;
+}

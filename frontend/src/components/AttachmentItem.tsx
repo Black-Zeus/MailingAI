@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, downloadAttachmentBlob } from '../api/client'
 import { useToast } from '../context/ToastContext'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 import { ActionButton } from './ActionButton'
+import { LabeledButton } from './LabeledButton'
 import { Download, Eye, KeyRound } from 'lucide-react'
 
 interface AttachmentItemProps {
@@ -63,7 +64,7 @@ export function AttachmentItem({
   const [loading, setLoading] = useState(false)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  useBodyScrollLock(modalOpen)
+  const modalRef = useModalBehavior(modalOpen, () => setModalOpen(false))
   const [hash, setHash] = useState<string | null>(contentSha256 ?? null)
   const blobUrlRef = useRef<string | null>(null)
 
@@ -155,14 +156,19 @@ export function AttachmentItem({
 
       {modalOpen && blobUrl && (
         <div className="modal-backdrop open">
-          <div className="modal" style={{ width: 'min(900px, 95vw)' }}>
+          <div
+            className="modal xwide"
+            ref={modalRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label={fileName}
+          >
             <div className="modal-body" style={{ padding: 0 }}>
               <iframe src={blobUrl} title={fileName} style={{ width: '100%', height: '80vh', border: 0 }} />
             </div>
             <div className="modal-actions">
-              <button type="button" className="btn btn-labeled" onClick={() => setModalOpen(false)}>
-                ✕ Cerrar
-              </button>
+              <LabeledButton onClick={() => setModalOpen(false)}>✕ Cerrar</LabeledButton>
             </div>
           </div>
         </div>

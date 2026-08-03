@@ -72,10 +72,10 @@ export function DashboardView({ onOpenCase }: DashboardViewProps) {
   }
 
   if (loading) {
-    return <p style={{ color: 'var(--muted)' }}>Cargando resumen…</p>
+    return <p className="text-muted">Cargando resumen…</p>
   }
   if (!stats) {
-    return <p style={{ color: 'var(--muted)' }}>No se pudo cargar el resumen.</p>
+    return <p className="text-muted">No se pudo cargar el resumen.</p>
   }
 
   const outcomeRows = Object.entries(stats.by_outcome).sort((a, b) => b[1] - a[1])
@@ -95,9 +95,9 @@ export function DashboardView({ onOpenCase }: DashboardViewProps) {
         <table>
           <thead>
             <tr>
-              <th style={{ width: 40 }}></th>
-              <th>Conclusión</th>
-              <th style={{ width: 140 }}>Expedientes</th>
+              <th scope="col" style={{ width: 40 }} aria-label="Expandir"></th>
+              <th scope="col">Conclusión</th>
+              <th scope="col" style={{ width: 140 }}>Expedientes</th>
             </tr>
           </thead>
           <tbody>
@@ -127,6 +127,7 @@ export function DashboardView({ onOpenCase }: DashboardViewProps) {
                           <p style={{ color: 'var(--muted)', fontSize: 12.5, margin: '8px 0' }}>Sin expedientes.</p>
                         )}
                         {loadingOutcome !== outcome && rows && rows.length > 0 && (
+                          <div className="table-wrap">
                           <table style={{ margin: '6px 0' }}>
                             <tbody>
                               {rows.map((c) => (
@@ -149,6 +150,7 @@ export function DashboardView({ onOpenCase }: DashboardViewProps) {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         )}
                       </td>
                     </tr>

@@ -1,3 +1,7 @@
+import { useId } from 'react'
+import { useModalBehavior } from '../utils/modalScrollLock'
+import { LabeledButton } from './LabeledButton'
+
 interface MarkdownHelpModalProps {
   open: boolean
   onClose: () => void
@@ -19,21 +23,30 @@ const EXAMPLES: Array<{ syntax: string; result: string }> = [
 ]
 
 export function MarkdownHelpModal({ open, onClose }: MarkdownHelpModalProps) {
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onClose)
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal wide">
+      <div
+        className="modal wide"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          <h3>Formato Markdown</h3>
+          <h3 id={titleId}>Formato Markdown</h3>
           <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
             Estos campos admiten Markdown — se convierte a formato visual al guardar o al enviar. Referencia rápida
             de lo más usado:
           </p>
-          <div className="panel table-wrap" style={{ marginTop: 12 }}>
+          <div className="panel table-wrap mt-5">
             <table>
               <thead>
                 <tr>
-                  <th>Escribís</th>
-                  <th>Se ve como</th>
+                  <th scope="col">Escribís</th>
+                  <th scope="col">Se ve como</th>
                 </tr>
               </thead>
               <tbody>
@@ -50,9 +63,7 @@ export function MarkdownHelpModal({ open, onClose }: MarkdownHelpModalProps) {
           </div>
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn small btn-labeled" onClick={onClose}>
-            ✕ Cerrar
-          </button>
+          <LabeledButton size="sm" onClick={onClose}>✕ Cerrar</LabeledButton>
         </div>
       </div>
     </div>

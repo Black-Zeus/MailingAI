@@ -69,7 +69,7 @@ import {
 } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 
 interface ProviderFormState {
   label: string
@@ -150,7 +150,7 @@ export function SettingsView() {
   const [userDirectory, setUserDirectory] = useState<UserDirectoryEntry[]>([])
   const [connectModalOpen, setConnectModalOpen] = useState(false)
   const [newMailboxLabel, setNewMailboxLabel] = useState('')
-  useBodyScrollLock(formOpen || connectModalOpen)
+  useModalBehavior(formOpen || connectModalOpen)
   const [connecting, setConnecting] = useState(false)
   const [togglingMailboxId, setTogglingMailboxId] = useState<number | null>(null)
   const [claimingMailboxId, setClaimingMailboxId] = useState<number | null>(null)
@@ -959,10 +959,10 @@ export function SettingsView() {
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: 140 }}></th>
-                    <th>Buzón</th>
-                    <th>Dueño</th>
-                    <th style={{ width: 250 }}></th>
+                    <th scope="col" style={{ width: 140 }} aria-label="Estado"></th>
+                    <th scope="col">Buzón</th>
+                    <th scope="col">Dueño</th>
+                    <th scope="col" style={{ width: 250 }} aria-label="Acciones"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -988,10 +988,10 @@ export function SettingsView() {
                             {m.email_address || '—'}
                           </div>
                         </td>
-                        <td style={{ fontSize: 12.5 }}>
+                        <td>
                           {ownerLabel(m.owner_user_id)}
                           {m.is_notification_sender && (
-                            <span className="badge success" style={{ marginLeft: 6 }}>
+                            <span className="badge success ml-2">
                               notificaciones
                             </span>
                           )}
@@ -1053,7 +1053,7 @@ export function SettingsView() {
               </table>
             </div>
 
-            <div className="actions" style={{ marginTop: 14 }}>
+            <div className="actions mt-6">
               <button type="button" className="btn primary btn-labeled" onClick={openConnectModal}>
                 ＋ Conectar cuenta nueva
               </button>
@@ -1098,7 +1098,7 @@ export function SettingsView() {
                     </option>
                   ))}
                 </select>
-                <div className="actions" style={{ marginTop: 10 }}>
+                <div className="actions mt-4">
                   <button
                     type="button"
                     className="btn primary btn-labeled"
@@ -1156,11 +1156,11 @@ export function SettingsView() {
                   <table>
                     <thead>
                       <tr>
-                        <th style={{ width: 40 }}></th>
-                        <th>Buzón</th>
-                        <th style={{ width: 110 }}></th>
-                        <th style={{ width: 100 }}>Correos</th>
-                        <th>Solicitada</th>
+                        <th scope="col" style={{ width: 40 }} aria-label="Expandir"></th>
+                        <th scope="col">Buzón</th>
+                        <th scope="col" style={{ width: 110 }} aria-label="Estado"></th>
+                        <th scope="col" style={{ width: 100 }}>Correos</th>
+                        <th scope="col">Solicitada</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1210,7 +1210,7 @@ export function SettingsView() {
           </div>
         </div>
 
-        <div className="panel" style={{ marginTop: 16 }}>
+        <div className="panel mt-7">
           <div className="panel-head">
             <h3>Sincronización delta de buzones</h3>
           </div>
@@ -1247,12 +1247,12 @@ export function SettingsView() {
                   <table>
                     <thead>
                       <tr>
-                        <th style={{ width: 120 }}></th>
-                        <th>Nombre</th>
-                        <th style={{ width: 190 }}>Tipo</th>
-                        <th>Modelo</th>
-                        <th>Servidor / API key</th>
-                        <th style={{ width: 210 }}></th>
+                        <th scope="col" style={{ width: 120 }} aria-label="Estado"></th>
+                        <th scope="col">Nombre</th>
+                        <th scope="col" style={{ width: 190 }}>Tipo</th>
+                        <th scope="col">Modelo</th>
+                        <th scope="col">Servidor / API key</th>
+                        <th scope="col" style={{ width: 210 }} aria-label="Acciones"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1316,7 +1316,7 @@ export function SettingsView() {
                   </table>
                 </div>
 
-                <div className="actions" style={{ marginTop: 14 }}>
+                <div className="actions mt-6">
                   <button type="button" className="btn btn-labeled" onClick={openCreateForm}>
                     ＋ Agregar proveedor
                   </button>
@@ -1348,7 +1348,7 @@ export function SettingsView() {
                     activos de antes. Cámbiala a "Permitir proveedores externos" recién cuando quieras probar uno de
                     verdad.
                   </p>
-                  <div className="actions" style={{ marginTop: 10 }}>
+                  <div className="actions mt-4">
                     <button
                       type="button"
                       className="btn primary btn-labeled"
@@ -1429,7 +1429,7 @@ export function SettingsView() {
                   </option>
                 ))}
               </select>
-              <div className="actions" style={{ marginTop: 10 }}>
+              <div className="actions mt-4">
                 <button
                   type="button"
                   className="btn primary btn-labeled"
@@ -1441,7 +1441,7 @@ export function SettingsView() {
               </div>
             </div>
 
-            <div className="actions" style={{ marginTop: 16 }}>
+            <div className="actions mt-7">
               <button
                 type="button"
                 className="btn btn-labeled"
@@ -1475,13 +1475,13 @@ export function SettingsView() {
                 <table>
                   <thead>
                     <tr>
-                      <th style={{ width: 320 }}>Email</th>
-                      <th style={{ width: 220 }}>Nombre</th>
-                      <th>Rol</th>
-                      <th>Método</th>
-                      <th>Estado</th>
-                      <th>Último login</th>
-                      <th style={{ width: 250 }}></th>
+                      <th scope="col" style={{ width: 320 }}>Email</th>
+                      <th scope="col" style={{ width: 220 }}>Nombre</th>
+                      <th scope="col">Rol</th>
+                      <th scope="col">Método</th>
+                      <th scope="col">Estado</th>
+                      <th scope="col">Último login</th>
+                      <th scope="col" style={{ width: 250 }} aria-label="Acciones"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1502,7 +1502,7 @@ export function SettingsView() {
                             {u.auth_method === 'local' ? `Local (${u.username})` : 'SSO'}
                           </span>
                           {u.auth_method === 'local' && u.must_change_password && (
-                            <span className="badge failed" style={{ marginLeft: 6 }}>
+                            <span className="badge failed ml-2">
                               debe cambiar contraseña
                             </span>
                           )}
@@ -1545,7 +1545,7 @@ export function SettingsView() {
               </div>
             )}
 
-            <div className="actions" style={{ marginTop: 14 }}>
+            <div className="actions mt-6">
               <button type="button" className="btn primary btn-labeled" onClick={openCreateUserForm}>
                 ＋ Crear usuario
               </button>
@@ -1555,11 +1555,11 @@ export function SettingsView() {
       )}
 
       <div className={`modal-backdrop${formOpen ? ' open' : ''}`}>
-        <div className="modal" style={{ width: 'min(560px, 95vw)' }}>
+        <div className="modal compact">
           <form onSubmit={handleSubmit}>
             <div className="modal-body">
               <h3>{editingId ? 'Editar proveedor' : 'Agregar proveedor'}</h3>
-              <div className="form-grid" style={{ marginTop: 14 }}>
+              <div className="form-grid mt-6">
                 <div className="field">
                   <label htmlFor="provider-label">Nombre</label>
                   <input
@@ -1638,7 +1638,9 @@ export function SettingsView() {
                     <>
                       <datalist id="provider-model-options">
                         {fetchedModels.map((m) => (
-                          <option key={m} value={m} />
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
                         ))}
                       </datalist>
                       <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
@@ -1662,7 +1664,7 @@ export function SettingsView() {
       </div>
 
       <div className={`modal-backdrop${connectModalOpen ? ' open' : ''}`}>
-        <div className="modal" style={{ width: 'min(480px, 95vw)' }}>
+        <div className="modal narrow">
           <div className="modal-body">
             <h3>Conectar cuenta nueva</h3>
             <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>
@@ -1670,13 +1672,12 @@ export function SettingsView() {
               Microsoft en una ventana aparte — Microsoft no permite mostrar su login dentro de esta página. La
               ventana se cierra sola al terminar y esta lista se actualiza automáticamente.
             </p>
-            <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-grid mt-6">
               <div className="field full">
                 <label htmlFor="mailbox-label">Nombre de la cuenta</label>
                 <input
                   id="mailbox-label"
                   type="text"
-                  autoFocus
                   placeholder='ej. "Mesa" o "Agente Juan Pérez"'
                   value={newMailboxLabel}
                   onChange={(e) => setNewMailboxLabel(e.target.value)}
@@ -1800,7 +1801,7 @@ export function SettingsView() {
         }}
         onConfirm={handleResetPassword}
       >
-        <div className="field full" style={{ marginTop: 10 }}>
+        <div className="field full mt-4">
           <label htmlFor="reset-password-value">Contraseña temporal nueva</label>
           <input
             id="reset-password-value"

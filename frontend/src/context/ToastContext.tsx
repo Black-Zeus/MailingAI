@@ -30,6 +30,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         className={`toast${toast.visible ? ' show' : ''}`}
         style={{ borderColor: toast.error ? 'var(--danger)' : 'var(--accent)' }}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
       >
         {toast.message}
       </div>

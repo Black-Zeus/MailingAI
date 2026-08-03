@@ -1,4 +1,6 @@
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useId } from 'react'
+import { useModalBehavior } from '../utils/modalScrollLock'
+import { LabeledButton } from './LabeledButton'
 
 // El HTML del correo viene de Graph, no es contenido nuestro -- se muestra en
 // un iframe sandboxed sin "allow-scripts" para que nada de ese HTML pueda
@@ -17,7 +19,7 @@ export function MessageBodyView({ content, contentType }: { content: string; con
           minHeight: 260,
           border: '1px solid var(--line)',
           borderRadius: 8,
-          background: '#fff',
+          background: 'var(--on-accent-text)',
         }}
       />
     )
@@ -40,12 +42,20 @@ export function MessageBodyModal({
   state: MessageBodyModalState | null
   onClose: () => void
 }) {
-  useBodyScrollLock(state !== null)
+  const titleId = useId()
+  const modalRef = useModalBehavior(state !== null, onClose)
   return (
     <div className={`modal-backdrop${state ? ' open' : ''}`}>
-      <div className="modal wide">
+      <div
+        className="modal wide"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          <h3>{state?.subject}</h3>
+          <h3 id={titleId}>{state?.subject}</h3>
           {state &&
             (state.bodyContent ? (
               <MessageBodyView content={state.bodyContent} contentType={state.bodyContentType} />
@@ -63,9 +73,7 @@ export function MessageBodyModal({
               🔗 Ver correo
             </a>
           )}
-          <button type="button" className="btn small btn-labeled" onClick={onClose}>
-            ✕ Cerrar
-          </button>
+          <LabeledButton size="sm" onClick={onClose}>✕ Cerrar</LabeledButton>
         </div>
       </div>
     </div>

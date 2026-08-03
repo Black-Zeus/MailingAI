@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { listUserDirectory } from '../api/client'
 import { useAuth } from '../context/AuthContext'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 import type { UserDirectoryEntry } from '../types/users'
 import { ActionButton } from './ActionButton'
+import { LabeledButton } from './LabeledButton'
 import { X } from 'lucide-react'
 
 export interface ShareEntry {
@@ -40,7 +41,8 @@ export function ShareModal({
   onRevoke,
   onClose,
 }: ShareModalProps) {
-  useBodyScrollLock(open)
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onClose)
   const { user: currentUser } = useAuth()
   const [directory, setDirectory] = useState<UserDirectoryEntry[]>([])
   const [query, setQuery] = useState('')
@@ -82,12 +84,19 @@ export function ShareModal({
 
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal medium">
+      <div
+        className="modal medium"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          <h3>{title}</h3>
+          <h3 id={titleId}>{title}</h3>
           {description && <p>{description}</p>}
 
-          <div className="form-grid" style={{ marginTop: 16 }}>
+          <div className="form-grid mt-7">
             <div className="field full">
               <label htmlFor="share-user-input">Usuario</label>
               <input
@@ -124,12 +133,12 @@ export function ShareModal({
             )}
           </div>
 
-          {formError && <p className="form-error" style={{ marginTop: 10 }}>{formError}</p>}
+          {formError && <p className="form-error mt-4">{formError}</p>}
 
-          <div className="actions" style={{ marginTop: 12 }}>
-            <button type="button" className="btn primary btn-labeled" disabled={sharing} onClick={handleShareClick}>
-              {sharing ? 'Compartiendo…' : '＋ Compartir'}
-            </button>
+          <div className="actions mt-5">
+            <LabeledButton variant="primary" loading={sharing} loadingText="Compartiendo…" onClick={handleShareClick}>
+              ＋ Compartir
+            </LabeledButton>
           </div>
 
           <h3 style={{ marginTop: 24, fontSize: 13 }}>Ya tienen acceso</h3>
@@ -141,9 +150,9 @@ export function ShareModal({
               <table>
                 <thead>
                   <tr>
-                    <th>Usuario</th>
-                    <th style={{ width: 170 }}>Permiso</th>
-                    <th style={{ width: 76 }}></th>
+                    <th scope="col">Usuario</th>
+                    <th scope="col" style={{ width: 170 }}>Permiso</th>
+                    <th scope="col" style={{ width: 76 }} aria-label="Acciones"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -169,9 +178,7 @@ export function ShareModal({
           )}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn-labeled" onClick={onClose}>
-            ✕ Cerrar
-          </button>
+          <LabeledButton onClick={onClose}>✕ Cerrar</LabeledButton>
         </div>
       </div>
     </div>

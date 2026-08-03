@@ -41,10 +41,10 @@ export function MailboxIndexProgress({ run }: MailboxIndexProgressProps) {
           <table>
             <thead>
               <tr>
-                <th>Carpeta</th>
-                <th style={{ width: 110 }}></th>
-                <th style={{ width: 140 }}>Correos</th>
-                <th>Detalle</th>
+                <th scope="col">Carpeta</th>
+                <th scope="col" style={{ width: 110 }} aria-label="Estado"></th>
+                <th scope="col" style={{ width: 140 }}>Correos</th>
+                <th scope="col">Detalle</th>
               </tr>
             </thead>
             <tbody>

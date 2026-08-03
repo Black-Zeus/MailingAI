@@ -312,8 +312,16 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
       </div>
       <div className="panel" style={{ padding: 21, marginBottom: 20 }}>
         <div
+          role="button"
+          tabIndex={0}
           style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
           onClick={() => setFiltersOpen((o) => !o)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setFiltersOpen((o) => !o)
+            }
+          }}
         >
           <strong style={{ fontSize: 14 }}>
             Filtros de búsqueda
@@ -337,7 +345,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
 
         {filtersOpen && (
           <>
-        <div className="field full" style={{ marginTop: 16 }}>
+        <div className="field full mt-7">
           <label htmlFor="text_search">Buscar texto (asunto + cuerpo)</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -369,7 +377,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
           </p>
         </div>
 
-        <div className="form-grid" style={{ marginTop: 16 }}>
+        <div className="form-grid mt-7">
           <div className="field">
             <label htmlFor="folder_id">Carpeta</label>
             <select
@@ -455,7 +463,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
           </div>
         </div>
 
-        <div className="field full" style={{ marginTop: 16 }}>
+        <div className="field full mt-7">
           <label htmlFor="attachment_pattern">Patrón de adjuntos (regex)</label>
           <input
             id="attachment_pattern"
@@ -503,14 +511,14 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
         <table className="table-wide">
           <thead>
             <tr>
-              <th>#</th>
-              <th></th>
-              <th>Buzón</th>
-              <th>Asunto</th>
-              <th>De</th>
-              <th>Enviado</th>
-              <th>Carpeta</th>
-              <th>Adjuntos</th>
+              <th scope="col">#</th>
+              <th scope="col" aria-label="Acciones"></th>
+              <th scope="col">Buzón</th>
+              <th scope="col">Asunto</th>
+              <th scope="col">De</th>
+              <th scope="col">Enviado</th>
+              <th scope="col">Carpeta</th>
+              <th scope="col">Adjuntos</th>
             </tr>
           </thead>
           <tbody>
@@ -524,11 +532,11 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
             {messages?.map((message, index) => (
               <Fragment key={message.message_id}>
                 <tr style={{ cursor: 'pointer' }} onClick={() => toggleExpand(message.message_id)}>
-                  <td className="mono" style={{ color: 'var(--muted)' }}>
+                  <td className="mono text-muted">
                     {index + 1}
                   </td>
                   <td>{expandedId === message.message_id ? '▾' : '▸'}</td>
-                  <td>{message.mailbox_label || <span style={{ color: 'var(--muted)' }}>sin etiquetar</span>}</td>
+                  <td>{message.mailbox_label || <span className="text-muted">sin etiquetar</span>}</td>
                   <td>{message.subject || '(sin asunto)'}</td>
                   <td>{message.from_name || message.from_address || '—'}</td>
                   <td>{formatDateTime(message.sent_datetime)}</td>
@@ -540,7 +548,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                     <td colSpan={8} style={{ padding: 0 }}>
                       <div className="error-detail" style={{ borderTop: '1px solid var(--line)', background: 'transparent' }}>
                         {detailError && <p className="form-error">{detailError}</p>}
-                        {!detailError && !detail && <p style={{ color: 'var(--muted)' }}>Cargando detalle…</p>}
+                        {!detailError && !detail && <p className="text-muted">Cargando detalle…</p>}
                         {detail && (
                           <dl className="error-grid">
                             <dt>Para</dt>
@@ -577,7 +585,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
                                 <dt>Adjuntos</dt>
                                 <dd>
                                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                    <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
+                                    <span className="text-muted">Adjunto no trazado</span>
                                     <ActionButton
                                       icon={Paperclip}
                                       label={retracingMessageId === detail.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
@@ -713,7 +721,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
           )}
 
           {clearScope === 'date_range' && (
-            <div className="field-row" style={{ marginTop: 10 }}>
+            <div className="field-row mt-4">
               <label htmlFor="clearMsgFrom">
                 Desde
                 <input

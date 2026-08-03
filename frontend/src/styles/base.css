@@ -1,0 +1,31 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(111, 140, 255, 0.13), transparent 28%),
+    radial-gradient(circle at 95% 18%, rgba(89, 212, 198, 0.1), transparent 24%),
+    var(--bg);
+  /* "Inter" no se carga en ningún lado (sin @font-face ni <link>) -- caía
+     al fallback del sistema de todas formas. Se saca del stack en vez de
+     dejarla como una intención de diseño no cumplida: la fuente del
+     sistema es la decisión real, consistente con no depender de fuentes
+     externas (mismo criterio que el resto del proyecto para no tener
+     dependencias de red fuera de lo estrictamente necesario). */
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

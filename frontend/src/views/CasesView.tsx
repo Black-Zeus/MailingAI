@@ -81,7 +81,7 @@ import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { formatDateTime, groupTimelineEvents, stripCorreoSuffix } from '../utils/timeline'
 import { toEndOfDayISO, toStartOfDayISO } from '../utils/dates'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 
 const SEED_TYPE_LABELS: Record<SeedType, string> = {
   conversation_id: 'ID de conversación',
@@ -397,7 +397,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [mergeTitle, setMergeTitle] = useState('')
   const [merging, setMerging] = useState(false)
 
-  useBodyScrollLock(bulkOpen || formOpen || sendEmailTarget !== null || mergeModalOpen)
+  useModalBehavior(bulkOpen || formOpen || sendEmailTarget !== null || mergeModalOpen)
 
   const [associatingMail, setAssociatingMail] = useState(false)
   const [formSearchMailbox, setFormSearchMailbox] = useState(false)
@@ -1436,7 +1436,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
           <div className="modal-body">
             <h3>Crear expedientes en lote</h3>
             <p>Un código/palabra clave por línea</p>
-            <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-grid mt-6">
               <div className="field full">
                 <label htmlFor="bulkKeywords">Códigos (uno por línea)</label>
                 <textarea
@@ -1537,8 +1537,8 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                   <table>
                     <thead>
                       <tr>
-                        <th>Código</th>
-                        <th>Estado</th>
+                        <th scope="col">Código</th>
+                        <th scope="col">Estado</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1546,7 +1546,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         <tr key={p.item_id}>
                           <td className="mono">{p.keyword}</td>
                           <td>
-                            {p.status === 'pendiente' && <span style={{ color: 'var(--muted)' }}>Pendiente</span>}
+                            {p.status === 'pendiente' && <span className="text-muted">Pendiente</span>}
                             {p.status === 'creando' && <span>{p.detail || 'Creando…'}</span>}
                             {p.status === 'listo' && <span className="badge success">Listo — {p.detail}</span>}
                             {p.status === 'error' && <span className="badge failed">Error — {p.detail}</span>}
@@ -1575,7 +1575,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
             <div className="modal-body">
               <h3>Nuevo expediente</h3>
               <p>Correlación por hilo, código CR o mensaje puntual</p>
-              <div className="form-grid" style={{ marginTop: 14 }}>
+              <div className="form-grid mt-6">
                 <div className="field full">
                   <label htmlFor="caseTitle">Título</label>
                   <input id="caseTitle" type="text" value={title} onChange={(e) => setTitle(e.target.value)} required />
@@ -1757,7 +1757,18 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
             const aiRunning = analyzingId === c.case_id || latestAiRun?.status === 'running'
             return (
               <article id={`case-card-${c.case_id}`} className={`case-card${isOpen ? ' open' : ''}`} key={c.case_id}>
-                <div className="case-summary" onClick={() => toggleCase(c.case_id)}>
+                <div
+                  className="case-summary"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleCase(c.case_id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      toggleCase(c.case_id)
+                    }
+                  }}
+                >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                     <input
                       type="checkbox"
@@ -1885,12 +1896,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                       />
                     </div>
                     {mailboxSearchOpenIds.has(c.case_id) && (
-                      <div className="add-message-search" style={{ marginTop: 10 }}>
-                        <label>
+                      <div className="add-message-search mt-4">
+                        <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 8px' }}>
                           "Buscar correos relacionados" solo busca dentro de lo ya indexado localmente — esto en
                           cambio trae correos nuevos desde el buzón real (Graph) que contengan el texto en asunto o
                           cuerpo, los indexa, y automáticamente vuelve a correlacionar el expediente.
-                        </label>
+                        </p>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                           <div className="field" style={{ flex: 1, minWidth: 200 }}>
                             <label htmlFor={`mailbox-query-${c.case_id}`} style={{ fontSize: 11 }}>
@@ -2041,9 +2052,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                       </div>
 
                       <div className="add-message-search">
-                        <label>Agregar correo puntual al expediente (busca entre los correos ya indexados, por asunto)</label>
+                        <label htmlFor={`add-message-search-${c.case_id}`}>
+                          Agregar correo puntual al expediente (busca entre los correos ya indexados, por asunto)
+                        </label>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <input
+                            id={`add-message-search-${c.case_id}`}
                             type="text"
                             placeholder="Asunto contiene..."
                             value={addMessageQuery[c.case_id] || ''}
@@ -2180,12 +2194,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                             />
                           </div>
                           {detail && detail.notes.length > 0 && (
-                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                            <div className="panel table-wrap mt-5">
                             <table>
                               <thead>
                                 <tr>
-                                  <th style={{ width: 160 }}>Fecha</th>
-                                  <th>Nota</th>
+                                  <th scope="col" style={{ width: 160 }}>Fecha</th>
+                                  <th scope="col">Nota</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2252,13 +2266,13 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                             />
                           </div>
                           {detail && detail.evidence.length > 0 && (
-                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                            <div className="panel table-wrap mt-5">
                             <table>
                               <thead>
                                 <tr>
-                                  <th style={{ width: 160 }}>Fecha</th>
-                                  <th>Glosa</th>
-                                  <th style={{ width: 210 }}>Evidencia</th>
+                                  <th scope="col" style={{ width: 160 }}>Fecha</th>
+                                  <th scope="col">Glosa</th>
+                                  <th scope="col" style={{ width: 210 }}>Evidencia</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2308,13 +2322,13 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                             <p style={{ color: 'var(--muted)', marginTop: 10 }}>Sin cambios registrados todavía.</p>
                           )}
                           {loadingAuditLogId !== c.case_id && (auditLogs[c.case_id]?.length ?? 0) > 0 && (
-                            <div className="panel table-wrap" style={{ marginTop: 12 }}>
+                            <div className="panel table-wrap mt-5">
                               <table>
                                 <thead>
                                   <tr>
-                                    <th style={{ width: 160 }}>Fecha</th>
-                                    <th style={{ width: 180 }}>Usuario</th>
-                                    <th>Cambio</th>
+                                    <th scope="col" style={{ width: 160 }}>Fecha</th>
+                                    <th scope="col" style={{ width: 180 }}>Usuario</th>
+                                    <th scope="col">Cambio</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -2483,7 +2497,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                               )}
                               {eventMessage && eventMessage.has_attachments && eventMessage.attachments.length === 0 && (
                                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-                                  <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
+                                  <span className="text-muted">Adjunto no trazado</span>
                                   <ActionButton
                                     icon={Paperclip}
                                     label={retracingMessageId === eventMessage.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
@@ -2551,15 +2565,15 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         <table className="table-wide">
                           <thead>
                             <tr>
-                              <th>Buzón</th>
-                              <th>Asunto</th>
-                              <th>De</th>
-                              <th>Enviado</th>
-                              <th title="100% = mismo hilo o manual · 70% = palabra clave · 40% = heurística">
+                              <th scope="col">Buzón</th>
+                              <th scope="col">Asunto</th>
+                              <th scope="col">De</th>
+                              <th scope="col">Enviado</th>
+                              <th scope="col" title="100% = mismo hilo o manual · 70% = palabra clave · 40% = heurística">
                                 Confianza
                               </th>
-                              <th>Adjuntos</th>
-                              <th>Contenido</th>
+                              <th scope="col">Adjuntos</th>
+                              <th scope="col">Contenido</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2567,16 +2581,16 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                               return (
                                 <Fragment key={m.message_id}>
                                   <tr>
-                                    <td>{m.mailbox_label || <span style={{ color: 'var(--muted)' }}>sin etiquetar</span>}</td>
+                                    <td>{m.mailbox_label || <span className="text-muted">sin etiquetar</span>}</td>
                                     <td>{m.subject || '(sin asunto)'}</td>
                                     <td>{m.from_address || '—'}</td>
                                     <td>{formatDateTime(m.sent_datetime)}</td>
                                     <td>{(m.confidence * 100).toFixed(0)}%</td>
                                     <td>
-                                      {!m.has_attachments && <span style={{ color: 'var(--muted)' }}>Sin adjunto</span>}
+                                      {!m.has_attachments && <span className="text-muted">Sin adjunto</span>}
                                       {m.has_attachments && m.attachments.length === 0 && (
                                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                          <span style={{ color: 'var(--muted)' }}>Adjunto no trazado</span>
+                                          <span className="text-muted">Adjunto no trazado</span>
                                           <ActionButton
                                             icon={Paperclip}
                                             label={retracingMessageId === m.message_id ? 'Recuperando…' : 'Recuperar adjuntos'}
@@ -2608,7 +2622,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                                         {(m.body_content || m.body_preview) ? (
                                           <ActionButton icon={Eye} label="Ver cuerpo" onClick={() => openBodyModal(m)} />
                                         ) : (
-                                          <span style={{ color: 'var(--muted)' }}>Sin contenido</span>
+                                          <span className="text-muted">Sin contenido</span>
                                         )}
                                         {m.web_link && (
                                           <ActionButton icon={ExternalLink} label="Ver correo" href={m.web_link} target="_blank" rel="noreferrer" />
@@ -2761,7 +2775,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
               Se prellena con los involucrados del último correo del expediente. El PDF del expediente se adjunta
               automáticamente si se deja marcada la casilla.
             </p>
-            <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-grid mt-6">
               <div className="field full">
                 <label htmlFor="sendEmailTo">Para</label>
                 <input
@@ -2894,7 +2908,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       </div>
 
       <div className={`modal-backdrop${mergeModalOpen ? ' open' : ''}`}>
-        <div className="modal" style={{ width: 'min(560px, 95vw)' }}>
+        <div className="modal compact">
           <div className="modal-body">
             <h3>Fusionar expedientes</h3>
             <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
@@ -2902,13 +2916,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
               {selectedCaseIds.size} expedientes seleccionados. <strong>Los expedientes origen se eliminan</strong> —
               queda un registro de la fusión en la línea de tiempo del expediente nuevo.
             </p>
-            <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-grid mt-6">
               <div className="field full">
                 <label htmlFor="merge-title">Nombre del expediente final</label>
                 <input
                   id="merge-title"
                   type="text"
-                  autoFocus
                   placeholder="ej. GFCH-260702220"
                   value={mergeTitle}
                   onChange={(e) => setMergeTitle(e.target.value)}

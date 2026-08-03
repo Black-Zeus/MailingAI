@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useId, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { useModalBehavior } from '../utils/modalScrollLock'
+import { LabeledButton } from './LabeledButton'
 
 interface ConfirmModalProps {
   open: boolean
@@ -28,29 +30,34 @@ export function ConfirmModal({
   onConfirm,
   confirming = false,
 }: ConfirmModalProps) {
-  useBodyScrollLock(open)
-  return (
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onCancel)
+  // Portal a document.body: algunos llamadores (ej. NotificationBell) viven
+  // dentro de un ancestro con backdrop-filter/filter, lo que crea un
+  // containing block nuevo para descendientes position:fixed y descentra el
+  // modal. El portal lo saca de esa jerarquía siempre, sin costo para los
+  // llamadores que ya estaban fuera de ese caso.
+  return createPortal(
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal">
+      <div className="modal" ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="modal-body">
-          <h3>{title}</h3>
+          <h3 id={titleId}>{title}</h3>
           <p>{description}</p>
           {children}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn btn-labeled" onClick={onCancel}>
-            ✕ Cancelar
-          </button>
-          <button
-            type="button"
-            className={`btn btn-labeled${confirmDanger ? ' danger' : ' primary'}`}
+          <LabeledButton onClick={onCancel}>✕ Cancelar</LabeledButton>
+          <LabeledButton
+            variant={confirmDanger ? 'danger' : 'primary'}
             onClick={onConfirm}
-            disabled={confirming}
+            loading={confirming}
+            loadingText={confirmingLabel}
           >
-            {confirming ? confirmingLabel : `${confirmIcon} ${confirmLabel}`}
-          </button>
+            {`${confirmIcon} ${confirmLabel}`}
+          </LabeledButton>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

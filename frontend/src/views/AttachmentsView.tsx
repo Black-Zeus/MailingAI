@@ -118,6 +118,7 @@ export function AttachmentsView() {
       <div className="toolbar">
         <input
           type="text"
+          aria-label="Nombre de archivo contiene"
           placeholder="Nombre de archivo contiene..."
           value={filters.file_name_contains}
           onChange={(e) => setFilters((f) => ({ ...f, file_name_contains: e.target.value }))}
@@ -126,6 +127,7 @@ export function AttachmentsView() {
         />
         <input
           type="text"
+          aria-label="Extensión"
           placeholder="Extensión (ej. pdf)"
           value={filters.extension}
           onChange={(e) => setFilters((f) => ({ ...f, extension: e.target.value }))}
@@ -133,15 +135,18 @@ export function AttachmentsView() {
         />
         <input
           type="date"
+          aria-label="Fecha desde"
           value={filters.date_from}
           onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
         />
         <input
           type="date"
+          aria-label="Fecha hasta"
           value={filters.date_to}
           onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
         />
         <select
+          aria-label="Filtrar por hash verificado"
           value={filters.only_hashed}
           onChange={(e) => setFilters((f) => ({ ...f, only_hashed: e.target.value as FilterState['only_hashed'] }))}
         >
@@ -150,6 +155,7 @@ export function AttachmentsView() {
           <option value="no">Solo sin descargar todavía</option>
         </select>
         <select
+          aria-label="Filtrar por vínculo a expediente"
           value={filters.only_linked_to_case}
           onChange={(e) =>
             setFilters((f) => ({ ...f, only_linked_to_case: e.target.value as FilterState['only_linked_to_case'] }))
@@ -170,14 +176,14 @@ export function AttachmentsView() {
         <table className="table-wide">
           <thead>
             <tr>
-              <th>Buzón</th>
-              <th>Archivo</th>
-              <th>Correo</th>
-              <th>De</th>
-              <th>Fecha</th>
-              <th>Carpeta</th>
-              <th>Expediente</th>
-              <th style={{ width: 60 }}></th>
+              <th scope="col">Buzón</th>
+              <th scope="col">Archivo</th>
+              <th scope="col">Correo</th>
+              <th scope="col">De</th>
+              <th scope="col">Fecha</th>
+              <th scope="col">Carpeta</th>
+              <th scope="col">Expediente</th>
+              <th scope="col" style={{ width: 60 }} aria-label="Acciones"></th>
             </tr>
           </thead>
           <tbody>
@@ -190,7 +196,7 @@ export function AttachmentsView() {
             )}
             {attachments?.map((a) => (
               <tr key={`${a.message_id}-${a.attachment_id}`}>
-                <td>{a.mailbox_label || <span style={{ color: 'var(--muted)' }}>sin etiquetar</span>}</td>
+                <td>{a.mailbox_label || <span className="text-muted">sin etiquetar</span>}</td>
                 <td>
                   <div className="attachment-tags">
                     <AttachmentItem

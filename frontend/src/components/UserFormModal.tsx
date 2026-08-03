@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useModalBehavior } from '../utils/modalScrollLock'
+import { LabeledButton } from './LabeledButton'
 import type { AuthMethod, UserRead } from '../types/users'
 import type { UserRole } from '../types/auth'
 
@@ -31,7 +32,8 @@ const EMPTY_VALUES: UserFormValues = {
 }
 
 export function UserFormModal({ open, mode, user, saving, onSubmit, onClose }: UserFormModalProps) {
-  useBodyScrollLock(open)
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onClose)
   const [values, setValues] = useState<UserFormValues>(EMPTY_VALUES)
 
   useEffect(() => {
@@ -61,13 +63,20 @@ export function UserFormModal({ open, mode, user, saving, onSubmit, onClose }: U
 
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal" style={{ width: 'min(480px, 95vw)' }}>
+      <div
+        className="modal narrow"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            <h3>{mode === 'create' ? 'Crear usuario' : 'Editar usuario'}</h3>
+            <h3 id={titleId}>{mode === 'create' ? 'Crear usuario' : 'Editar usuario'}</h3>
 
             {mode === 'create' && (
-              <div className="form-grid" style={{ marginTop: 14 }}>
+              <div className="form-grid mt-6">
                 <div className="field full">
                   <label htmlFor="user-auth-method">Método de acceso</label>
                   <select
@@ -95,7 +104,7 @@ export function UserFormModal({ open, mode, user, saving, onSubmit, onClose }: U
               </p>
             )}
 
-            <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="form-grid mt-6">
               <div className="field full">
                 <label htmlFor="user-email">Email</label>
                 <input
@@ -161,19 +170,23 @@ export function UserFormModal({ open, mode, user, saving, onSubmit, onClose }: U
 
               {mode === 'edit' && user?.auth_method === 'local' && (
                 <div className="field full">
-                  <label>Usuario</label>
-                  <input type="text" disabled value={user.username ?? ''} />
+                  <label htmlFor="user-username-readonly">Usuario</label>
+                  <input id="user-username-readonly" type="text" disabled value={user.username ?? ''} />
                 </div>
               )}
             </div>
           </div>
           <div className="modal-actions">
-            <button type="button" className="btn btn-labeled" onClick={onClose}>
-              ✕ Cancelar
-            </button>
-            <button type="submit" className="btn primary btn-labeled" disabled={saving || !canSubmit}>
-              {saving ? 'Guardando…' : mode === 'create' ? '＋ Crear usuario' : '✓ Guardar cambios'}
-            </button>
+            <LabeledButton onClick={onClose}>✕ Cancelar</LabeledButton>
+            <LabeledButton
+              type="submit"
+              variant="primary"
+              disabled={!canSubmit}
+              loading={saving}
+              loadingText="Guardando…"
+            >
+              {mode === 'create' ? '＋ Crear usuario' : '✓ Guardar cambios'}
+            </LabeledButton>
           </div>
         </form>
       </div>

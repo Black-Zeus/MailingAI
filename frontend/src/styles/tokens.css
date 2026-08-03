@@ -1,0 +1,85 @@
+:root {
+  --bg: #08111f;
+  --panel: #0e1a2d;
+  --panel-2: #12223a;
+  --line: #213652;
+  --text: #eef5ff;
+  --muted: #91a4bd;
+  --accent: #59d4c6;
+  --accent-2: #6f8cff;
+  --warning: #ffbe55;
+  --danger: #ff6b7a;
+  --success: #55d98b;
+  --shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
+  --radius: 16px;
+  --radius-sm: 10px;
+
+  /* Colores de texto sobre fondo tintado (badges, mensajes de error) --
+     antes hex sueltos repetidos (algunos casi idénticos por accidente, ej.
+     dos rosados de error a 1 unidad de diferencia). Los nombres siguen el
+     uso real, no una paleta genérica: cada badge de estado reutiliza el
+     mismo token entre las variantes que ya compartían el mismo color. */
+  --badge-running-text: #b8c6ff;
+  --badge-success-text: #85e9ae;
+  --badge-failed-text: #ff9ba6;
+  --badge-queued-text: #ffd288;
+  --badge-neutral-text: #c4d0df;
+  --error-text: #ffd4d9;
+  /* Blanco fijo -- para texto/fondos que necesitan contraste garantizado
+     sobre una superficie saturada (badge de contador, iframe de correo),
+     no varía con el tema como el resto de la paleta. */
+  --on-accent-text: #fff;
+  /* Texto/ícono oscuro sobre el degradé claro de acento (ícono de marca,
+     botón primario) -- antes dos valores casi idénticos (#06101d/#071321)
+     para el mismo propósito, sin relación entre sí. */
+  --on-accent-dark: #071321;
+  --surface-input: #091727;
+  --surface-tooltip: #0c1524;
+  --label-text: #b8c8dc;
+  --attachment-tag-text: #bceee8;
+
+  /* Escala de espaciado -- cubre los valores que ya se repetían en el
+     diseño real (no una grilla de 4/8 inventada de cero, que hubiera
+     obligado a cambiar valores existentes sin necesidad). Los valores que
+     no calzan en la escala (ej. 7px, 9px, 23px, usados una sola vez) se
+     dejan como literales a propósito -- forzarlos a la escala más cercana
+     cambiaría el diseño actual sin que nadie lo haya pedido. */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 18px;
+  --space-9: 20px;
+  --space-10: 24px;
+
+  /* Escala tipográfica -- mismo criterio: cubre los valores que ya existían
+     en el CSS base (0 cambios de tamaño real), sin inventar una progresión
+     matemática que hubiera forzado a redondear texto ya en producción. */
+  --text-2xs: 9px;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 15px;
+  --text-2xl: 19px;
+  --text-3xl: 22px;
+  --text-4xl: 25px;
+  --text-5xl: 27px;
+
+  /* z-index -- antes números mágicos repetidos por distintos componentes sin
+     coordinarse entre sí (el dropdown de notificaciones y el toast usaban
+     el mismo 40 "por casualidad"). Orden intencional: dropdown por debajo
+     del modal (si algo alguna vez lo tapa, es correcto que sea el modal);
+     toast por encima de todo (un aviso de éxito/error debe verse aunque se
+     haya disparado con un modal abierto). */
+  --z-dropdown: 20;
+  --z-modal: 30;
+  --z-toast: 45;
+  --z-tooltip: 60;
+
+  color-scheme: dark;
+}

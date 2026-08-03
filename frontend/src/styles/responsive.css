@@ -1,0 +1,82 @@
+/* Breakpoint "tablet/escritorio angosto" -- pensado para iPad y ventanas de
+   escritorio achicadas, no para celular (la app apunta a desktop y tablet,
+   ver docs de la sesión). Antes había un tercer breakpoint (720px) usado
+   por una sola regla (.search-scope-grid) sin relación con este ni con el
+   de abajo -- se fusionó dentro del de 760px. */
+@media (max-width: 1050px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kpis.kpis-6 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Breakpoint "compacto" -- tablet en vertical / ventana muy angosta. */
+@media (max-width: 760px) {
+  .search-scope-grid {
+    grid-template-columns: 1fr;
+  }
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  aside {
+    position: static;
+    height: auto;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand {
+    padding-bottom: 10px;
+  }
+  nav {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .nav-btn {
+    justify-content: center;
+    padding: 9px;
+    font-size: 0;
+  }
+  .nav-icon {
+    font-size: 17px;
+  }
+  .system-card {
+    display: none;
+  }
+  header {
+    top: 0;
+    height: 67px;
+    padding: 0 17px;
+  }
+  .scope-pill {
+    display: none;
+  }
+  .content {
+    padding: 20px 15px 35px;
+  }
+  .hero {
+    display: block;
+  }
+  .form-grid,
+  .check-grid {
+    grid-template-columns: 1fr;
+  }
+  .kpis {
+    grid-template-columns: 1fr 1fr;
+  }
+  .kpis.kpis-6 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar input,
+  .toolbar select {
+    max-width: none;
+    width: 100%;
+  }
+}

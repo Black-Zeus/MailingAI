@@ -1,0 +1,122 @@
+.btn {
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--panel-2);
+  padding: 10px 15px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.btn:hover {
+  filter: brightness(1.1);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.btn.primary {
+  border: 0;
+  color: var(--on-accent-dark);
+  background: linear-gradient(135deg, var(--accent), #79e2a6);
+}
+
+.btn.small {
+  padding: 7px 10px;
+  font-size: var(--text-base);
+}
+
+.btn.danger {
+  border-color: rgba(255, 107, 122, 0.5);
+  color: var(--error-text);
+  background: rgba(255, 107, 122, 0.1);
+}
+
+/* Botones de fila/tabla: solo ícono, ancho y alto fijos, tooltip al hover
+   con el texto de la acción (via data-tooltip). overflow-y de .table-wrap
+   quedó en "visible" justamente para que este tooltip no se recorte.
+   Usados siempre a través del componente compartido <ActionButton>, que es
+   quien elige el ícono (lucide-react) y arma data-tooltip/aria-label desde
+   un único `label` -- no se escriben a mano fuera de ese componente. */
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.icon-btn.icon-btn-sm {
+  width: 30px;
+  height: 30px;
+}
+
+.icon-btn svg {
+  flex-shrink: 0;
+}
+
+.icon-spin {
+  animation: icon-spin 0.8s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  background: var(--surface-tooltip);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  white-space: nowrap;
+  /* display:none (no visibility:hidden) -- un elemento visibility:hidden
+     sigue ocupando su caja geométrica y cuenta para el scrollable overflow
+     de cualquier ancestro con overflow:auto, así esté invisible. Centrado
+     sobre un botón de la última columna, el tooltip (más ancho que el
+     botón) se corría un poco más allá del borde de la tabla y forzaba un
+     scroll horizontal fantasma de unos pocos px. display:none saca la caja
+     del árbol de render por completo -- ya no cuenta para nada. */
+  display: none;
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+  box-shadow: var(--shadow);
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  display: block;
+}
+
+/* Botones de modal / barra de acciones: ícono + texto, ancho fijo (se
+   alinean entre sí, ej. Cancelar/Guardar del mismo modal quedan parejos). */
+.btn-labeled {
+  min-width: 132px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.btn-labeled.small {
+  min-width: 108px;
+}

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ApiError, getCase } from '../api/client'
 import type { CaseDetail } from '../types/cases'
 import { CASE_OUTCOME_LABELS } from '../types/cases'
 import { useToast } from '../context/ToastContext'
-import { useBodyScrollLock } from '../utils/modalScrollLock'
+import { useModalBehavior } from '../utils/modalScrollLock'
 import { formatDateTime } from '../utils/timeline'
+import { LabeledButton } from './LabeledButton'
 
 interface CaseDetailModalProps {
   open: boolean
@@ -13,7 +14,8 @@ interface CaseDetailModalProps {
 }
 
 export function CaseDetailModal({ open, caseId, onClose }: CaseDetailModalProps) {
-  useBodyScrollLock(open)
+  const titleId = useId()
+  const modalRef = useModalBehavior(open, onClose)
   const { showToast } = useToast()
   const [detail, setDetail] = useState<CaseDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -41,12 +43,19 @@ export function CaseDetailModal({ open, caseId, onClose }: CaseDetailModalProps)
 
   return (
     <div className={`modal-backdrop${open ? ' open' : ''}`}>
-      <div className="modal wide">
+      <div
+        className="modal wide"
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div className="modal-body">
-          {loading && <p style={{ color: 'var(--muted)' }}>Cargando…</p>}
+          <h3 id={titleId}>{detail?.title ?? 'Expediente'}</h3>
+          {loading && <p className="text-muted">Cargando…</p>}
           {!loading && detail && (
             <>
-              <h3>{detail.title}</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '4px 10px', margin: '10px 0', fontSize: 13 }}>
                 <strong>Estado</strong>
                 <span>{detail.status === 'open' ? 'Abierto' : 'Cerrado'}</span>
@@ -84,9 +93,7 @@ export function CaseDetailModal({ open, caseId, onClose }: CaseDetailModalProps)
           )}
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn small btn-labeled" onClick={onClose}>
-            ✕ Cerrar
-          </button>
+          <LabeledButton size="sm" onClick={onClose}>✕ Cerrar</LabeledButton>
         </div>
       </div>
     </div>
