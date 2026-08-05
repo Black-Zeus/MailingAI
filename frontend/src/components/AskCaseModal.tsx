@@ -8,7 +8,10 @@ import { Send, Trash2 } from 'lucide-react'
 
 interface QaTurn {
   question: string
-  answer: string
+  // null mientras la respuesta esta en vuelo -- ver loadHistory para por que
+  // nunca deberia persistir asi entre sesiones.
+  answer: string | null
+  error?: boolean
 }
 
 function storageKey(caseId: number): string {
@@ -20,7 +23,16 @@ function loadHistory(caseId: number): QaTurn[] {
     const raw = window.localStorage.getItem(storageKey(caseId))
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    // Un turno con answer=null solo puede venir de una pregunta que quedo en
+    // vuelo cuando se cerro el modal o se recargo la pagina -- ninguna
+    // request sigue corriendo a esta altura, asi que se marca como
+    // interrumpida en vez de mostrar un "Pensando..." que nunca va a resolver.
+    return (parsed as QaTurn[]).map((turn) =>
+      turn.answer === null
+        ? { ...turn, answer: 'La consulta se interrumpió antes de recibir respuesta.', error: true }
+        : turn
+    )
   } catch {
     return []
   }
@@ -64,15 +76,29 @@ export function AskCaseModal({ open, caseId, caseTitle, onClose }: AskCaseModalP
   async function handleSend() {
     const question = draft.trim()
     if (!question || caseId === null) return
+    setDraft('')
     setAsking(true)
+    // La pregunta entra al historial (y se persiste) apenas se envia, no
+    // recien cuando llega la respuesta -- asi si el modelo tarda, falla, o el
+    // usuario cierra el modal antes de que termine, la pregunta ya quedo
+    // reflejada en el chat en vez de perderse en silencio.
+    const pendingIndex = history.length
+    const withPending: QaTurn[] = [...history, { question, answer: null }]
+    setHistory(withPending)
+    saveHistory(caseId, withPending)
     try {
       const result = await askCaseQuestion(caseId, question)
-      const next = [...history, { question, answer: result.answer }]
+      const next = withPending.map((turn, idx) => (idx === pendingIndex ? { question, answer: result.answer } : turn))
       setHistory(next)
       saveHistory(caseId, next)
-      setDraft('')
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo responder la pregunta.', true)
+      const message = err instanceof ApiError ? err.message : 'No se pudo responder la pregunta.'
+      const next = withPending.map((turn, idx) =>
+        idx === pendingIndex ? { question, answer: message, error: true } : turn
+      )
+      setHistory(next)
+      saveHistory(caseId, next)
+      showToast(message, true)
     } finally {
       setAsking(false)
     }
@@ -111,7 +137,7 @@ export function AskCaseModal({ open, caseId, caseTitle, onClose }: AskCaseModalP
               ref={scrollRef}
               style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
             >
-              {history.length === 0 && !asking && (
+              {history.length === 0 && (
                 <p className="text-muted" style={{ fontSize: 12.5 }}>
                   Todavía no hiciste ninguna pregunta sobre este expediente.
                 </p>
@@ -131,23 +157,27 @@ export function AskCaseModal({ open, caseId, caseTitle, onClose }: AskCaseModalP
                   >
                     {qa.question}
                   </div>
-                  <div
-                    style={{
-                      alignSelf: 'flex-start',
-                      maxWidth: '80%',
-                      background: 'var(--panel-2)',
-                      border: '1px solid var(--line)',
-                      borderRadius: '12px 12px 12px 2px',
-                      padding: '9px 13px',
-                      fontSize: 13,
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
-                    {qa.answer}
-                  </div>
+                  {qa.answer === null ? (
+                    <p className="text-muted" style={{ fontSize: 12.5, margin: 0 }}>Pensando…</p>
+                  ) : (
+                    <div
+                      style={{
+                        alignSelf: 'flex-start',
+                        maxWidth: '80%',
+                        background: qa.error ? 'rgba(255, 107, 122, 0.1)' : 'var(--panel-2)',
+                        border: qa.error ? '1px solid rgba(255, 107, 122, 0.5)' : '1px solid var(--line)',
+                        color: qa.error ? 'var(--error-text)' : undefined,
+                        borderRadius: '12px 12px 12px 2px',
+                        padding: '9px 13px',
+                        fontSize: 13,
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {qa.answer}
+                    </div>
+                  )}
                 </div>
               ))}
-              {asking && <p className="text-muted" style={{ fontSize: 12.5 }}>Pensando…</p>}
             </div>
           </div>
           <div className="modal-actions">
