@@ -29,12 +29,31 @@ _MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
 _CORREO_SUFFIX_RE = re.compile(r"\s*\(correo:.*\)$")
 _FILENAME_UNSAFE_RE = re.compile(r'[\\/:*?"<>|]+')
 
+# Titulos de correo pegados desde Word/Outlook suelen traer tipografia
+# "inteligente" (guion largo, comillas curvas) que es perfectamente valida
+# como nombre de archivo pero rompe el header HTTP Content-Disposition --
+# Starlette lo codifica como latin-1 y esos caracteres no existen ahi
+# (UnicodeEncodeError, tumbaba la descarga entera del PDF). Se normalizan a
+# su equivalente ASCII antes de sanitizar.
+_SMART_PUNCTUATION = {
+    "–": "-", "—": "-",  # en dash, em dash
+    "‘": "'", "’": "'",  # comillas simples curvas
+    "“": '"', "”": '"',  # comillas dobles curvas
+}
+
 
 def _safe_filename(title: str) -> str:
     """Nombre de archivo a partir del titulo del expediente (ej.
     GFCH-260702620) en vez del case_id interno -- el id numerico no le dice
     nada al usuario que recibe el PDF."""
-    cleaned = _FILENAME_UNSAFE_RE.sub("_", title.strip())
+    normalized = title.strip()
+    for smart, plain in _SMART_PUNCTUATION.items():
+        normalized = normalized.replace(smart, plain)
+    cleaned = _FILENAME_UNSAFE_RE.sub("_", normalized)
+    # Red de seguridad: cualquier otro caracter fuera de latin-1 (emojis,
+    # simbolos raros) se reemplaza en vez de tumbar la respuesta -- mejor un
+    # "?" en el nombre del archivo que un 500 sin PDF.
+    cleaned = cleaned.encode("latin-1", errors="replace").decode("latin-1")
     return cleaned or "expediente"
 
 _MESES = {
