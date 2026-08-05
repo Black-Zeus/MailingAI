@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 
@@ -113,13 +114,65 @@ Reglas:
 """
 
 
+# Marca el borde entre "lo que esta persona escribio de nuevo" y "el hilo
+# citado que Outlook reinserta debajo" -- cubre tanto el formato en espanol
+# (De:/Enviado el:) como el que genera Outlook para Android en ingles
+# (From:/Sent:), que aparece mezclado en el mismo expediente cuando alguien
+# responde desde el celular.
+_QUOTE_MARKER_RE = re.compile(
+    r"\*\*(?:De|From):\*\*\s*(?P<sender>[^\n]+)\n\s*\*\*(?:Enviado el|Sent):\*\*",
+    re.IGNORECASE,
+)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+
+
+def _truncate_quoted_reply(body: str, known_addresses: set[str], known_names: set[str]) -> str:
+    """Corta un cuerpo de correo en el primer marcador de cita de Outlook
+    (ver _QUOTE_MARKER_RE) SOLO si el remitente citado ahi es alguien que ya
+    tiene su propio mensaje en este mismo expediente -- en ese caso el
+    contenido citado es 100% redundante (ya esta completo, mas abajo en el
+    contexto, como su propio mensaje) y ademas es peligroso dejarlo: un
+    intento anterior de sacar solo los parrafos duplicados (no el bloque
+    citado entero) termino borrando la respuesta real de una persona de
+    ADENTRO de la cita que otra persona hizo de su correo, dejando un
+    fragmento huerfano que el modelo le atribuyo a la persona equivocada.
+    Cortar en el borde de la cita, entero, evita ese problema de raiz --
+    nunca queda un pedazo de cita a medio sacar.
+
+    Si el remitente citado NO tiene su propio mensaje en el expediente (un
+    reenvio "FYI" a alguien que no estaba en el hilo original), se deja el
+    cuerpo intacto -- ahi la cita puede ser el UNICO registro de esa
+    historia previa que existe en este expediente."""
+    match = _QUOTE_MARKER_RE.search(body)
+    if match is None:
+        return body
+    sender_line = match.group("sender")
+    email_match = _EMAIL_RE.search(sender_line)
+    if email_match:
+        is_known = email_match.group(0).lower() in known_addresses
+    else:
+        is_known = sender_line.strip().lower() in known_names
+    if not is_known:
+        return body
+    return body[: match.start()].strip()
+
+
 def _build_case_qa_context(messages: list[asyncpg.Record]) -> str:
-    lines = []
+    known_addresses = {m["from_address"].lower() for m in messages if m["from_address"]}
+    known_names = {m["from_name"].strip().lower() for m in messages if m["from_name"]}
+
+    bodies = []
     for m in messages:
-        sender = _format_sender(m["from_name"], m["from_address"])
-        sent = m["sent_datetime"].isoformat() if m["sent_datetime"] else "fecha desconocida"
         raw_body = m["body_content"] or ""
         body = html_to_ai_context(raw_body) if m["body_content_type"] == "html" else raw_body.strip()
+        bodies.append(_truncate_quoted_reply(body, known_addresses, known_names))
+
+    # Se muestra al modelo el correo mas reciente primero, que es lo que en
+    # general importa mas para contestar ("¿cual es el estado actual?").
+    lines = []
+    for m, body in zip(reversed(messages), reversed(bodies)):
+        sender = _format_sender(m["from_name"], m["from_address"])
+        sent = m["sent_datetime"].isoformat() if m["sent_datetime"] else "fecha desconocida"
         lines.append(
             f"### [{sent}] {sender} -- {m['subject'] or '(sin asunto)'}\n{body or '(sin contenido)'}"
         )
