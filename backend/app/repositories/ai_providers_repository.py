@@ -1,6 +1,6 @@
 import asyncpg
 
-_FIELDS = "provider_id, label, provider_type, base_url, model, api_key, is_active, created_at, updated_at"
+_FIELDS = "provider_id, label, provider_type, base_url, model, num_ctx, api_key, is_active, created_at, updated_at"
 
 
 async def list_providers(pool: asyncpg.Pool) -> list[asyncpg.Record]:
@@ -28,15 +28,16 @@ async def create_provider(
     provider_type: str,
     base_url: str | None,
     model: str,
+    num_ctx: int,
     api_key: str | None,
 ) -> asyncpg.Record:
     query = f"""
-        INSERT INTO mailing.ai_providers (label, provider_type, base_url, model, api_key)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO mailing.ai_providers (label, provider_type, base_url, model, num_ctx, api_key)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING {_FIELDS};
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, label, provider_type, base_url, model, api_key)
+        return await conn.fetchrow(query, label, provider_type, base_url, model, num_ctx, api_key)
 
 
 async def update_provider(
@@ -47,27 +48,28 @@ async def update_provider(
     provider_type: str,
     base_url: str | None,
     model: str,
+    num_ctx: int,
     api_key: str | None,
     keep_existing_api_key: bool,
 ) -> asyncpg.Record | None:
     if keep_existing_api_key:
         query = f"""
             UPDATE mailing.ai_providers
-            SET label = $2, provider_type = $3, base_url = $4, model = $5, updated_at = now()
+            SET label = $2, provider_type = $3, base_url = $4, model = $5, num_ctx = $6, updated_at = now()
             WHERE provider_id = $1
             RETURNING {_FIELDS};
         """
         async with pool.acquire() as conn:
-            return await conn.fetchrow(query, provider_id, label, provider_type, base_url, model)
+            return await conn.fetchrow(query, provider_id, label, provider_type, base_url, model, num_ctx)
 
     query = f"""
         UPDATE mailing.ai_providers
-        SET label = $2, provider_type = $3, base_url = $4, model = $5, api_key = $6, updated_at = now()
+        SET label = $2, provider_type = $3, base_url = $4, model = $5, num_ctx = $6, api_key = $7, updated_at = now()
         WHERE provider_id = $1
         RETURNING {_FIELDS};
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, provider_id, label, provider_type, base_url, model, api_key)
+        return await conn.fetchrow(query, provider_id, label, provider_type, base_url, model, num_ctx, api_key)
 
 
 async def delete_provider(pool: asyncpg.Pool, provider_id: int) -> bool:

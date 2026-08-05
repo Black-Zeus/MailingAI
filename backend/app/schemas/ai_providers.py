@@ -6,12 +6,20 @@ from pydantic import BaseModel, Field
 AIProviderType = Literal["ollama", "openai", "anthropic"]
 AIPolicy = Literal["local_only", "allow_external"]
 
+# Lista cerrada (no un rango libre) para que la UI la muestre como select y
+# evitar que alguien meta un numero arbitrario que Ollama rechace o que
+# dispare el mismo problema de memoria que motivo este campo (ver migracion
+# 20260804_0001 y ollama_provider.py).
+NumCtxOption = Literal[2048, 4096, 8192, 16384, 32768, 65536]
+_DEFAULT_NUM_CTX: NumCtxOption = 8192
+
 
 class AIProviderCreate(BaseModel):
     label: str = Field(min_length=1)
     provider_type: AIProviderType
     base_url: str | None = None
     model: str = Field(min_length=1)
+    num_ctx: NumCtxOption = _DEFAULT_NUM_CTX
     api_key: str | None = None
 
 
@@ -20,6 +28,7 @@ class AIProviderUpdate(BaseModel):
     provider_type: AIProviderType
     base_url: str | None = None
     model: str = Field(min_length=1)
+    num_ctx: NumCtxOption = _DEFAULT_NUM_CTX
     api_key: str | None = None  # None = mantener la key ya guardada sin cambios
 
 
@@ -29,6 +38,7 @@ class AIProviderRead(BaseModel):
     provider_type: AIProviderType
     base_url: str | None
     model: str
+    num_ctx: int
     has_api_key: bool
     is_active: bool
     created_at: datetime

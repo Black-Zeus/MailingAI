@@ -594,6 +594,7 @@ export interface AIProviderPayload {
   provider_type: AIProviderType
   base_url?: string | null
   model: string
+  num_ctx: number
   api_key?: string | null
 }
 

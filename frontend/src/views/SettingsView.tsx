@@ -45,7 +45,7 @@ import {
   updateUser,
 } from '../api/client'
 import type { AIHealthResponse, AIPolicy, AIProviderRead, AIProviderType } from '../types/ai'
-import { AI_POLICY_LABELS, AI_PROVIDER_TYPE_LABELS, isLocalProviderType } from '../types/ai'
+import { AI_POLICY_LABELS, AI_PROVIDER_TYPE_LABELS, isLocalProviderType, NUM_CTX_OPTIONS } from '../types/ai'
 import type { MailboxAccountRead, MailboxDeletionImpact, MailboxShareRead } from '../types/mailboxes'
 import type { UserDeletionImpact, UserDirectoryEntry, UserRead } from '../types/users'
 import type { TenantConfigRead } from '../types/tenants'
@@ -83,6 +83,7 @@ interface ProviderFormState {
   provider_type: AIProviderType
   base_url: string
   model: string
+  num_ctx: number
   api_key: string
 }
 
@@ -91,6 +92,7 @@ const EMPTY_FORM: ProviderFormState = {
   provider_type: 'ollama',
   base_url: '',
   model: '',
+  num_ctx: 8192,
   api_key: '',
 }
 
@@ -561,6 +563,7 @@ export function SettingsView() {
       provider_type: provider.provider_type,
       base_url: provider.base_url ?? '',
       model: provider.model,
+      num_ctx: provider.num_ctx,
       api_key: '',
     })
     setFetchedModels(null)
@@ -607,6 +610,7 @@ export function SettingsView() {
         provider_type: form.provider_type,
         base_url: form.base_url.trim() || null,
         model: form.model.trim(),
+        num_ctx: form.num_ctx,
         api_key: form.api_key.trim() || null,
       }
       if (editingId) {
@@ -1578,7 +1582,15 @@ export function SettingsView() {
                               {isLocalProviderType(p.provider_type) ? '🏠 Local' : '☁ Externo'}
                             </span>
                           </td>
-                          <td className="mono">{p.model}</td>
+                          <td className="mono">
+                            {p.model}
+                            {p.provider_type === 'ollama' && (
+                              <span className="text-muted" style={{ fontSize: 11 }}>
+                                {' '}
+                                ({p.num_ctx.toLocaleString('es-CL')} ctx)
+                              </span>
+                            )}
+                          </td>
                           <td className="mono" style={{ fontSize: 12 }}>
                             {p.provider_type === 'ollama' ? p.base_url || '—' : p.has_api_key ? 'API key guardada' : 'sin API key'}
                           </td>
@@ -1892,6 +1904,26 @@ export function SettingsView() {
                       value={form.base_url}
                       onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
                     />
+                  </div>
+                )}
+                {form.provider_type === 'ollama' && (
+                  <div className="field full">
+                    <label htmlFor="provider-num-ctx">Tamaño de contexto (num_ctx)</label>
+                    <select
+                      id="provider-num-ctx"
+                      value={form.num_ctx}
+                      onChange={(e) => setForm((f) => ({ ...f, num_ctx: Number(e.target.value) }))}
+                    >
+                      {NUM_CTX_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n.toLocaleString('es-CL')} tokens
+                        </option>
+                      ))}
+                    </select>
+                    <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
+                      Cuánto contenido de un expediente puede ver el modelo por consulta. Valores más altos usan más
+                      memoria en el servidor Ollama — se aplica en la siguiente consulta, sin reiniciar nada.
+                    </p>
                   </div>
                 )}
                 {form.provider_type !== 'ollama' && (

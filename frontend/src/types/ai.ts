@@ -28,11 +28,18 @@ export interface AIProviderRead {
   provider_type: AIProviderType
   base_url: string | null
   model: string
+  num_ctx: number
   has_api_key: boolean
   is_active: boolean
   created_at: string
   updated_at: string
 }
+
+// Debe reflejar exactamente NumCtxOption del backend (schemas/ai_providers.py).
+// Lista cerrada, no un input libre -- ver la migracion 20260804_0001 para el
+// porque (valores fuera de esta lista pueden hacer que Ollama truncate el
+// contexto en silencio o generen presion de memoria excesiva).
+export const NUM_CTX_OPTIONS = [2048, 4096, 8192, 16384, 32768, 65536] as const
 
 export interface AIHealthResponse {
   policy: string

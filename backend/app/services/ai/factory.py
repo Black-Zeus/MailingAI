@@ -12,7 +12,11 @@ def get_provider_instance(record: Mapping[str, object]) -> AIProvider:
     base_url = record["base_url"]
     api_key = record["api_key"]
     if provider_type == "ollama":
-        return OllamaProvider(base_url or "http://ollama:11434", model)
+        # .get() en vez de record["num_ctx"]: list_available_models() arma un
+        # dict ad-hoc sin ese campo (solo necesita listar modelos, no correr
+        # una consulta real) -- OllamaProvider ya sabe usar su propio default
+        # si viene None.
+        return OllamaProvider(base_url or "http://ollama:11434", model, record.get("num_ctx"))
     if provider_type == "openai":
         if not api_key:
             raise ProviderUnavailableError("El proveedor OpenAI no tiene una API key configurada.")

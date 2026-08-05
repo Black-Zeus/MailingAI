@@ -32,6 +32,7 @@ def to_provider_read(record: asyncpg.Record) -> AIProviderRead:
         provider_type=record["provider_type"],
         base_url=record["base_url"],
         model=record["model"],
+        num_ctx=record["num_ctx"],
         has_api_key=bool(record["api_key"]),
         is_active=record["is_active"],
         created_at=record["created_at"],
@@ -59,6 +60,7 @@ async def create_provider(pool: asyncpg.Pool, payload: AIProviderCreate) -> AIPr
         provider_type=payload.provider_type,
         base_url=payload.base_url,
         model=payload.model,
+        num_ctx=payload.num_ctx,
         api_key=payload.api_key,
     )
     return to_provider_read(record)
@@ -78,6 +80,7 @@ async def update_provider(pool: asyncpg.Pool, provider_id: int, payload: AIProvi
         provider_type=payload.provider_type,
         base_url=payload.base_url,
         model=payload.model,
+        num_ctx=payload.num_ctx,
         api_key=payload.api_key,
         keep_existing_api_key=keep_existing_api_key,
     )
