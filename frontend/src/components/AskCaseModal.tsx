@@ -12,6 +12,11 @@ interface QaTurn {
   // nunca deberia persistir asi entre sesiones.
   answer: string | null
   error?: boolean
+  // true si el expediente no entraba completo en el contexto del modelo y la
+  // respuesta se armo con los fragmentos mas relevantes en vez del contenido
+  // completo -- a diferencia del contexto completo, un fallo de recall aca
+  // es invisible para el modelo, asi que vale la pena que el auditor lo sepa.
+  usedRetrieval?: boolean
 }
 
 function storageKey(caseId: number): string {
@@ -88,7 +93,9 @@ export function AskCaseModal({ open, caseId, caseTitle, onClose }: AskCaseModalP
     saveHistory(caseId, withPending)
     try {
       const result = await askCaseQuestion(caseId, question)
-      const next = withPending.map((turn, idx) => (idx === pendingIndex ? { question, answer: result.answer } : turn))
+      const next = withPending.map((turn, idx) =>
+        idx === pendingIndex ? { question, answer: result.answer, usedRetrieval: result.used_retrieval } : turn
+      )
       setHistory(next)
       saveHistory(caseId, next)
     } catch (err) {
@@ -160,20 +167,26 @@ export function AskCaseModal({ open, caseId, caseTitle, onClose }: AskCaseModalP
                   {qa.answer === null ? (
                     <p className="text-muted" style={{ fontSize: 12.5, margin: 0 }}>Pensando…</p>
                   ) : (
-                    <div
-                      style={{
-                        alignSelf: 'flex-start',
-                        maxWidth: '80%',
-                        background: qa.error ? 'rgba(255, 107, 122, 0.1)' : 'var(--panel-2)',
-                        border: qa.error ? '1px solid rgba(255, 107, 122, 0.5)' : '1px solid var(--line)',
-                        color: qa.error ? 'var(--error-text)' : undefined,
-                        borderRadius: '12px 12px 12px 2px',
-                        padding: '9px 13px',
-                        fontSize: 13,
-                        whiteSpace: 'pre-wrap',
-                      }}
-                    >
-                      {qa.answer}
+                    <div style={{ alignSelf: 'flex-start', maxWidth: '80%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div
+                        style={{
+                          background: qa.error ? 'rgba(255, 107, 122, 0.1)' : 'var(--panel-2)',
+                          border: qa.error ? '1px solid rgba(255, 107, 122, 0.5)' : '1px solid var(--line)',
+                          color: qa.error ? 'var(--error-text)' : undefined,
+                          borderRadius: '12px 12px 12px 2px',
+                          padding: '9px 13px',
+                          fontSize: 13,
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {qa.answer}
+                      </div>
+                      {qa.usedRetrieval && !qa.error && (
+                        <p className="text-muted" style={{ fontSize: 11, margin: 0 }}>
+                          ⚠ Expediente extenso: respuesta armada con los fragmentos más relevantes, no con el
+                          contenido completo — si no encontrás lo que buscabas, revisá el expediente a mano.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
