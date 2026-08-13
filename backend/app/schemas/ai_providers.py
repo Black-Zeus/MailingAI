@@ -5,6 +5,11 @@ from pydantic import BaseModel, Field
 
 AIProviderType = Literal["ollama", "openai", "anthropic"]
 AIPolicy = Literal["local_only", "allow_external"]
+# "chat" = usado para preguntas/analisis de expedientes, "embeddings" = usado
+# para busqueda semantica de expedientes grandes. Un mismo proveedor puede
+# tener los dos roles a la vez -- no existe un "activar" generico, cada rol
+# se prende/apaga por separado (ver ai_providers_service.activate_role).
+AIProviderRole = Literal["chat", "embeddings"]
 
 # Lista cerrada (no un rango libre) para que la UI la muestre como select y
 # evitar que alguien meta un numero arbitrario que Ollama rechace o que
@@ -12,6 +17,7 @@ AIPolicy = Literal["local_only", "allow_external"]
 # 20260804_0001 y ollama_provider.py).
 NumCtxOption = Literal[2048, 4096, 8192, 16384, 32768, 65536]
 _DEFAULT_NUM_CTX: NumCtxOption = 8192
+_DEFAULT_EMBEDDINGS_MODEL = "bge-m3"
 
 
 class AIProviderCreate(BaseModel):
@@ -20,6 +26,10 @@ class AIProviderCreate(BaseModel):
     base_url: str | None = None
     model: str = Field(min_length=1)
     num_ctx: NumCtxOption = _DEFAULT_NUM_CTX
+    # Independiente de "model" (que es el modelo de chat) -- solo se usa si
+    # este proveedor termina con el rol de embeddings activo, pero se guarda
+    # siempre para que quede listo apenas se active ese rol.
+    embeddings_model: str = Field(default=_DEFAULT_EMBEDDINGS_MODEL, min_length=1)
     api_key: str | None = None
 
 
@@ -29,6 +39,7 @@ class AIProviderUpdate(BaseModel):
     base_url: str | None = None
     model: str = Field(min_length=1)
     num_ctx: NumCtxOption = _DEFAULT_NUM_CTX
+    embeddings_model: str = Field(default=_DEFAULT_EMBEDDINGS_MODEL, min_length=1)
     api_key: str | None = None  # None = mantener la key ya guardada sin cambios
 
 
@@ -39,10 +50,16 @@ class AIProviderRead(BaseModel):
     base_url: str | None
     model: str
     num_ctx: int
+    embeddings_model: str
     has_api_key: bool
-    is_active: bool
+    is_chat_active: bool
+    is_embeddings_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AIProviderRoleRequest(BaseModel):
+    role: AIProviderRole
 
 
 class AIPolicyRead(BaseModel):

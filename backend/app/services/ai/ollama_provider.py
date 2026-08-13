@@ -63,6 +63,20 @@ class OllamaProvider(AIProvider):
             return False
 
     async def list_models(self) -> list[str]:
+        return await self._list_models_by_capability(None)
+
+    async def list_embedding_models(self) -> list[str]:
+        """Como list_models(), pero filtrado a los modelos que Ollama marca
+        con capability 'embedding' -- /api/tags lista TODOS los modelos
+        (chat y embeddings mezclados), y un modelo de chat no sirve como
+        embeddings aunque el nombre lo sugiera (o viceversa: un modelo
+        pensado para embeddings puede quedar mal empaquetado y aparecer como
+        'completion' si le falta el metadato pooling_type en el GGUF -- eso
+        no se puede detectar desde aca, solo se puede confiar en lo que
+        Ollama reporta)."""
+        return await self._list_models_by_capability("embedding")
+
+    async def _list_models_by_capability(self, capability: str | None) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(f"{self._base_url}/api/tags")
@@ -70,7 +84,10 @@ class OllamaProvider(AIProvider):
         except httpx.HTTPError as exc:
             raise ProviderUnavailableError(f"Ollama no respondio ({type(exc).__name__}): {exc}") from exc
         data = response.json()
-        return [m["name"] for m in data.get("models", [])]
+        models = data.get("models", [])
+        if capability is not None:
+            models = [m for m in models if capability in (m.get("capabilities") or [])]
+        return [m["name"] for m in models]
 
     def supports_structured_output(self) -> bool:
         return True

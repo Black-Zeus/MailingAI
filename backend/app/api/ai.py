@@ -15,6 +15,7 @@ from app.schemas.ai_providers import (
     AIProviderModelsRequest,
     AIProviderModelsResponse,
     AIProviderRead,
+    AIProviderRoleRequest,
     AIProviderTestResponse,
     AIProviderUpdate,
 )
@@ -123,6 +124,23 @@ async def list_provider_models(
     return AIProviderModelsResponse(models=models)
 
 
+@router.post("/providers/embedding-models", response_model=AIProviderModelsResponse)
+async def list_provider_embedding_models(
+    payload: AIProviderModelsRequest, _admin: AdminUserDep
+) -> AIProviderModelsResponse:
+    """Como /providers/models, pero filtrado a los modelos que Ollama marca
+    con capability 'embedding' -- siempre contra el base_url recibido, sin
+    importar provider_type/api_key (el rol de embeddings solo existe para
+    Ollama)."""
+    try:
+        models = await ai_providers_service.list_available_embedding_models(payload.base_url)
+    except ai_providers_service.InvalidProviderConfigError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ProviderUnavailableError as exc:
+        raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return AIProviderModelsResponse(models=models)
+
+
 @router.put("/providers/{provider_id}", response_model=AIProviderRead)
 async def update_provider(
     provider_id: int, payload: AIProviderUpdate, pool: PoolDep, _admin: AdminUserDep
@@ -154,11 +172,31 @@ async def test_provider(provider_id: int, pool: PoolDep, _admin: AdminUserDep) -
 
 
 @router.post("/providers/{provider_id}/activate", response_model=AIProviderRead)
-async def activate_provider(provider_id: int, pool: PoolDep, _admin: AdminUserDep) -> AIProviderRead:
+async def activate_provider_role(
+    provider_id: int, payload: AIProviderRoleRequest, pool: PoolDep, _admin: AdminUserDep
+) -> AIProviderRead:
+    """Prende un rol (chat/embeddings) en este proveedor -- lo apaga en
+    cualquier otro que lo tuviera. El otro rol de este mismo proveedor (si lo
+    tiene) no se toca, asi que un proveedor puede terminar sirviendo los dos
+    roles a la vez."""
     try:
-        provider = await ai_providers_service.set_active_provider(pool, provider_id)
+        provider = await ai_providers_service.activate_role(pool, provider_id, payload.role)
     except ai_providers_service.PolicyBlocksProviderError as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ai_providers_service.InvalidProviderConfigError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if provider is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
+    return provider
+
+
+@router.post("/providers/{provider_id}/deactivate", response_model=AIProviderRead)
+async def deactivate_provider_role(
+    provider_id: int, payload: AIProviderRoleRequest, pool: PoolDep, _admin: AdminUserDep
+) -> AIProviderRead:
+    """Apaga un rol en este proveedor sin activarlo en ningun otro -- deja
+    ese rol sin proveedor asignado hasta que alguien active uno."""
+    provider = await ai_providers_service.deactivate_role(pool, provider_id, payload.role)
     if provider is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado")
     return provider
