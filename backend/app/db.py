@@ -1,4 +1,5 @@
 import asyncpg
+from pgvector.asyncpg import register_vector
 
 from app.config import get_settings
 
@@ -16,6 +17,9 @@ async def connect() -> None:
         password=settings.db_password,
         min_size=1,
         max_size=5,
+        # Permite bindear listas de floats directo como parametro `vector`
+        # (mailing.message_chunk_embeddings) sin armar el literal a mano.
+        init=register_vector,
     )
 
 

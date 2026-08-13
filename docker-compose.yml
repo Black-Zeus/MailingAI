@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16.13-alpine
+    # pgvector/pgvector (no postgres:*-alpine): trae la extension "vector"
+    # compilada para embeddings de expedientes -- mismo Postgres 16 por
+    # debajo, mismo volumen de datos, compatible sin migracion.
+    image: pgvector/pgvector:pg16
     container_name: mailingai_postgres
     restart: unless-stopped
     environment:
