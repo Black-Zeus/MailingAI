@@ -63,6 +63,13 @@ class AskCaseQuestionResponse(BaseModel):
     answer: str
     provider: str
     model: str
+    # True si el expediente no entraba completo en num_ctx y la respuesta se
+    # armo con los fragmentos mas relevantes por busqueda semantica en vez
+    # del contenido completo -- el frontend lo usa para avisarle al auditor
+    # que conviene revisar el expediente completo a mano si la respuesta no
+    # alcanza (a diferencia del contexto completo, un fallo de recall aca es
+    # invisible: el modelo nunca vio lo que no se recupero).
+    used_retrieval: bool = False
 
 
 class AIHealthResponse(BaseModel):

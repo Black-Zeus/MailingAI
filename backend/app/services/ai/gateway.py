@@ -1,8 +1,8 @@
 import hashlib
 import json
-import re
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 
 import asyncpg
 from pydantic import ValidationError
@@ -16,11 +16,14 @@ from app.repositories import (
 )
 from app.schemas.ai import AIAnalyzeResponse, AICaseSummary, AIHealthResponse, AskCaseQuestionResponse
 from app.services import email_templates, notification_email_service
+from app.services.ai import embeddings_service
 from app.services.ai.base import ProviderUnavailableError
 from app.services.ai.factory import get_provider_instance
 from app.services.ai_providers_service import is_local_provider_type, to_provider_read
 from app.services.cases_service import CaseAccessDeniedError
-from app.services.markdown_render import html_to_ai_context
+from app.services.markdown_render import html_to_ai_context, truncate_quoted_reply
+
+_MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
 
 __all__ = [
     "health",
@@ -114,49 +117,6 @@ Reglas:
 """
 
 
-# Marca el borde entre "lo que esta persona escribio de nuevo" y "el hilo
-# citado que Outlook reinserta debajo" -- cubre tanto el formato en espanol
-# (De:/Enviado el:) como el que genera Outlook para Android en ingles
-# (From:/Sent:), que aparece mezclado en el mismo expediente cuando alguien
-# responde desde el celular.
-_QUOTE_MARKER_RE = re.compile(
-    r"\*\*(?:De|From):\*\*\s*(?P<sender>[^\n]+)\n\s*\*\*(?:Enviado el|Sent):\*\*",
-    re.IGNORECASE,
-)
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
-
-
-def _truncate_quoted_reply(body: str, known_addresses: set[str], known_names: set[str]) -> str:
-    """Corta un cuerpo de correo en el primer marcador de cita de Outlook
-    (ver _QUOTE_MARKER_RE) SOLO si el remitente citado ahi es alguien que ya
-    tiene su propio mensaje en este mismo expediente -- en ese caso el
-    contenido citado es 100% redundante (ya esta completo, mas abajo en el
-    contexto, como su propio mensaje) y ademas es peligroso dejarlo: un
-    intento anterior de sacar solo los parrafos duplicados (no el bloque
-    citado entero) termino borrando la respuesta real de una persona de
-    ADENTRO de la cita que otra persona hizo de su correo, dejando un
-    fragmento huerfano que el modelo le atribuyo a la persona equivocada.
-    Cortar en el borde de la cita, entero, evita ese problema de raiz --
-    nunca queda un pedazo de cita a medio sacar.
-
-    Si el remitente citado NO tiene su propio mensaje en el expediente (un
-    reenvio "FYI" a alguien que no estaba en el hilo original), se deja el
-    cuerpo intacto -- ahi la cita puede ser el UNICO registro de esa
-    historia previa que existe en este expediente."""
-    match = _QUOTE_MARKER_RE.search(body)
-    if match is None:
-        return body
-    sender_line = match.group("sender")
-    email_match = _EMAIL_RE.search(sender_line)
-    if email_match:
-        is_known = email_match.group(0).lower() in known_addresses
-    else:
-        is_known = sender_line.strip().lower() in known_names
-    if not is_known:
-        return body
-    return body[: match.start()].strip()
-
-
 def _build_case_qa_context(messages: list[asyncpg.Record]) -> str:
     known_addresses = {m["from_address"].lower() for m in messages if m["from_address"]}
     known_names = {m["from_name"].strip().lower() for m in messages if m["from_name"]}
@@ -165,7 +125,7 @@ def _build_case_qa_context(messages: list[asyncpg.Record]) -> str:
     for m in messages:
         raw_body = m["body_content"] or ""
         body = html_to_ai_context(raw_body) if m["body_content_type"] == "html" else raw_body.strip()
-        bodies.append(_truncate_quoted_reply(body, known_addresses, known_names))
+        bodies.append(truncate_quoted_reply(body, known_addresses, known_names))
 
     # Se muestra al modelo el correo mas reciente primero, que es lo que en
     # general importa mas para contestar ("¿cual es el estado actual?").
@@ -193,7 +153,7 @@ async def ask_case_question(
         return None
 
     policy = await ai_providers_repository.get_policy(pool)
-    record = await ai_providers_repository.get_active_provider(pool)
+    record = await ai_providers_repository.get_role_active_provider(pool, "chat")
     if record is None:
         raise AIQuestionBlockedError("No hay ningún proveedor de IA activo.")
     provider_type = record["provider_type"]
@@ -203,16 +163,114 @@ async def ask_case_question(
     messages = await ai_runs_repository.get_case_messages_with_body(pool, case_id)
     context = _build_case_qa_context(messages)
 
+    # Expedientes chicos/conversacionales (la mayoria) entran comodos en
+    # num_ctx tal cual -- ahi se manda el contexto completo, sin cambios de
+    # comportamiento. Solo si NO entra (pocos correos pero muy extensos, ej.
+    # logs tecnicos) se arma el contexto con recuperacion semantica en vez de
+    # dejar que Ollama trunque en silencio. Solo aplica a proveedores Ollama:
+    # el concepto de num_ctx es especifico de ahi, OpenAI/Claude tienen
+    # ventanas de contexto mucho mas grandes y no pasan por este limite.
+    used_retrieval = False
+    if provider_type == "ollama" and _estimate_tokens(context) > record["num_ctx"] - _CONTEXT_RESERVE_TOKENS:
+        context = await _build_retrieval_context(pool, case_id, messages, question, record["num_ctx"])
+        used_retrieval = True
+
     provider = get_provider_instance(record)
     user_content = f"{context}\n\n### Pregunta\n{question.strip()}"
     answer = await provider.analyze(_QA_SYSTEM_PROMPT, user_content, json_mode=False)
 
-    return AskCaseQuestionResponse(answer=answer.strip(), provider=provider_type, model=record["model"])
+    return AskCaseQuestionResponse(
+        answer=answer.strip(), provider=provider_type, model=record["model"], used_retrieval=used_retrieval
+    )
+
+
+# Reserva para el system prompt (_QA_SYSTEM_PROMPT), la pregunta, y la
+# respuesta del modelo -- todos cuentan contra num_ctx en Ollama, no solo el
+# contexto de los correos.
+_CONTEXT_RESERVE_TOKENS = 1500
+# Correos mas recientes que siempre se incluyen completos en la via de
+# recuperacion, sin importar el score de similitud -- muchas preguntas
+# ("¿cual es el estado actual?") no calzan bien semanticamente con la
+# pregunta pero casi siempre importan.
+_RETRIEVAL_RECENT_MESSAGES = 2
+_RETRIEVAL_TOP_K = 12
+
+
+def _estimate_tokens(text: str) -> int:
+    return len(text) // 4
+
+
+async def _build_retrieval_context(
+    pool: asyncpg.Pool,
+    case_id: int,
+    messages: list[asyncpg.Record],
+    question: str,
+    num_ctx: int,
+) -> str:
+    """Arma el contexto para expedientes que no entran completos en num_ctx:
+    los correos mas recientes completos + los fragmentos mas relevantes por
+    similitud semantica del resto, en orden cronologico (igual que la via de
+    contexto completo, para no perder la trazabilidad que costo afinar ahi).
+    Indexa lo que falte del expediente antes de buscar -- cubre tanto
+    expedientes nuevos como los que ya existian antes de esta funcionalidad."""
+    await embeddings_service.ensure_case_embeddings(pool, case_id, messages)
+    embeddings_provider = await embeddings_service.get_embeddings_provider(pool)
+    [question_embedding] = await embeddings_service.embed_texts(
+        embeddings_provider["base_url"].rstrip("/"), embeddings_provider["embeddings_model"], [question]
+    )
+
+    budget_chars = (num_ctx - _CONTEXT_RESERVE_TOKENS) * 4
+    known_addresses = {m["from_address"].lower() for m in messages if m["from_address"]}
+    known_names = {m["from_name"].strip().lower() for m in messages if m["from_name"]}
+
+    def render_full(m: asyncpg.Record) -> str:
+        raw_body = m["body_content"] or ""
+        body = html_to_ai_context(raw_body) if m["body_content_type"] == "html" else raw_body.strip()
+        body = truncate_quoted_reply(body, known_addresses, known_names)
+        sender = _format_sender(m["from_name"], m["from_address"])
+        sent = m["sent_datetime"].isoformat() if m["sent_datetime"] else "fecha desconocida"
+        return f"### [{sent}] {sender} -- {m['subject'] or '(sin asunto)'}\n{body or '(sin contenido)'}"
+
+    recent = messages[-_RETRIEVAL_RECENT_MESSAGES:]
+    recent_ids = {m["message_id"] for m in recent}
+    sections: list[tuple[datetime, str]] = []
+    used_chars = 0
+    for m in recent:
+        block = render_full(m)
+        sections.append((m["sent_datetime"] or _MIN_DT, block))
+        used_chars += len(block)
+
+    chunks = await embeddings_service.search_relevant_chunks(pool, case_id, question_embedding, _RETRIEVAL_TOP_K)
+    chunks_by_message: dict[str, list[asyncpg.Record]] = {}
+    order: list[str] = []
+    for c in chunks:
+        if c["message_id"] in recent_ids:
+            continue  # ya va completo arriba, no repetir como fragmento
+        if c["message_id"] not in chunks_by_message:
+            chunks_by_message[c["message_id"]] = []
+            order.append(c["message_id"])
+        chunks_by_message[c["message_id"]].append(c)
+
+    for message_id in order:
+        if used_chars >= budget_chars:
+            break
+        group = sorted(chunks_by_message[message_id], key=lambda c: c["chunk_index"])
+        first = group[0]
+        sender = _format_sender(first["from_name"], first["from_address"])
+        sent = first["sent_datetime"].isoformat() if first["sent_datetime"] else "fecha desconocida"
+        subject = first["subject"] or "(sin asunto)"
+        text = "\n[...]\n".join(c["chunk_text"] for c in group)
+        block = f"### [{sent}] {sender} -- {subject} (fragmento relevante)\n{text}"
+        sections.append((first["sent_datetime"] or _MIN_DT, block))
+        used_chars += len(block)
+
+    sections.sort(key=lambda item: item[0], reverse=True)
+    return "\n\n".join(block for _, block in sections)
 
 
 async def health(pool: asyncpg.Pool) -> AIHealthResponse:
     policy = await ai_providers_repository.get_policy(pool)
-    record = await ai_providers_repository.get_active_provider(pool)
+    record = await ai_providers_repository.get_role_active_provider(pool, "chat")
     if record is None:
         return AIHealthResponse(policy=policy, active_provider=None, healthy=None)
     try:
@@ -288,7 +346,7 @@ async def _check_eligibility(
             message="Este expediente esta marcado 'sin hallazgos' -- no admite analisis de IA.",
         )
 
-    record = await ai_providers_repository.get_active_provider(pool)
+    record = await ai_providers_repository.get_role_active_provider(pool, "chat")
     if record is None:
         return await _blocked_response(
             pool, case_id, provider_type="none", model_name="none", policy=policy,

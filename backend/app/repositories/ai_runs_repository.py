@@ -123,7 +123,8 @@ async def get_case_messages_with_body(pool: asyncpg.Pool, case_id: int) -> list[
     LIMIT generoso como valvula de seguridad, no un tope real para el uso
     normal (un expediente con mas de 300 correos ya es un caso atipico)."""
     query = """
-        SELECT m.subject, m.from_address, m.from_name, m.sent_datetime, m.body_content, m.body_content_type
+        SELECT m.message_id, m.subject, m.from_address, m.from_name, m.sent_datetime,
+               m.body_content, m.body_content_type
         FROM mailing.case_messages cm
         JOIN mailing.messages m ON m.message_id = cm.message_id
         WHERE cm.case_id = $1
