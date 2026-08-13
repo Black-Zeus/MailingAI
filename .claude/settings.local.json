@@ -5,7 +5,8 @@
       "Bash(git init *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(chmod +x scripts/import-n8n.sh)"
+      "Bash(chmod +x scripts/import-n8n.sh)",
+      "Skill(update-config)"
     ]
   }
 }
