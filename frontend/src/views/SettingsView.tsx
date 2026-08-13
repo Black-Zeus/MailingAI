@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
-  activateAIProvider,
+  activateAIProviderRole,
+  deactivateAIProviderRole,
   assignMailboxTenant,
   cancelMailboxIndex,
   claimMailbox,
@@ -19,6 +20,7 @@ import {
   getMailboxIndexRun,
   getMailboxConnectUrl,
   getNotificationSender,
+  listAIEmbeddingModels,
   listAIProviderModels,
   listAIProviders,
   listMailboxes,
@@ -44,7 +46,7 @@ import {
   updateTenantConfig,
   updateUser,
 } from '../api/client'
-import type { AIHealthResponse, AIPolicy, AIProviderRead, AIProviderType } from '../types/ai'
+import type { AIHealthResponse, AIPolicy, AIProviderRead, AIProviderRole, AIProviderType } from '../types/ai'
 import { AI_POLICY_LABELS, AI_PROVIDER_TYPE_LABELS, isLocalProviderType, NUM_CTX_OPTIONS } from '../types/ai'
 import type { MailboxAccountRead, MailboxDeletionImpact, MailboxShareRead } from '../types/mailboxes'
 import type { UserDeletionImpact, UserDirectoryEntry, UserRead } from '../types/users'
@@ -84,6 +86,7 @@ interface ProviderFormState {
   base_url: string
   model: string
   num_ctx: number
+  embeddings_model: string
   api_key: string
 }
 
@@ -93,6 +96,7 @@ const EMPTY_FORM: ProviderFormState = {
   base_url: '',
   model: '',
   num_ctx: 8192,
+  embeddings_model: 'bge-m3',
   api_key: '',
 }
 
@@ -116,6 +120,56 @@ const MODEL_PLACEHOLDER: Record<AIProviderType, string> = {
   ollama: 'ej. qwen2.5:3b',
   openai: 'ej. gpt-4o-mini',
   anthropic: 'ej. claude-3-5-sonnet-20241022',
+}
+
+// Etiqueta "Chat:"/"Embeddings:" clickeable que prende/apaga ese rol -- el
+// control queda pegado al nombre del modelo que afecta, sin ambigüedad
+// sobre "cuál botón hace qué" (antes eran dos ActionButton ícono-only
+// indistinguibles salvo por tooltip). Usa el atributo title nativo, no el
+// mecanismo de tooltip CSS (data-tooltip) del resto de la app -- ese tooltip
+// pasa a display:block en hover y, con etiquetas largas cerca del borde de
+// la tabla, se salía del ancho y disparaba el scroll horizontal de
+// .table-wrap. El ⚡ delante del label cuando active=true es ayuda visual
+// extra al color: --accent-2 vs --muted no se distinguen bien a primera
+// vista en la tabla.
+function RoleToggleLabel({
+  label,
+  active,
+  loading,
+  disabled,
+  title,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  loading?: boolean
+  disabled?: boolean
+  title: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || loading}
+      title={title}
+      style={{
+        fontWeight: 600,
+        color: active ? 'var(--accent-2)' : 'var(--muted)',
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        margin: 0,
+        font: 'inherit',
+        cursor: disabled || loading ? 'default' : 'pointer',
+        textDecoration: 'underline dotted',
+        opacity: loading ? 0.6 : 1,
+      }}
+    >
+      {active ? '⚡ ' : ''}
+      {label}:{loading ? '…' : ''}
+    </button>
+  )
 }
 
 type SettingsTab = 'mailboxes' | 'indexing' | 'ai' | 'notifications' | 'users'
@@ -162,13 +216,15 @@ export function SettingsView() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState<ProviderFormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const [activatingId, setActivatingId] = useState<number | null>(null)
+  const [activatingRoleKey, setActivatingRoleKey] = useState<string | null>(null)
   const [testingProviderId, setTestingProviderId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AIProviderRead | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
+  const [fetchedEmbeddingModels, setFetchedEmbeddingModels] = useState<string[] | null>(null)
+  const [fetchingEmbeddingModels, setFetchingEmbeddingModels] = useState(false)
 
   const [mailboxes, setMailboxes] = useState<MailboxAccountRead[] | null>(null)
   const [mailboxError, setMailboxError] = useState<string | null>(null)
@@ -553,6 +609,7 @@ export function SettingsView() {
     setEditingId(null)
     setForm(EMPTY_FORM)
     setFetchedModels(null)
+    setFetchedEmbeddingModels(null)
     setFormOpen(true)
   }
 
@@ -564,20 +621,24 @@ export function SettingsView() {
       base_url: provider.base_url ?? '',
       model: provider.model,
       num_ctx: provider.num_ctx,
+      embeddings_model: provider.embeddings_model,
       api_key: '',
     })
     setFetchedModels(null)
+    setFetchedEmbeddingModels(null)
     setFormOpen(true)
   }
 
   function closeForm() {
     setFormOpen(false)
     setFetchedModels(null)
+    setFetchedEmbeddingModels(null)
   }
 
   function setProviderType(next: AIProviderType) {
     setForm((f) => ({ ...f, provider_type: next }))
     setFetchedModels(null)
+    setFetchedEmbeddingModels(null)
   }
 
   async function handleFetchModels() {
@@ -601,6 +662,27 @@ export function SettingsView() {
     }
   }
 
+  async function handleFetchEmbeddingModels() {
+    setFetchingEmbeddingModels(true)
+    setFetchedEmbeddingModels(null)
+    try {
+      const result = await listAIEmbeddingModels({
+        provider_type: form.provider_type,
+        base_url: form.base_url.trim() || null,
+        api_key: form.api_key.trim() || null,
+        provider_id: editingId,
+      })
+      setFetchedEmbeddingModels(result.models)
+      if (result.models.length === 0) {
+        showToast('El proveedor no tiene ningún modelo con capacidad de embeddings.', true)
+      }
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudieron recuperar los modelos de embeddings.', true)
+    } finally {
+      setFetchingEmbeddingModels(false)
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -611,6 +693,7 @@ export function SettingsView() {
         base_url: form.base_url.trim() || null,
         model: form.model.trim(),
         num_ctx: form.num_ctx,
+        embeddings_model: form.embeddings_model.trim() || 'bge-m3',
         api_key: form.api_key.trim() || null,
       }
       if (editingId) {
@@ -646,16 +729,25 @@ export function SettingsView() {
     }
   }
 
-  async function handleActivate(providerId: number) {
-    setActivatingId(providerId)
+  const ROLE_LABEL: Record<AIProviderRole, string> = { chat: 'consultas', embeddings: 'embeddings' }
+
+  async function handleToggleRole(provider: AIProviderRead, role: AIProviderRole) {
+    const isActive = role === 'chat' ? provider.is_chat_active : provider.is_embeddings_active
+    const key = `${provider.provider_id}:${role}`
+    setActivatingRoleKey(key)
     try {
-      await activateAIProvider(providerId)
-      showToast('Proveedor activado')
+      if (isActive) {
+        await deactivateAIProviderRole(provider.provider_id, role)
+        showToast(`${provider.label}: ya no se usa para ${ROLE_LABEL[role]}`)
+      } else {
+        await activateAIProviderRole(provider.provider_id, role)
+        showToast(`${provider.label}: ahora se usa para ${ROLE_LABEL[role]}`)
+      }
       await loadAll()
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo activar el proveedor.', true)
+      showToast(err instanceof ApiError ? err.message : 'No se pudo cambiar el rol del proveedor.', true)
     } finally {
-      setActivatingId(null)
+      setActivatingRoleKey(null)
     }
   }
 
@@ -1549,7 +1641,6 @@ export function SettingsView() {
                   <table>
                     <thead>
                       <tr>
-                        <th scope="col" style={{ width: 120 }} aria-label="Estado"></th>
                         <th scope="col">Nombre</th>
                         <th scope="col" style={{ width: 190 }}>Tipo</th>
                         <th scope="col">Modelo</th>
@@ -1560,14 +1651,13 @@ export function SettingsView() {
                     <tbody>
                       {providers !== null && providers.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="empty-view">
+                          <td colSpan={5} className="empty-view">
                             No hay proveedores configurados todavía.
                           </td>
                         </tr>
                       )}
                       {providers?.map((p) => (
                         <tr key={p.provider_id}>
-                          <td>{p.is_active ? <span className="badge success">Activo</span> : null}</td>
                           <td>{p.label}</td>
                           <td>
                             {AI_PROVIDER_TYPE_LABELS[p.provider_type]}{' '}
@@ -1583,13 +1673,49 @@ export function SettingsView() {
                             </span>
                           </td>
                           <td className="mono">
-                            {p.model}
-                            {p.provider_type === 'ollama' && (
-                              <span className="text-muted" style={{ fontSize: 11 }}>
-                                {' '}
-                                ({p.num_ctx.toLocaleString('es-CL')} ctx)
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              <span>
+                                <RoleToggleLabel
+                                  label="Chat"
+                                  active={p.is_chat_active}
+                                  loading={activatingRoleKey === `${p.provider_id}:chat`}
+                                  disabled={
+                                    !p.is_chat_active && policy === 'local_only' && !isLocalProviderType(p.provider_type)
+                                  }
+                                  title={
+                                    !p.is_chat_active && policy === 'local_only' && !isLocalProviderType(p.provider_type)
+                                      ? "Bloqueado por la política 'Solo local'"
+                                      : p.is_chat_active
+                                        ? 'Click para dejar de usar para consultas'
+                                        : 'Click para usar para consultas'
+                                  }
+                                  onClick={() => handleToggleRole(p, 'chat')}
+                                />{' '}
+                                {p.model}
+                                {p.provider_type === 'ollama' && (
+                                  <span className="text-muted" style={{ fontSize: 11 }}>
+                                    {' '}
+                                    ({p.num_ctx.toLocaleString('es-CL')} ctx)
+                                  </span>
+                                )}
                               </span>
-                            )}
+                              {p.provider_type === 'ollama' && (
+                                <span>
+                                  <RoleToggleLabel
+                                    label="Embeddings"
+                                    active={p.is_embeddings_active}
+                                    loading={activatingRoleKey === `${p.provider_id}:embeddings`}
+                                    title={
+                                      p.is_embeddings_active
+                                        ? 'Click para dejar de usar para embeddings'
+                                        : 'Click para usar para embeddings'
+                                    }
+                                    onClick={() => handleToggleRole(p, 'embeddings')}
+                                  />{' '}
+                                  {p.embeddings_model}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="mono" style={{ fontSize: 12 }}>
                             {p.provider_type === 'ollama' ? p.base_url || '—' : p.has_api_key ? 'API key guardada' : 'sin API key'}
@@ -1602,20 +1728,6 @@ export function SettingsView() {
                                 loading={testingProviderId === p.provider_id}
                                 onClick={() => handleTestProvider(p)}
                               />
-                              {!p.is_active && (
-                                <ActionButton
-                                  icon={Play}
-                                  label={
-                                    policy === 'local_only' && !isLocalProviderType(p.provider_type)
-                                      ? "Bloqueado por la política 'Solo local'"
-                                      : 'Activar'
-                                  }
-                                  variant="primary"
-                                  loading={activatingId === p.provider_id}
-                                  disabled={policy === 'local_only' && !isLocalProviderType(p.provider_type)}
-                                  onClick={() => handleActivate(p.provider_id)}
-                                />
-                              )}
                               <ActionButton icon={Pencil} label="Editar" onClick={() => openEditForm(p)} />
                               <ActionButton icon={Trash2} label="Eliminar" variant="danger" onClick={() => setDeleteTarget(p)} />
                             </div>
@@ -1926,6 +2038,53 @@ export function SettingsView() {
                     </p>
                   </div>
                 )}
+                {form.provider_type === 'ollama' && (
+                  <div className="field full">
+                    <label htmlFor="provider-embeddings-model">Modelo de embeddings</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        id="provider-embeddings-model"
+                        type="text"
+                        autoComplete="off"
+                        list={
+                          fetchedEmbeddingModels && fetchedEmbeddingModels.length > 0
+                            ? 'provider-embeddings-model-options'
+                            : undefined
+                        }
+                        placeholder="ej. bge-m3"
+                        value={form.embeddings_model}
+                        onChange={(e) => setForm((f) => ({ ...f, embeddings_model: e.target.value }))}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn small btn-labeled"
+                        onClick={handleFetchEmbeddingModels}
+                        disabled={fetchingEmbeddingModels || !form.base_url.trim()}
+                      >
+                        {fetchingEmbeddingModels ? 'Buscando…' : '⟳ Recuperar modelos'}
+                      </button>
+                    </div>
+                    {fetchedEmbeddingModels && fetchedEmbeddingModels.length > 0 && (
+                      <>
+                        <datalist id="provider-embeddings-model-options">
+                          {fetchedEmbeddingModels.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </datalist>
+                        <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
+                          {fetchedEmbeddingModels.length} modelo(s) con capacidad de embeddings en este servidor.
+                        </p>
+                      </>
+                    )}
+                    <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
+                      Solo se usa si activás el rol "Embeddings" para este proveedor (búsqueda semántica en
+                      expedientes grandes) — independiente del modelo de chat de arriba.
+                    </p>
+                  </div>
+                )}
                 {form.provider_type !== 'ollama' && (
                   <div className="field full">
                     <label htmlFor="provider-api-key">
@@ -2145,7 +2304,17 @@ export function SettingsView() {
         title="Eliminar proveedor"
         description={
           deleteTarget
-            ? `Se elimina "${deleteTarget.label}" de la lista${deleteTarget.is_active ? ' — es el proveedor activo, ningún análisis de IA funcionará hasta que actives otro' : ''}.`
+            ? (() => {
+                const roles = [
+                  deleteTarget.is_chat_active ? 'consultas' : null,
+                  deleteTarget.is_embeddings_active ? 'embeddings' : null,
+                ].filter(Boolean)
+                const warning =
+                  roles.length > 0
+                    ? ` — está en uso para ${roles.join(' y ')}, esa función dejará de funcionar hasta que actives otro proveedor`
+                    : ''
+                return `Se elimina "${deleteTarget.label}" de la lista${warning}.`
+              })()
             : ''
         }
         confirmLabel="Eliminar proveedor"

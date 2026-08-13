@@ -21,6 +21,11 @@ export interface AIAnalyzeResponse {
 
 export type AIProviderType = 'ollama' | 'openai' | 'anthropic'
 export type AIPolicy = 'local_only' | 'allow_external'
+// "chat" = usado para preguntas/analisis de expedientes, "embeddings" = usado
+// para busqueda semantica de expedientes grandes. Un mismo proveedor puede
+// tener los dos roles a la vez -- no hay un "activar" generico, cada rol se
+// prende/apaga por separado. Debe reflejar AIProviderRole del backend.
+export type AIProviderRole = 'chat' | 'embeddings'
 
 export interface AIProviderRead {
   provider_id: number
@@ -29,8 +34,10 @@ export interface AIProviderRead {
   base_url: string | null
   model: string
   num_ctx: number
+  embeddings_model: string
   has_api_key: boolean
-  is_active: boolean
+  is_chat_active: boolean
+  is_embeddings_active: boolean
   created_at: string
   updated_at: string
 }

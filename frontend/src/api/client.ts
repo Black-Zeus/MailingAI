@@ -23,6 +23,7 @@ import type {
   AIHealthResponse,
   AIPolicy,
   AIProviderRead,
+  AIProviderRole,
   AIProviderType,
 } from '../types/ai'
 import type { StatsResponse, SystemStatus } from '../types/system'
@@ -502,6 +503,7 @@ export interface AskCaseQuestionResponse {
   answer: string
   provider: string
   model: string
+  used_retrieval: boolean
 }
 
 export function askCaseQuestion(caseId: number, question: string): Promise<AskCaseQuestionResponse> {
@@ -595,6 +597,7 @@ export interface AIProviderPayload {
   base_url?: string | null
   model: string
   num_ctx: number
+  embeddings_model: string
   api_key?: string | null
 }
 
@@ -616,8 +619,18 @@ export function deleteAIProvider(providerId: number): Promise<void> {
   return request<void>(`/api/ai/providers/${providerId}`, { method: 'DELETE' })
 }
 
-export function activateAIProvider(providerId: number): Promise<AIProviderRead> {
-  return request<AIProviderRead>(`/api/ai/providers/${providerId}/activate`, { method: 'POST' })
+export function activateAIProviderRole(providerId: number, role: AIProviderRole): Promise<AIProviderRead> {
+  return request<AIProviderRead>(`/api/ai/providers/${providerId}/activate`, {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  })
+}
+
+export function deactivateAIProviderRole(providerId: number, role: AIProviderRole): Promise<AIProviderRead> {
+  return request<AIProviderRead>(`/api/ai/providers/${providerId}/deactivate`, {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  })
 }
 
 export function testAIProvider(providerId: number): Promise<{ healthy: boolean }> {
@@ -633,6 +646,16 @@ export interface AIProviderModelsQuery {
 
 export function listAIProviderModels(query: AIProviderModelsQuery): Promise<{ models: string[] }> {
   return request<{ models: string[] }>('/api/ai/providers/models', {
+    method: 'POST',
+    body: JSON.stringify(query),
+  })
+}
+
+// Mismo endpoint subyacente que listAIProviderModels, pero filtrado en el
+// backend a modelos con capability 'embedding' -- un modelo de chat no
+// sirve para embeddings aunque aparezca en la lista general de /api/tags.
+export function listAIEmbeddingModels(query: AIProviderModelsQuery): Promise<{ models: string[] }> {
+  return request<{ models: string[] }>('/api/ai/providers/embedding-models', {
     method: 'POST',
     body: JSON.stringify(query),
   })
