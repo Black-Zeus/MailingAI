@@ -546,6 +546,123 @@
   cursor: not-allowed;
 }
 
+/* Autocompletar Para/CC con chips (RecipientInput) -- el contenedor imita el
+   look de un <input> normal (mismo border/radius/background que forms.css),
+   los chips van adentro junto con el <input> real, que queda transparente y
+   sin borde propio para que no se note la costura. */
+.recipient-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-input);
+  padding: 6px 8px;
+  cursor: text;
+}
+
+.recipient-input:focus-within {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.12);
+}
+
+.recipient-input input {
+  flex: 1 1 120px;
+  min-width: 120px;
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  box-shadow: none !important;
+}
+
+.recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 6px 4px 9px;
+  border: 1px solid rgba(89, 212, 198, 0.25);
+  border-radius: 999px;
+  background: rgba(89, 212, 198, 0.07);
+  color: var(--attachment-tag-text);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+}
+
+.recipient-chip.dragging {
+  opacity: 0.4;
+}
+
+.recipient-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--attachment-tag-text);
+  padding: 2px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.recipient-chip button:hover {
+  background: rgba(89, 212, 198, 0.2);
+  color: var(--accent);
+}
+
+.recipient-suggestions {
+  position: absolute;
+  z-index: var(--z-modal);
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+
+.recipient-suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.recipient-suggestion strong {
+  color: var(--text);
+}
+
+.recipient-suggestion span {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipient-suggestion:hover,
+.recipient-suggestion.active {
+  background: var(--panel-2);
+}
+
+.recipient-suggestion-empty {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .empty-view {
   padding: 70px 20px;
   text-align: center;

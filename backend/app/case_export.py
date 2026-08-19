@@ -417,4 +417,37 @@ async def send_case_email(
     except n8n_client.SendEmailError as exc:
         raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    # Unico rastro del envio -- antes no quedaba nada (ni auditoria, ni linea
+    # de tiempo, ni el contenido) una vez que el correo salia. Guarda una
+    # copia completa (destinatarios/asunto/cuerpo) para poder recuperarla
+    # despues, ademas de las marcas cortas de auditoria/linea de tiempo.
+    attachment_names = [a["filename"] for a in email_attachments]
+    await cases_repository.insert_case_sent_email(
+        pool,
+        case_id=case_id,
+        sent_by_user_id=user.user_id,
+        mailbox_account_id=mailbox_account_id,
+        to_addresses=to_list,
+        cc_addresses=cc_list,
+        subject=subject,
+        body_html=markdown_to_safe_html(body),
+        attached_case_pdf=attach_case_pdf,
+        attachment_names=attachment_names,
+    )
+    await cases_repository.insert_audit_entry(
+        pool, case_id=case_id, user_id=user.user_id, description=f'Envió un correo ("{subject}") a {", ".join(to_list)}'
+    )
+    await cases_repository.insert_timeline_event(
+        pool,
+        case_id=case_id,
+        occurred_at=None,
+        actor=user.display_name or user.email_address,
+        action_type="report_email_sent",
+        description=f'Envió el correo "{subject}" a {", ".join(to_list)}',
+        source_message_id=None,
+        source_attachment_id=None,
+        determination_type="validacion_manual",
+        confidence=None,
+    )
+
     return CaseSendEmailResponse(sent=True)

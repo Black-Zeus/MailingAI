@@ -17,6 +17,13 @@
   width: min(520px, 100%);
   max-height: 90vh;
   overflow-y: auto;
+  /* Sin esto, un overflow-y:auto sin overflow-x explicito hace que el
+     navegador trate el eje horizontal tambien como "auto" (regla de la spec
+     CSS Overflow) -- un tooltip (::after posicionado absoluto, ver
+     buttons.css) que se pasa unos px del borde del modal alcanzaba a crear
+     un scroll horizontal fantasma al pasar el mouse. Los modales nunca
+     necesitan scroll horizontal de verdad, asi que cortarlo aca es seguro. */
+  overflow-x: hidden;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);

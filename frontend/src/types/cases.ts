@@ -35,6 +35,9 @@ export interface CaseSummary {
   next_review_at: string | null
   previous_owner_label: string | null
   updated_at: string
+  pending_reopen_message_count: number
+  closing_glosa: string | null
+  alert_type: string | null
 }
 
 export type CaseSharePermission = 'read' | 'edit'
@@ -52,6 +55,9 @@ export interface CaseNoteRead {
   body: string
   body_markdown: string
   created_at: string
+  created_by_user_id: number | null
+  created_by_label: string | null
+  updated_at: string | null
 }
 
 export interface CaseEvidenceRead {
@@ -61,6 +67,18 @@ export interface CaseEvidenceRead {
   content_type: string
   size_bytes: number
   created_at: string
+}
+
+export interface CaseSentEmailRead {
+  sent_email_id: number
+  to_addresses: string[]
+  cc_addresses: string[]
+  subject: string
+  body_html: string
+  attached_case_pdf: boolean
+  attachment_names: string[]
+  sent_at: string
+  sent_by_label: string | null
 }
 
 export interface CaseAttachmentRead {
@@ -111,6 +129,7 @@ export interface CaseDetail extends CaseSummary {
   timeline: TimelineEventRead[]
   notes: CaseNoteRead[]
   evidence: CaseEvidenceRead[]
+  sent_emails: CaseSentEmailRead[]
   latest_ai_run: AIAnalyzeResponse | null
   ai_summary_override: string | null
 }
@@ -143,6 +162,34 @@ export interface CaseSeedPrefill {
   caseType: CaseType
 }
 
+export interface ExclusionRuleFields {
+  match_subject: boolean
+  match_body: boolean
+  match_from: boolean
+  match_to: boolean
+  match_cc: boolean
+  match_attachment: boolean
+}
+
+export interface ExclusionRuleRead extends ExclusionRuleFields {
+  rule_id: number
+  owner_user_id: number
+  case_id: number | null
+  pattern: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export const EXCLUSION_RULE_FIELD_LABELS: Record<keyof ExclusionRuleFields, string> = {
+  match_subject: 'Asunto',
+  match_body: 'Cuerpo',
+  match_from: 'Remitente',
+  match_to: 'Para',
+  match_cc: 'Copia (CC)',
+  match_attachment: 'Adjunto',
+}
+
 export type CaseBatchItemStatus = 'pendiente' | 'creando' | 'listo' | 'error'
 export type CaseBatchStatus = 'queued' | 'running' | 'success' | 'failed'
 
@@ -153,6 +200,7 @@ export interface CaseBatchItemRead {
   status: CaseBatchItemStatus
   detail: string | null
   case_id: number | null
+  reused: boolean
 }
 
 export interface CaseBatchRunRead {

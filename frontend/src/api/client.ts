@@ -1,6 +1,9 @@
 import type { JobCreatedResponse, JobParameters, JobRead, JobType } from '../types/jobs'
+import type { MailTemplateRead } from '../types/mailTemplates'
+import type { PendingActionPresetRead } from '../types/pendingActionPresets'
 import type {
   AttachmentListItem,
+  ContactRead,
   ConversationRead,
   MailFolderNode,
   MessageDetail,
@@ -11,10 +14,13 @@ import type {
   CaseBatchRunRead,
   CaseDetail,
   CaseEvidenceRead,
+  CaseMessageRead,
   CaseNoteRead,
   CaseSummary,
   CaseType,
   DeterminationType,
+  ExclusionRuleFields,
+  ExclusionRuleRead,
   SeedType,
 } from '../types/cases'
 import type {
@@ -267,6 +273,11 @@ export function listMailFolders(): Promise<MailFolderNode[]> {
   return request<MailFolderNode[]>('/api/mail-folders')
 }
 
+export function searchContacts(query: string, limit = 8): Promise<ContactRead[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) })
+  return request<ContactRead[]>(`/api/contacts/search?${params.toString()}`)
+}
+
 export interface AttachmentFilters {
   file_name_contains?: string
   extension?: string
@@ -396,10 +407,17 @@ export interface CaseBulkRefreshResponse {
   cases_with_new_messages: number
   new_messages_found: number
   errors: number
+  closed_cases_flagged: number
 }
 
 export function refreshOpenCases(): Promise<CaseBulkRefreshResponse> {
   return request<CaseBulkRefreshResponse>('/api/cases/refresh-open', { method: 'POST' })
+}
+
+export function reopenCaseWithNewMessages(caseId: number): Promise<{ case: CaseDetail; new_messages_found: number }> {
+  return request<{ case: CaseDetail; new_messages_found: number }>(`/api/cases/${caseId}/reopen-with-new-messages`, {
+    method: 'POST',
+  })
 }
 
 export function refreshCase(caseId: number): Promise<{ case: CaseDetail; new_messages_found: number }> {
@@ -419,6 +437,8 @@ export function updateCase(
     status?: 'open' | 'closed'
     pending_action?: string | null
     next_review_at?: string | null
+    closing_glosa?: string | null
+    alert_type?: string | null
     expected_updated_at?: string
   },
 ): Promise<CaseDetail> {
@@ -431,6 +451,13 @@ export function updateCase(
 export function addCaseNote(caseId: number, body: string): Promise<CaseNoteRead> {
   return request<CaseNoteRead>(`/api/cases/${caseId}/notes`, {
     method: 'POST',
+    body: JSON.stringify({ body }),
+  })
+}
+
+export function updateCaseNote(caseId: number, noteId: number, body: string): Promise<CaseNoteRead> {
+  return request<CaseNoteRead>(`/api/cases/${caseId}/notes/${noteId}`, {
+    method: 'PATCH',
     body: JSON.stringify({ body }),
   })
 }
@@ -483,6 +510,111 @@ export function removeCaseMessage(caseId: number, messageId: string): Promise<Ca
   })
 }
 
+export function searchCaseMessages(caseId: number, query: string): Promise<CaseMessageRead[]> {
+  return request<CaseMessageRead[]>(`/api/cases/${caseId}/messages/search`, {
+    method: 'POST',
+    body: JSON.stringify({ query }),
+  })
+}
+
+export function bulkRemoveCaseMessages(caseId: number, messageIds: string[], query?: string): Promise<CaseDetail> {
+  return request<CaseDetail>(`/api/cases/${caseId}/messages/bulk-remove`, {
+    method: 'POST',
+    body: JSON.stringify({ message_ids: messageIds, query }),
+  })
+}
+
+export interface ExclusionRulePayload extends ExclusionRuleFields {
+  pattern: string
+}
+
+export function listGlobalExclusionRules(): Promise<ExclusionRuleRead[]> {
+  return request<ExclusionRuleRead[]>('/api/cases/exclusion-rules')
+}
+
+export function createGlobalExclusionRule(payload: ExclusionRulePayload): Promise<ExclusionRuleRead> {
+  return request<ExclusionRuleRead>('/api/cases/exclusion-rules', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function listCaseExclusionRules(caseId: number): Promise<ExclusionRuleRead[]> {
+  return request<ExclusionRuleRead[]>(`/api/cases/${caseId}/exclusion-rules`)
+}
+
+export function createCaseExclusionRule(caseId: number, payload: ExclusionRulePayload): Promise<ExclusionRuleRead> {
+  return request<ExclusionRuleRead>(`/api/cases/${caseId}/exclusion-rules`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateExclusionRule(
+  ruleId: number,
+  payload: Partial<ExclusionRulePayload> & { enabled?: boolean },
+): Promise<ExclusionRuleRead> {
+  return request<ExclusionRuleRead>(`/api/cases/exclusion-rules/${ruleId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteExclusionRule(ruleId: number): Promise<void> {
+  return request<void>(`/api/cases/exclusion-rules/${ruleId}`, { method: 'DELETE' })
+}
+
+export interface MailTemplatePayload {
+  name: string
+  subject_template: string
+  body_template: string
+}
+
+export function listMailTemplates(activeOnly = false): Promise<MailTemplateRead[]> {
+  return request<MailTemplateRead[]>(`/api/mail-templates?active_only=${activeOnly}`)
+}
+
+export function createMailTemplate(payload: MailTemplatePayload): Promise<MailTemplateRead> {
+  return request<MailTemplateRead>('/api/mail-templates', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateMailTemplate(
+  templateId: number,
+  payload: Partial<MailTemplatePayload> & { active?: boolean },
+): Promise<MailTemplateRead> {
+  return request<MailTemplateRead>(`/api/mail-templates/${templateId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteMailTemplate(templateId: number): Promise<void> {
+  return request<void>(`/api/mail-templates/${templateId}`, { method: 'DELETE' })
+}
+
+export function renderMailTemplate(
+  caseId: number,
+  templateId: number,
+  manualValues: Record<string, string>,
+): Promise<{ subject: string; body: string }> {
+  return request<{ subject: string; body: string }>(`/api/cases/${caseId}/mail-templates/${templateId}/render`, {
+    method: 'POST',
+    body: JSON.stringify({ manual_values: manualValues }),
+  })
+}
+
+export function listPendingActionPresets(): Promise<PendingActionPresetRead[]> {
+  return request<PendingActionPresetRead[]>('/api/pending-action-presets')
+}
+
+export function createPendingActionPreset(text: string): Promise<PendingActionPresetRead> {
+  return request<PendingActionPresetRead>('/api/pending-action-presets', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  })
+}
+
+export function deletePendingActionPreset(presetId: number): Promise<void> {
+  return request<void>(`/api/pending-action-presets/${presetId}`, { method: 'DELETE' })
+}
+
 export function startAIBatchAnalyze(): Promise<AIBatchRunRead> {
   return request<AIBatchRunRead>('/api/ai/batch-analyze', { method: 'POST' })
 }
@@ -510,6 +642,19 @@ export function askCaseQuestion(caseId: number, question: string): Promise<AskCa
   return request<AskCaseQuestionResponse>(`/api/ai/cases/${caseId}/ask`, {
     method: 'POST',
     body: JSON.stringify({ question }),
+  })
+}
+
+export interface SummarizeTextResponse {
+  summary: string
+  provider: string
+  model: string
+}
+
+export function summarizeText(text: string): Promise<SummarizeTextResponse> {
+  return request<SummarizeTextResponse>('/api/ai/summarize-text', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
   })
 }
 

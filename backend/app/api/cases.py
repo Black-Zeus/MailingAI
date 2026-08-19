@@ -24,12 +24,16 @@ from app.schemas.cases import (
     CaseBatchCreate,
     CaseBatchRunRead,
     CaseBulkRefreshResponse,
+    CaseBulkRemoveMessages,
     CaseCreate,
     CaseDashboardStats,
     CaseDetail,
     CaseEvidenceRead,
     CaseMergeRequest,
+    CaseMessageRead,
+    CaseMessageSearchRequest,
     CaseNoteCreate,
+    CaseNoteUpdate,
     CaseOwnerReassignRequest,
     CaseNoteRead,
     CaseRefreshResponse,
@@ -37,6 +41,9 @@ from app.schemas.cases import (
     CaseShareRead,
     CaseSummary,
     CaseUpdate,
+    ExclusionRuleCreate,
+    ExclusionRuleRead,
+    ExclusionRuleUpdate,
     TimelineEventUpdate,
 )
 from app.services import case_batch_service, cases_service
@@ -124,8 +131,9 @@ async def refresh_open_cases(pool: PoolDep, user: CurrentUserDep) -> CaseBulkRef
     """Re-correlaciona todos los expedientes abiertos (a los que el usuario
     tiene acceso) contra lo ya indexado -- util cuando otro trabajo (sin
     pasar por un expediente puntual) trajo correos que podrian corresponder
-    a alguno ya existente."""
-    result = await cases_service.refresh_all_open_cases(pool, user=user)
+    a alguno ya existente. De paso escanea (sin modificar) los expedientes
+    cerrados y marca cuales tienen correos nuevos pendientes."""
+    result = await cases_service.refresh_all_cases(pool, user=user)
     return CaseBulkRefreshResponse(**result)
 
 
@@ -150,6 +158,50 @@ async def get_cases_dashboard_stats(pool: PoolDep, user: CurrentUserDep) -> Case
 @router.get("/cases/dashboard/by-outcome", response_model=list[CaseSummary])
 async def get_cases_by_outcome(pool: PoolDep, user: CurrentUserDep, outcome: str = Query(...)) -> list[CaseSummary]:
     return await cases_service.list_cases_by_outcome(pool, outcome=outcome, user=user)
+
+
+@router.get("/cases/exclusion-rules", response_model=list[ExclusionRuleRead])
+async def list_global_exclusion_rules(pool: PoolDep, user: CurrentUserDep) -> list[ExclusionRuleRead]:
+    """Reglas globales del propio usuario -- alcance estrictamente personal,
+    nunca las de otro usuario (ver cases_service.list_exclusion_rules)."""
+    rules = await cases_service.list_exclusion_rules(pool, case_id=None, user=user)
+    return rules or []
+
+
+@router.post("/cases/exclusion-rules", response_model=ExclusionRuleRead, status_code=http_status.HTTP_201_CREATED)
+async def create_global_exclusion_rule(
+    payload: ExclusionRuleCreate, pool: PoolDep, user: CurrentUserDep
+) -> ExclusionRuleRead:
+    rule = await cases_service.create_exclusion_rule(
+        pool, case_id=None, pattern=payload.pattern, fields=payload.model_dump(exclude={"pattern"}), user=user
+    )
+    assert rule is not None  # case_id=None nunca devuelve None (no hay caso que buscar)
+    return rule
+
+
+@router.patch("/cases/exclusion-rules/{rule_id}", response_model=ExclusionRuleRead)
+async def update_exclusion_rule(
+    rule_id: int, payload: ExclusionRuleUpdate, pool: PoolDep, user: CurrentUserDep
+) -> ExclusionRuleRead:
+    try:
+        rule = await cases_service.update_exclusion_rule(
+            pool, rule_id, fields=payload.model_dump(exclude_unset=True), user=user
+        )
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    if rule is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Regla no encontrada")
+    return rule
+
+
+@router.delete("/cases/exclusion-rules/{rule_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_exclusion_rule(rule_id: int, pool: PoolDep, user: CurrentUserDep) -> None:
+    try:
+        deleted = await cases_service.delete_exclusion_rule(pool, rule_id, user=user)
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    if not deleted:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Regla no encontrada")
 
 
 @router.get("/cases/{case_id}", response_model=CaseDetail)
@@ -198,6 +250,8 @@ async def update_case(case_id: int, payload: CaseUpdate, pool: PoolDep, user: Cu
         )
     except (cases_service.CaseClosedError, cases_service.CaseNotEligibleForAIError) as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except cases_service.ClosingGlosaRequiredError as exc:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except cases_service.CaseAccessDeniedError as exc:
         raise _forbidden(exc) from exc
     except cases_service.CaseUpdateConflictError as exc:
@@ -247,6 +301,23 @@ async def add_case_note(case_id: int, payload: CaseNoteCreate, pool: PoolDep, us
         raise _forbidden(exc) from exc
     if note is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return note
+
+
+@router.patch("/cases/{case_id}/notes/{note_id}", response_model=CaseNoteRead)
+async def update_case_note(
+    case_id: int, note_id: int, payload: CaseNoteUpdate, pool: PoolDep, user: CurrentUserDep
+) -> CaseNoteRead:
+    try:
+        note = await cases_service.update_case_note(pool, case_id, note_id, payload.body, user=user)
+    except cases_service.CaseClosedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    except cases_service.NoteNotEditableError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if note is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso o nota no encontrados")
     return note
 
 
@@ -333,6 +404,22 @@ async def refresh_case(case_id: int, pool: PoolDep, user: CurrentUserDep) -> Cas
     return CaseRefreshResponse(case=case, new_messages_found=new_messages_found)
 
 
+@router.post("/cases/{case_id}/reopen-with-new-messages", response_model=CaseRefreshResponse)
+async def reopen_case_with_new_messages(case_id: int, pool: PoolDep, user: CurrentUserDep) -> CaseRefreshResponse:
+    """Reabre un expediente cerrado marcado con correos nuevos pendientes
+    (ver refresh_open_cases) y vincula esos correos de una vez."""
+    try:
+        result = await cases_service.reopen_case_with_new_messages(pool, case_id, user=user)
+    except cases_service.CaseNotClosedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    if result is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    case, new_messages_found = result
+    return CaseRefreshResponse(case=case, new_messages_found=new_messages_found)
+
+
 @router.post("/cases/{case_id}/messages", response_model=CaseDetail)
 async def add_case_message(case_id: int, payload: CaseAddMessage, pool: PoolDep, user: CurrentUserDep) -> CaseDetail:
     try:
@@ -364,6 +451,61 @@ async def remove_case_message(
     if case is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return case
+
+
+@router.post("/cases/{case_id}/messages/search", response_model=list[CaseMessageRead])
+async def search_case_messages(
+    case_id: int, payload: CaseMessageSearchRequest, pool: PoolDep, user: CurrentUserDep
+) -> list[CaseMessageRead]:
+    """Busca texto libre en asunto/cuerpo SOLO entre los correos ya
+    vinculados a este expediente -- pensado para encontrar candidatos a
+    excluir en lote (ver bulk_remove_case_messages) antes de confirmar."""
+    results = await cases_service.search_case_messages(pool, case_id, payload.query, user=user)
+    if results is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return results
+
+
+@router.post("/cases/{case_id}/messages/bulk-remove", response_model=CaseDetail)
+async def bulk_remove_case_messages(
+    case_id: int, payload: CaseBulkRemoveMessages, pool: PoolDep, user: CurrentUserDep
+) -> CaseDetail:
+    try:
+        case = await cases_service.bulk_remove_messages_from_case(
+            pool, case_id, payload.message_ids, query=payload.query, user=user
+        )
+    except cases_service.CaseClosedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    if case is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return case
+
+
+@router.get("/cases/{case_id}/exclusion-rules", response_model=list[ExclusionRuleRead])
+async def list_case_exclusion_rules(case_id: int, pool: PoolDep, user: CurrentUserDep) -> list[ExclusionRuleRead]:
+    rules = await cases_service.list_exclusion_rules(pool, case_id=case_id, user=user)
+    if rules is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return rules
+
+
+@router.post(
+    "/cases/{case_id}/exclusion-rules", response_model=ExclusionRuleRead, status_code=http_status.HTTP_201_CREATED
+)
+async def create_case_exclusion_rule(
+    case_id: int, payload: ExclusionRuleCreate, pool: PoolDep, user: CurrentUserDep
+) -> ExclusionRuleRead:
+    try:
+        rule = await cases_service.create_exclusion_rule(
+            pool, case_id=case_id, pattern=payload.pattern, fields=payload.model_dump(exclude={"pattern"}), user=user
+        )
+    except cases_service.CaseAccessDeniedError as exc:
+        raise _forbidden(exc) from exc
+    if rule is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
+    return rule
 
 
 @router.get("/cases/{case_id}/shares", response_model=list[CaseShareRead])

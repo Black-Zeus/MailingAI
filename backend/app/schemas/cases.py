@@ -24,6 +24,52 @@ class CaseAddMessage(BaseModel):
     message_id: str = Field(min_length=1)
 
 
+class CaseMessageSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+
+
+class CaseBulkRemoveMessages(BaseModel):
+    message_ids: list[str] = Field(min_length=1)
+    query: str | None = None
+
+
+class ExclusionRuleCreate(BaseModel):
+    pattern: str = Field(min_length=1)
+    match_subject: bool = False
+    match_body: bool = False
+    match_from: bool = False
+    match_to: bool = False
+    match_cc: bool = False
+    match_attachment: bool = False
+
+
+class ExclusionRuleUpdate(BaseModel):
+    pattern: str | None = None
+    match_subject: bool | None = None
+    match_body: bool | None = None
+    match_from: bool | None = None
+    match_to: bool | None = None
+    match_cc: bool | None = None
+    match_attachment: bool | None = None
+    enabled: bool | None = None
+
+
+class ExclusionRuleRead(BaseModel):
+    rule_id: int
+    owner_user_id: int
+    case_id: int | None
+    pattern: str
+    match_subject: bool
+    match_body: bool
+    match_from: bool
+    match_to: bool
+    match_cc: bool
+    match_attachment: bool
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 class CaseMergeRequest(BaseModel):
     case_ids: list[int] = Field(min_length=2)
     title: str = Field(min_length=1)
@@ -77,9 +123,16 @@ class CaseNoteRead(BaseModel):
     body: str
     body_markdown: str
     created_at: datetime
+    created_by_user_id: int | None = None
+    created_by_label: str | None = None
+    updated_at: datetime | None = None
 
 
 class CaseNoteCreate(BaseModel):
+    body: str = Field(min_length=1)
+
+
+class CaseNoteUpdate(BaseModel):
     body: str = Field(min_length=1)
 
 
@@ -90,6 +143,18 @@ class CaseEvidenceRead(BaseModel):
     content_type: str
     size_bytes: int
     created_at: datetime
+
+
+class CaseSentEmailRead(BaseModel):
+    sent_email_id: int
+    to_addresses: list[str]
+    cc_addresses: list[str]
+    subject: str
+    body_html: str
+    attached_case_pdf: bool
+    attachment_names: list[str]
+    sent_at: datetime
+    sent_by_label: str | None
 
 
 class CaseSummary(BaseModel):
@@ -112,6 +177,9 @@ class CaseSummary(BaseModel):
     next_review_at: date | None = None
     previous_owner_label: str | None = None
     updated_at: datetime
+    pending_reopen_message_count: int = 0
+    closing_glosa: str | None = None
+    alert_type: str | None = None
 
 
 class CaseDetail(CaseSummary):
@@ -119,6 +187,7 @@ class CaseDetail(CaseSummary):
     timeline: list[TimelineEventRead]
     notes: list[CaseNoteRead] = []
     evidence: list[CaseEvidenceRead] = []
+    sent_emails: list[CaseSentEmailRead] = []
     latest_ai_run: AIAnalyzeResponse | None = None
     ai_summary_override: str | None = None
 
@@ -162,6 +231,7 @@ class CaseBulkRefreshResponse(BaseModel):
     cases_with_new_messages: int
     new_messages_found: int
     errors: int
+    closed_cases_flagged: int = 0
 
 
 class TimelineEventUpdate(BaseModel):
@@ -177,6 +247,8 @@ class CaseUpdate(BaseModel):
     status: CaseStatus | None = None
     pending_action: str | None = None
     next_review_at: date | None = None
+    closing_glosa: str | None = None
+    alert_type: str | None = None
     expected_updated_at: datetime | None = None
 
 
@@ -216,6 +288,7 @@ class CaseBatchItemRead(BaseModel):
     status: CaseBatchItemStatus
     detail: str | None
     case_id: int | None
+    reused: bool = False
 
 
 class CaseBatchRunRead(BaseModel):

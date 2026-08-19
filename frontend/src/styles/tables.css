@@ -56,6 +56,44 @@ table {
   color: var(--muted);
 }
 
+/* Tablas Markdown (ej. plantillas de correo con tabla de datos) -- sin esto
+   heredan solo el reset generico de la tabla base (border-collapse/width),
+   sin ninguna linea entre celdas, y quedan pegadas/ilegibles. */
+.md-content table {
+  margin: 6px 0 10px;
+  font-size: 0.95em;
+}
+.md-content th,
+.md-content td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-content th {
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 650;
+}
+
+/* Encabezados Markdown (#, ##, ###) dentro de contenido renderizado -- sin
+   esto heredan el tamaño/margen por defecto del navegador (ej. h1 a 2em),
+   que en un cuerpo de correo compacto se ve desproporcionado. */
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4 {
+  margin: 14px 0 6px;
+  font-size: 1.1em;
+  line-height: 1.3;
+}
+.md-content h1:first-child,
+.md-content h2:first-child,
+.md-content h3:first-child,
+.md-content h4:first-child {
+  margin-top: 0;
+}
+
 th {
   color: var(--muted);
   font-size: var(--text-sm);

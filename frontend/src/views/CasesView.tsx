@@ -7,6 +7,7 @@ import {
   analyzeCaseWithAI,
   createCase,
   createJob,
+  createPendingActionPreset,
   deleteCases,
   deleteCase,
   exportCasePdfBlob,
@@ -28,19 +29,39 @@ import {
   reassignCaseOwner,
   removeCaseMessage,
   renderMarkdownPreview,
+  reopenCaseWithNewMessages,
   retraceMessageAttachments,
   revokeCaseShare,
+  bulkRemoveCaseMessages,
+  createCaseExclusionRule,
+  createGlobalExclusionRule,
+  deleteExclusionRule,
+  deletePendingActionPreset,
+  listCaseExclusionRules,
+  listPendingActionPresets,
+  listGlobalExclusionRules,
+  listMailTemplates,
+  renderMailTemplate,
+  searchCaseMessages,
   sendCaseEmail,
   shareCase,
+  summarizeText,
   startAIBatchAnalyze,
   startCaseBatchCreate,
   updateAiSummary,
   updateCase,
+  updateCaseNote,
+  updateExclusionRule,
   updateTimelineEvent,
 } from '../api/client'
-import type { CaseAuditLogRead, CaseBatchRunRead, CaseDetail, CaseOutcome, CaseSeedPrefill, CaseShareRead, CaseSummary, CaseType, SeedType } from '../types/cases'
+import type { CaseAuditLogRead, CaseBatchRunRead, CaseDetail, CaseEvidenceRead, CaseMessageRead, CaseOutcome, CaseSeedPrefill, CaseSentEmailRead, CaseShareRead, CaseSummary, CaseType, ExclusionRuleFields, ExclusionRuleRead, SeedType } from '../types/cases'
+import { ExclusionRuleManager } from '../components/ExclusionRuleManager'
+import { RecipientInput } from '../components/RecipientInput'
+import type { MailTemplateRead } from '../types/mailTemplates'
+import { AUTO_VARIABLE_NAMES } from '../types/mailTemplates'
 import type { JobRead } from '../types/jobs'
 import type { MessageListItem } from '../types/messages'
+import type { PendingActionPresetRead } from '../types/pendingActionPresets'
 import { CASE_OUTCOME_LABELS, DETERMINATION_LABELS } from '../types/cases'
 import type { AIBatchRunRead } from '../types/ai'
 import type { MailboxAccountRead } from '../types/mailboxes'
@@ -62,6 +83,8 @@ import {
   Eye,
   ExternalLink,
   FileDown,
+  FileText,
+  Filter,
   HelpCircle,
   Inbox,
   UserCog,
@@ -71,6 +94,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  RefreshCw,
   Save,
   Search,
   Share2,
@@ -230,6 +254,11 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const mailboxPollRefs = useRef<Record<number, number>>({})
   const aiAnalysisPollRefs = useRef<Record<number, number>>({})
   const [mailboxAccounts, setMailboxAccounts] = useState<MailboxAccountRead[]>([])
+  const [pendingActionPresets, setPendingActionPresets] = useState<PendingActionPresetRead[]>([])
+  const [presetsMenuOpenIds, setPresetsMenuOpenIds] = useState<Set<number>>(new Set())
+  const [newPresetText, setNewPresetText] = useState('')
+  const [addingPreset, setAddingPreset] = useState(false)
+  const [deletingPresetId, setDeletingPresetId] = useState<number | null>(null)
   const [mailboxSearchAccountId, setMailboxSearchAccountId] = useState<Record<number, number>>({})
   const [deleteTarget, setDeleteTarget] = useState<CaseSummary | null>(null)
   const [deletingCase, setDeletingCase] = useState(false)
@@ -237,6 +266,25 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [addMessageResults, setAddMessageResults] = useState<Record<number, MessageListItem[]>>({})
   const [addMessageSearching, setAddMessageSearching] = useState<number | null>(null)
   const [addingMessageId, setAddingMessageId] = useState<string | null>(null)
+
+  const [excludeSearchOpenIds, setExcludeSearchOpenIds] = useState<Set<number>>(new Set())
+  const [excludeQuery, setExcludeQuery] = useState<Record<number, string>>({})
+  const [excludeResults, setExcludeResults] = useState<Record<number, CaseMessageRead[]>>({})
+  const [excludeSelected, setExcludeSelected] = useState<Record<number, Set<string>>>({})
+  const [excludeSearching, setExcludeSearching] = useState<number | null>(null)
+  const [excludeConfirmTarget, setExcludeConfirmTarget] = useState<{
+    caseId: number
+    messageIds: string[]
+    query: string
+  } | null>(null)
+  const [excluding, setExcluding] = useState(false)
+  const [caseExclusionRules, setCaseExclusionRules] = useState<Record<number, ExclusionRuleRead[]>>({})
+  const [togglingCaseRuleId, setTogglingCaseRuleId] = useState<number | null>(null)
+  const [deletingCaseRuleId, setDeletingCaseRuleId] = useState<number | null>(null)
+  const [globalRulesOpen, setGlobalRulesOpen] = useState(false)
+  const [globalExclusionRules, setGlobalExclusionRules] = useState<ExclusionRuleRead[]>([])
+  const [togglingGlobalRuleId, setTogglingGlobalRuleId] = useState<number | null>(null)
+  const [deletingGlobalRuleId, setDeletingGlobalRuleId] = useState<number | null>(null)
   const [exportingCaseId, setExportingCaseId] = useState<number | null>(null)
   const [bodyModal, setBodyModal] = useState<MessageBodyModalState | null>(null)
   const [timelineOpenIds, setTimelineOpenIds] = useState<Set<number>>(new Set())
@@ -249,14 +297,26 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [addingEvidenceId, setAddingEvidenceId] = useState<number | null>(null)
   const [notesOpenIds, setNotesOpenIds] = useState<Set<number>>(new Set())
   const [evidenceOpenIds, setEvidenceOpenIds] = useState<Set<number>>(new Set())
+  const [sentEmailsOpenIds, setSentEmailsOpenIds] = useState<Set<number>>(new Set())
+  const [viewingSentEmail, setViewingSentEmail] = useState<CaseSentEmailRead | null>(null)
+  const [viewingEvidence, setViewingEvidence] = useState<{ caseId: number; evidence: CaseEvidenceRead } | null>(null)
   const [auditLogOpenIds, setAuditLogOpenIds] = useState<Set<number>>(new Set())
   const [auditLogs, setAuditLogs] = useState<Record<number, CaseAuditLogRead[]>>({})
   const [loadingAuditLogId, setLoadingAuditLogId] = useState<number | null>(null)
   const [outcomeDraft, setOutcomeDraft] = useState<Record<number, CaseOutcome | ''>>({})
+  const [alertTypeDraft, setAlertTypeDraft] = useState<Record<number, string>>({})
   const [pendingActionDraft, setPendingActionDraft] = useState<Record<number, string>>({})
   const [nextReviewDraft, setNextReviewDraft] = useState<Record<number, string>>({})
+  const [closingGlosaDraft, setClosingGlosaDraft] = useState<Record<number, string>>({})
+  const [glosaSuggestion, setGlosaSuggestion] = useState<Record<number, string>>({})
+  const [summarizingGlosaId, setSummarizingGlosaId] = useState<number | null>(null)
+  const [bodySuggestion, setBodySuggestion] = useState<string | null>(null)
+  const [summarizingBody, setSummarizingBody] = useState(false)
   const [savingOutcomeId, setSavingOutcomeId] = useState<number | null>(null)
   const [savingFollowUpId, setSavingFollowUpId] = useState<number | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
+  const [editNoteDraft, setEditNoteDraft] = useState('')
+  const [savingNoteEditId, setSavingNoteEditId] = useState<number | null>(null)
   const [sendEmailTarget, setSendEmailTarget] = useState<number | null>(null)
   const [sendEmailForm, setSendEmailForm] = useState<{
     to: string
@@ -271,7 +331,15 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(false)
   const [mdHelpOpen, setMdHelpOpen] = useState(false)
   const [emailPreviewHtml, setEmailPreviewHtml] = useState('')
+  const [reportCaseId, setReportCaseId] = useState<number | null>(null)
+  const [reportTemplates, setReportTemplates] = useState<MailTemplateRead[]>([])
+  const [reportTemplateId, setReportTemplateId] = useState<number | null>(null)
+  const [reportManualValues, setReportManualValues] = useState<Record<string, string>>({})
+  const [reportRendering, setReportRendering] = useState(false)
+  const [reportSuggestCaseId, setReportSuggestCaseId] = useState<number | null>(null)
   const [loadingEmailPreview, setLoadingEmailPreview] = useState(false)
+  const [openingCasePdfPreview, setOpeningCasePdfPreview] = useState(false)
+  const [casePdfInfo, setCasePdfInfo] = useState<{ url: string; sizeBytes: number } | null>(null)
 
   function openBodyModal(message: {
     subject: string | null
@@ -344,6 +412,65 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     })
   }
 
+  function toggleSentEmails(caseId: number) {
+    setSentEmailsOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+      }
+      return next
+    })
+  }
+
+  function togglePresetsMenu(caseId: number) {
+    setPresetsMenuOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+      }
+      return next
+    })
+  }
+
+  function insertPendingActionPreset(caseId: number, text: string) {
+    setPendingActionDraft((prev) => {
+      const current = (prev[caseId] ?? '').trim()
+      return { ...prev, [caseId]: current ? `${current}\n${text}` : text }
+    })
+  }
+
+  async function handleAddPendingActionPreset() {
+    const text = newPresetText.trim()
+    if (!text) return
+    setAddingPreset(true)
+    try {
+      const preset = await createPendingActionPreset(text)
+      setPendingActionPresets((prev) => [...prev, preset])
+      setNewPresetText('')
+      showToast('Frase agregada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo agregar la frase.', true)
+    } finally {
+      setAddingPreset(false)
+    }
+  }
+
+  async function handleDeletePendingActionPreset(presetId: number) {
+    setDeletingPresetId(presetId)
+    try {
+      await deletePendingActionPreset(presetId)
+      setPendingActionPresets((prev) => prev.filter((p) => p.preset_id !== presetId))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo borrar la frase.', true)
+    } finally {
+      setDeletingPresetId(null)
+    }
+  }
+
   async function toggleAuditLog(caseId: number) {
     const willOpen = !auditLogOpenIds.has(caseId)
     setAuditLogOpenIds((prev) => {
@@ -380,6 +507,14 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   } | null>(null)
   const [removingMessage, setRemovingMessage] = useState(false)
 
+  const [reopenTarget, setReopenTarget] = useState<CaseSummary | null>(null)
+  const [statusConfirmTarget, setStatusConfirmTarget] = useState<{
+    caseId: number
+    title: string
+    nextStatus: 'open' | 'closed'
+  } | null>(null)
+  const [reopening, setReopening] = useState(false)
+
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState('')
   const [bulkCaseType, setBulkCaseType] = useState<CaseType>('cr')
@@ -400,7 +535,21 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [mergeTitle, setMergeTitle] = useState('')
   const [merging, setMerging] = useState(false)
 
-  useModalBehavior(bulkOpen || formOpen || sendEmailTarget !== null || mergeModalOpen)
+  // Un solo bloqueo de scroll compartido por todos los modales "sueltos" de
+  // esta vista (los que no pasan por el componente <ConfirmModal>, que ya
+  // trae su propio useModalBehavior) -- cada vez que se agrega un modal
+  // nuevo hay que sumarlo aca, si no el fondo queda scrolleable atras.
+  useModalBehavior(
+    globalRulesOpen ||
+      bulkOpen ||
+      formOpen ||
+      sendEmailTarget !== null ||
+      mergeModalOpen ||
+      reportCaseId !== null ||
+      emailPreviewOpen ||
+      viewingSentEmail !== null ||
+      viewingEvidence !== null,
+  )
 
   const [associatingMail, setAssociatingMail] = useState(false)
   const [formSearchMailbox, setFormSearchMailbox] = useState(false)
@@ -437,8 +586,10 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         .then((detail) => {
           setDetails((prev) => ({ ...prev, [openCaseId]: detail }))
           setOutcomeDraft((prev) => ({ ...prev, [openCaseId]: detail.outcome ?? '' }))
+          setAlertTypeDraft((prev) => ({ ...prev, [openCaseId]: detail.alert_type ?? '' }))
           setPendingActionDraft((prev) => ({ ...prev, [openCaseId]: detail.pending_action ?? '' }))
           setNextReviewDraft((prev) => ({ ...prev, [openCaseId]: detail.next_review_at ?? '' }))
+          setClosingGlosaDraft((prev) => ({ ...prev, [openCaseId]: detail.closing_glosa ?? '' }))
         })
         .catch(() => {})
     }
@@ -560,6 +711,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   }, [])
 
   useEffect(() => {
+    listPendingActionPresets()
+      .then(setPendingActionPresets)
+      .catch(() => setPendingActionPresets([]))
+  }, [])
+
+  useEffect(() => {
     // Retoma cualquier búsqueda en el buzón (por expediente) que haya quedado corriendo en el
     // backend -- el job en sí nunca se cancela con un refresh (vive en mailing.analysis_jobs,
     // igual que cualquier trabajo de "Nueva consulta"), solo se perdía el polling visual y el
@@ -614,8 +771,10 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         const detail = await getCase(caseId)
         setDetails((prev) => ({ ...prev, [caseId]: detail }))
         setOutcomeDraft((prev) => ({ ...prev, [caseId]: detail.outcome ?? '' }))
+        setAlertTypeDraft((prev) => ({ ...prev, [caseId]: detail.alert_type ?? '' }))
         setPendingActionDraft((prev) => ({ ...prev, [caseId]: detail.pending_action ?? '' }))
         setNextReviewDraft((prev) => ({ ...prev, [caseId]: detail.next_review_at ?? '' }))
+        setClosingGlosaDraft((prev) => ({ ...prev, [caseId]: detail.closing_glosa ?? '' }))
         if (detail.latest_ai_run?.status === 'running') {
           // Retoma el polling si el analisis de IA quedo corriendo de una
           // visita anterior -- el estado vive en el backend (mailing.ai_runs),
@@ -631,12 +790,35 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [togglingStatusId, setTogglingStatusId] = useState<number | null>(null)
 
   async function handleToggleStatus(caseId: number, nextStatus: 'open' | 'closed') {
+    const closingGlosa = closingGlosaDraft[caseId]?.trim() || ''
+    if (nextStatus === 'closed' && !closingGlosa && !details[caseId]?.closing_glosa) {
+      showToast('Indica la glosa de cierre (motivo del cierre) antes de cerrar el expediente.', true)
+      return
+    }
     setTogglingStatusId(caseId)
     try {
-      const updated = await updateCase(caseId, { status: nextStatus })
+      const updated = await updateCase(caseId, {
+        status: nextStatus,
+        // Al cerrar se guardan TODOS los borradores pendientes en el mismo
+        // request -- antes se podia cerrar sin haber apretado "Guardar
+        // conclusión"/"Guardar seguimiento", y el dropdown de Conclusión se
+        // quedaba mostrando una seleccion que en realidad nunca se habia
+        // persistido (bug real, detectado en el caso GFCH-260702617).
+        ...(nextStatus === 'closed'
+          ? {
+              outcome: outcomeDraft[caseId] || null,
+              alert_type: alertTypeDraft[caseId]?.trim() || null,
+              pending_action: pendingActionDraft[caseId]?.trim() || null,
+              next_review_at: nextReviewDraft[caseId] || null,
+              closing_glosa: closingGlosa || null,
+            }
+          : {}),
+      })
       setDetails((prev) => ({ ...prev, [caseId]: updated }))
       await refreshCases()
       showToast(nextStatus === 'closed' ? 'Expediente cerrado' : 'Expediente reabierto')
+      setStatusConfirmTarget(null)
+      if (nextStatus === 'closed') setReportSuggestCaseId(caseId)
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado del expediente.', true)
     } finally {
@@ -649,6 +831,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     try {
       const updated = await updateCase(caseId, {
         outcome: outcomeDraft[caseId] || null,
+        alert_type: alertTypeDraft[caseId]?.trim() || null,
         expected_updated_at: details[caseId]?.updated_at,
       })
       setDetails((prev) => ({ ...prev, [caseId]: updated }))
@@ -671,6 +854,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       const updated = await updateCase(caseId, {
         pending_action: pendingActionDraft[caseId]?.trim() || null,
         next_review_at: nextReviewDraft[caseId] || null,
+        closing_glosa: closingGlosaDraft[caseId]?.trim() || null,
         expected_updated_at: details[caseId]?.updated_at,
       })
       setDetails((prev) => ({ ...prev, [caseId]: updated }))
@@ -684,6 +868,37 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     } finally {
       setSavingFollowUpId(null)
     }
+  }
+
+  async function handleSummarizeGlosa(caseId: number) {
+    const text = closingGlosaDraft[caseId]?.trim()
+    if (!text) return
+    setSummarizingGlosaId(caseId)
+    try {
+      const result = await summarizeText(text)
+      setGlosaSuggestion((prev) => ({ ...prev, [caseId]: result.summary }))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo generar el resumen con IA.', true)
+    } finally {
+      setSummarizingGlosaId(null)
+    }
+  }
+
+  function handleAcceptGlosaSuggestion(caseId: number) {
+    setClosingGlosaDraft((prev) => ({ ...prev, [caseId]: glosaSuggestion[caseId] ?? prev[caseId] ?? '' }))
+    setGlosaSuggestion((prev) => {
+      const next = { ...prev }
+      delete next[caseId]
+      return next
+    })
+  }
+
+  function handleRejectGlosaSuggestion(caseId: number) {
+    setGlosaSuggestion((prev) => {
+      const next = { ...prev }
+      delete next[caseId]
+      return next
+    })
   }
 
   async function handleAddNote(caseId: number) {
@@ -703,6 +918,37 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       showToast(err instanceof ApiError ? err.message : 'No se pudo agregar la nota.', true)
     } finally {
       setAddingNoteId(null)
+    }
+  }
+
+  function handleStartEditNote(noteId: number, currentMarkdown: string) {
+    setEditingNoteId(noteId)
+    setEditNoteDraft(currentMarkdown)
+  }
+
+  function handleCancelEditNote() {
+    setEditingNoteId(null)
+    setEditNoteDraft('')
+  }
+
+  async function handleSaveEditNote(caseId: number, noteId: number) {
+    const body = editNoteDraft.trim()
+    if (!body) return
+    setSavingNoteEditId(noteId)
+    try {
+      const note = await updateCaseNote(caseId, noteId, body)
+      setDetails((prev) => {
+        const current = prev[caseId]
+        if (!current) return prev
+        return { ...prev, [caseId]: { ...current, notes: current.notes.map((n) => (n.note_id === noteId ? note : n)) } }
+      })
+      setEditingNoteId(null)
+      setEditNoteDraft('')
+      showToast('Nota actualizada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo editar la nota.', true)
+    } finally {
+      setSavingNoteEditId(null)
     }
   }
 
@@ -852,6 +1098,33 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   function closeSendEmailModal() {
     setSendEmailTarget(null)
     setEmailPreviewOpen(false)
+    setBodySuggestion(null)
+    if (casePdfInfo) URL.revokeObjectURL(casePdfInfo.url)
+    setCasePdfInfo(null)
+  }
+
+  async function handleSummarizeBody() {
+    const text = sendEmailForm.body.trim()
+    if (!text) return
+    setSummarizingBody(true)
+    try {
+      const result = await summarizeText(text)
+      setBodySuggestion(result.summary)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo generar el resumen con IA.', true)
+    } finally {
+      setSummarizingBody(false)
+    }
+  }
+
+  function handleAcceptBodySuggestion() {
+    if (bodySuggestion === null) return
+    setSendEmailForm((prev) => ({ ...prev, body: bodySuggestion }))
+    setBodySuggestion(null)
+  }
+
+  function handleRejectBodySuggestion() {
+    setBodySuggestion(null)
   }
 
   async function handlePreviewEmail() {
@@ -865,6 +1138,30 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     } finally {
       setLoadingEmailPreview(false)
     }
+  }
+
+  async function handleOpenCasePdfFromPreview() {
+    if (!sendEmailTarget) return
+    if (casePdfInfo) {
+      window.open(casePdfInfo.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    setOpeningCasePdfPreview(true)
+    try {
+      const blob = await exportCasePdfBlob(sendEmailTarget)
+      const url = URL.createObjectURL(blob)
+      setCasePdfInfo({ url, sizeBytes: blob.size })
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo abrir el PDF del expediente.', true)
+    } finally {
+      setOpeningCasePdfPreview(false)
+    }
+  }
+
+  function handleOpenAttachmentFile(file: File) {
+    const url = URL.createObjectURL(file)
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   async function handleSendEmail() {
@@ -890,6 +1187,91 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       showToast(err instanceof ApiError ? err.message : 'No se pudo enviar el correo.', true)
     } finally {
       setSendingEmail(false)
+    }
+  }
+
+  function detectManualFields(template: MailTemplateRead): string[] {
+    const text = `${template.subject_template}\n${template.body_template}`
+    const found = new Set<string>()
+    for (const match of text.matchAll(/\[([A-Z0-9_]+)\]/g)) {
+      if (!AUTO_VARIABLE_NAMES.has(match[1])) found.add(match[1])
+    }
+    return Array.from(found)
+  }
+
+  async function openReportModal(caseId: number) {
+    setReportCaseId(caseId)
+    setReportTemplateId(null)
+    setReportManualValues({})
+    try {
+      setReportTemplates(await listMailTemplates(true))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudieron cargar las plantillas.', true)
+    }
+  }
+
+  // Prellena un campo manual del reporte SOLO si su nombre calza con algo
+  // que el expediente ya tiene cargado -- sin IA, determinístico. El resto
+  // queda vacío como antes; el usuario siempre puede corregir/completar
+  // cualquiera de los dos antes de generar.
+  function suggestManualFieldValue(fieldName: string, detail: CaseDetail | undefined): string {
+    if (!detail) return ''
+    const upper = fieldName.toUpperCase()
+    // Chequeado ANTES que la regla genérica de abajo -- SIGUIENTE_ACCION
+    // también contiene "ACCION", así que si no fuera primero nunca llegaría
+    // a usar closing_glosa como respaldo. pending_action suele quedar vacío
+    // una vez cerrado el caso; closing_glosa (la glosa de cierre) es la
+    // mejor fuente disponible en ese momento para "próxima acción".
+    if (upper.includes('SIGUIENTE') && upper.includes('ACCION')) {
+      return detail.pending_action || detail.closing_glosa || ''
+    }
+    if (upper.includes('ACCION') && detail.pending_action) {
+      return detail.pending_action
+    }
+    if ((upper.includes('ESTADO') || upper.includes('CONCLUSION')) && detail.outcome) {
+      return CASE_OUTCOME_LABELS[detail.outcome]
+    }
+    if (
+      (upper.includes('VALIDACION') || upper.includes('OBSERVACION') || upper.includes('RESUMEN')) &&
+      detail.notes.length > 0
+    ) {
+      const latestNote = [...detail.notes].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+      return latestNote.body_markdown
+    }
+    // Frase de arranque, no un dato real -- a diferencia de las reglas de
+    // arriba (que copian algo que el expediente ya tiene), esta solo evita
+    // que el auditor empiece de una caja completamente vacía; se espera que
+    // la edite/complete a mano antes de generar (ver caso GFCH-260702220,
+    // quedó vacío por no completarse este campo).
+    if (upper.includes('INTRODUCCION')) {
+      return `De acuerdo con las validaciones realizadas sobre el caso ${detail.external_code ?? detail.title}, se informa lo siguiente:`
+    }
+    return ''
+  }
+
+  function selectReportTemplate(templateId: number) {
+    setReportTemplateId(templateId)
+    const template = reportTemplates.find((t) => t.template_id === templateId)
+    const detail = reportCaseId ? details[reportCaseId] : undefined
+    const initial: Record<string, string> = {}
+    if (template) {
+      for (const field of detectManualFields(template)) initial[field] = suggestManualFieldValue(field, detail)
+    }
+    setReportManualValues(initial)
+  }
+
+  async function handleGenerateReport() {
+    if (!reportCaseId || !reportTemplateId) return
+    setReportRendering(true)
+    try {
+      const result = await renderMailTemplate(reportCaseId, reportTemplateId, reportManualValues)
+      openSendEmailModal(reportCaseId)
+      setSendEmailForm((prev) => ({ ...prev, subject: result.subject, body: result.body }))
+      setReportCaseId(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo generar el reporte.', true)
+    } finally {
+      setReportRendering(false)
     }
   }
 
@@ -1058,15 +1440,19 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     }
   }
 
+  function casePdfFileName(caseId: number, title: string): string {
+    const safeTitle = title.replace(/[^\w\-áéíóúñÁÉÍÓÚÑ ]/g, '').trim().slice(0, 60) || 'expediente'
+    return `expediente_${caseId}_${safeTitle}.pdf`
+  }
+
   async function handleExportCase(caseId: number, title: string) {
     setExportingCaseId(caseId)
     try {
       const blob = await exportCasePdfBlob(caseId)
       const url = URL.createObjectURL(blob)
-      const safeTitle = title.replace(/[^\w\-áéíóúñÁÉÍÓÚÑ ]/g, '').trim().slice(0, 60) || 'expediente'
       const link = document.createElement('a')
       link.href = url
-      link.download = `expediente_${caseId}_${safeTitle}.pdf`
+      link.download = casePdfFileName(caseId, title)
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -1076,6 +1462,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     } finally {
       setExportingCaseId(null)
     }
+  }
+
+  function formatFileSize(value: number): string {
+    if (value < 1024) return `${value} B`
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`
   }
 
   async function handleSearchMessageToAdd(caseId: number) {
@@ -1114,6 +1506,150 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       showToast(err instanceof ApiError ? err.message : 'No se pudo agregar el correo.', true)
     } finally {
       setAddingMessageId(null)
+    }
+  }
+
+  function toggleExcludeSearch(caseId: number) {
+    setExcludeSearchOpenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(caseId)) {
+        next.delete(caseId)
+      } else {
+        next.add(caseId)
+        if (!caseExclusionRules[caseId]) {
+          listCaseExclusionRules(caseId)
+            .then((rules) => setCaseExclusionRules((r) => ({ ...r, [caseId]: rules })))
+            .catch(() => {})
+        }
+      }
+      return next
+    })
+  }
+
+  async function handleCreateCaseExclusionRule(caseId: number, pattern: string, fields: ExclusionRuleFields) {
+    try {
+      await createCaseExclusionRule(caseId, { pattern, ...fields })
+      const rules = await listCaseExclusionRules(caseId)
+      setCaseExclusionRules((prev) => ({ ...prev, [caseId]: rules }))
+      showToast('Regla creada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo crear la regla.', true)
+    }
+  }
+
+  async function handleToggleCaseExclusionRule(caseId: number, rule: ExclusionRuleRead) {
+    setTogglingCaseRuleId(rule.rule_id)
+    try {
+      await updateExclusionRule(rule.rule_id, { enabled: !rule.enabled })
+      const rules = await listCaseExclusionRules(caseId)
+      setCaseExclusionRules((prev) => ({ ...prev, [caseId]: rules }))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado de la regla.', true)
+    } finally {
+      setTogglingCaseRuleId(null)
+    }
+  }
+
+  async function handleDeleteCaseExclusionRule(caseId: number, rule: ExclusionRuleRead) {
+    setDeletingCaseRuleId(rule.rule_id)
+    try {
+      await deleteExclusionRule(rule.rule_id)
+      const rules = await listCaseExclusionRules(caseId)
+      setCaseExclusionRules((prev) => ({ ...prev, [caseId]: rules }))
+      showToast('Regla eliminada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar la regla.', true)
+    } finally {
+      setDeletingCaseRuleId(null)
+    }
+  }
+
+  function openGlobalRules() {
+    setGlobalRulesOpen(true)
+    listGlobalExclusionRules()
+      .then(setGlobalExclusionRules)
+      .catch((err) => showToast(err instanceof ApiError ? err.message : 'No se pudieron cargar tus reglas globales.', true))
+  }
+
+  async function handleCreateGlobalExclusionRule(pattern: string, fields: ExclusionRuleFields) {
+    try {
+      await createGlobalExclusionRule({ pattern, ...fields })
+      setGlobalExclusionRules(await listGlobalExclusionRules())
+      showToast('Regla creada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo crear la regla.', true)
+    }
+  }
+
+  async function handleToggleGlobalExclusionRule(rule: ExclusionRuleRead) {
+    setTogglingGlobalRuleId(rule.rule_id)
+    try {
+      await updateExclusionRule(rule.rule_id, { enabled: !rule.enabled })
+      setGlobalExclusionRules(await listGlobalExclusionRules())
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado de la regla.', true)
+    } finally {
+      setTogglingGlobalRuleId(null)
+    }
+  }
+
+  async function handleDeleteGlobalExclusionRule(rule: ExclusionRuleRead) {
+    setDeletingGlobalRuleId(rule.rule_id)
+    try {
+      await deleteExclusionRule(rule.rule_id)
+      setGlobalExclusionRules(await listGlobalExclusionRules())
+      showToast('Regla eliminada')
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo eliminar la regla.', true)
+    } finally {
+      setDeletingGlobalRuleId(null)
+    }
+  }
+
+  async function handleSearchMessagesToExclude(caseId: number) {
+    const query = (excludeQuery[caseId] || '').trim()
+    if (!query) return
+    setExcludeSearching(caseId)
+    try {
+      const results = await searchCaseMessages(caseId, query)
+      setExcludeResults((prev) => ({ ...prev, [caseId]: results }))
+      setExcludeSelected((prev) => ({ ...prev, [caseId]: new Set() }))
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo buscar correos.', true)
+    } finally {
+      setExcludeSearching(null)
+    }
+  }
+
+  function toggleExcludeSelected(caseId: number, messageId: string) {
+    setExcludeSelected((prev) => {
+      const current = new Set(prev[caseId] ?? [])
+      if (current.has(messageId)) {
+        current.delete(messageId)
+      } else {
+        current.add(messageId)
+      }
+      return { ...prev, [caseId]: current }
+    })
+  }
+
+  async function handleBulkExcludeMessages() {
+    if (!excludeConfirmTarget) return
+    const { caseId, messageIds, query } = excludeConfirmTarget
+    setExcluding(true)
+    try {
+      const detail = await bulkRemoveCaseMessages(caseId, messageIds, query)
+      setDetails((prev) => ({ ...prev, [caseId]: detail }))
+      await refreshCases()
+      showToast(`${messageIds.length} correo(s) excluido(s) del expediente`)
+      setExcludeResults((prev) => ({ ...prev, [caseId]: [] }))
+      setExcludeSelected((prev) => ({ ...prev, [caseId]: new Set() }))
+      setExcludeQuery((prev) => ({ ...prev, [caseId]: '' }))
+      setExcludeConfirmTarget(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudieron excluir los correos.', true)
+    } finally {
+      setExcluding(false)
     }
   }
 
@@ -1158,6 +1694,22 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     }
   }
 
+  async function handleReopenCase() {
+    if (!reopenTarget) return
+    setReopening(true)
+    try {
+      const result = await reopenCaseWithNewMessages(reopenTarget.case_id)
+      setDetails((prev) => ({ ...prev, [reopenTarget.case_id]: result.case }))
+      await refreshCases()
+      showToast(`Expediente reabierto — ${result.new_messages_found} correo(s) nuevo(s) vinculado(s)`)
+      setReopenTarget(null)
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'No se pudo reabrir el expediente.', true)
+    } finally {
+      setReopening(false)
+    }
+  }
+
   function parseBulkKeywords(): string[] {
     return Array.from(
       new Set(
@@ -1175,7 +1727,9 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       const result = await refreshOpenCases()
       await refreshCases()
       showToast(
-        `Revisados ${result.cases_checked} expediente(s) abierto(s) — ${result.cases_with_new_messages} con correos nuevos (${result.new_messages_found} en total)${result.errors > 0 ? `, ${result.errors} error(es)` : ''}.`,
+        `Revisados ${result.cases_checked} expediente(s) abierto(s) — ${result.cases_with_new_messages} con correos nuevos (${result.new_messages_found} en total)` +
+          `${result.closed_cases_flagged > 0 ? ` · ${result.closed_cases_flagged} expediente(s) cerrado(s) con correos nuevos detectados` : ''}` +
+          `${result.errors > 0 ? `, ${result.errors} error(es)` : ''}.`,
         result.errors > 0,
       )
     } catch (err) {
@@ -1381,6 +1935,14 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                 ? '✕ Cerrar creación en lote'
                 : '＋ Crear en lote'}
           </button>
+          <button
+            type="button"
+            className="btn btn-labeled"
+            onClick={openGlobalRules}
+            title="Reglas tuyas que evitan que un correo se vuelva a sugerir en la correlación de cualquiera de tus expedientes"
+          >
+            🚫 Reglas de exclusión
+          </button>
           <button type="button" className="btn primary btn-labeled" onClick={() => setFormOpen((v) => !v)}>
             {formOpen ? '✕ Cerrar formulario' : '＋ Nuevo expediente'}
           </button>
@@ -1432,6 +1994,37 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         <KpiCard label="Mensajes correlacionados" value={totalMessages} color="var(--accent-2)" />
       </div>
 
+      <div className={`modal-backdrop${globalRulesOpen ? ' open' : ''}`}>
+        <div className="modal medium">
+          <div className="modal-body">
+            <h3>Reglas de exclusión</h3>
+            <p>
+              Evitan que un correo se vuelva a sugerir/vincular en la correlación automática (crear, "Buscar correos
+              relacionados", "Asociar correos"). Son tuyas — solo afectan a los expedientes que te pertenecen a ti,
+              no a los de otros usuarios. No son retroactivas: no desvinculan correos ya asociados a un expediente.
+              Para una regla que solo afecte a un expediente puntual, usá "Buscar para excluir" dentro de ese
+              expediente.
+            </p>
+            <div className="mt-6">
+              <ExclusionRuleManager
+                rules={globalExclusionRules}
+                onCreate={handleCreateGlobalExclusionRule}
+                onToggle={handleToggleGlobalExclusionRule}
+                onDelete={handleDeleteGlobalExclusionRule}
+                togglingId={togglingGlobalRuleId}
+                deletingId={deletingGlobalRuleId}
+                idPrefix="global-rule"
+              />
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" onClick={() => setGlobalRulesOpen(false)}>
+              ✕ Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div
         className={`modal-backdrop${bulkOpen ? ' open' : ''}`}
       >
@@ -1445,7 +2038,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                 <textarea
                   id="bulkKeywords"
                   rows={8}
-                  placeholder={'GFCH-I-069926\nGFCH-I-074270\n...'}
+                  placeholder={'TCK-2026-000123\nTCK-2026-000456\n...'}
                   value={bulkText}
                   onChange={(e) => setBulkText(e.target.value)}
                   disabled={activeCaseBatch !== null && activeCaseBatch.status !== 'success' && activeCaseBatch.status !== 'failed'}
@@ -1551,7 +2144,15 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                           <td>
                             {p.status === 'pendiente' && <span className="text-muted">Pendiente</span>}
                             {p.status === 'creando' && <span>{p.detail || 'Creando…'}</span>}
-                            {p.status === 'listo' && <span className="badge success">Listo — {p.detail}</span>}
+                            {p.status === 'listo' && !p.reused && <span className="badge success">Listo — {p.detail}</span>}
+                            {p.status === 'listo' && p.reused && (
+                              <span
+                                className="badge queued"
+                                title="Ya existía un expediente con este código — se reutilizó en vez de crear uno nuevo"
+                              >
+                                Ya existía — {p.detail}
+                              </span>
+                            )}
                             {p.status === 'error' && <span className="badge failed">Error — {p.detail}</span>}
                           </td>
                         </tr>
@@ -1825,6 +2426,27 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                     )}
                     {!c.has_successful_ai_run && <span className="badge cancelled">Sin analizar</span>}
                     <span className={`badge ${c.status}`}>{c.status === 'open' ? 'Abierto' : 'Cerrado'}</span>
+                    {c.status === 'closed' && c.pending_reopen_message_count > 0 && (
+                      <span
+                        className="badge failed"
+                        role="button"
+                        tabIndex={0}
+                        title="Se detectaron correos nuevos relacionados con este expediente cerrado — click para reabrirlo y vincularlos"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setReopenTarget(c)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setReopenTarget(c)
+                          }
+                        }}
+                      >
+                        {c.pending_reopen_message_count} correo(s) nuevo(s)
+                      </span>
+                    )}
                     {c.previous_owner_label && (
                       <span className="badge queued" title="Reasignado automáticamente al eliminarse la cuenta del dueño original">
                         Antes de: {c.previous_owner_label}
@@ -1848,6 +2470,13 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         variant={mailboxSearchOpenIds.has(c.case_id) ? 'active' : 'default'}
                         disabled={isClosed}
                         onClick={() => toggleMailboxSearch(c.case_id, c.external_code)}
+                      />
+                      <ActionButton
+                        icon={Filter}
+                        label={excludeSearchOpenIds.has(c.case_id) ? 'Cerrar búsqueda para excluir' : 'Buscar para excluir'}
+                        variant={excludeSearchOpenIds.has(c.case_id) ? 'active' : 'default'}
+                        disabled={isClosed}
+                        onClick={() => toggleExcludeSearch(c.case_id)}
                       />
                       <ActionButton
                         icon={Bot}
@@ -1874,6 +2503,12 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         onClick={() => openSendEmailModal(c.case_id)}
                       />
                       <ActionButton
+                        icon={FileText}
+                        label={isClosed ? 'Generar reporte' : 'El expediente debe estar cerrado para generar el reporte'}
+                        disabled={!isClosed}
+                        onClick={() => openReportModal(c.case_id)}
+                      />
+                      <ActionButton
                         icon={c.status === 'open' ? Lock : Unlock}
                         label={
                           togglingStatusId === c.case_id
@@ -1883,7 +2518,13 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                               : 'Reabrir expediente'
                         }
                         loading={togglingStatusId === c.case_id}
-                        onClick={() => handleToggleStatus(c.case_id, c.status === 'open' ? 'closed' : 'open')}
+                        onClick={() =>
+                          setStatusConfirmTarget({
+                            caseId: c.case_id,
+                            title: c.title,
+                            nextStatus: c.status === 'open' ? 'closed' : 'open',
+                          })
+                        }
                       />
                       {(isAdmin || c.owner_user_id === user?.user_id) && (
                         <ActionButton icon={Share2} label="Compartir" onClick={() => openShareCaseModal(c)} />
@@ -2003,6 +2644,113 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                         )}
                       </div>
                     )}
+                    {excludeSearchOpenIds.has(c.case_id) && (
+                      <div className="add-message-search mt-4">
+                        <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 8px' }}>
+                          Busca por texto (asunto o cuerpo) SOLO entre los correos ya vinculados a este expediente —
+                          útil para encontrar correos "ruidosos" repetidos (ej. un digest periódico) y excluirlos en
+                          lote. No borra el correo del índice general, solo lo desvincula de este expediente, y no
+                          impide que vuelva a aparecer en una futura correlación.
+                        </p>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                          <div className="field" style={{ flex: 1, minWidth: 200 }}>
+                            <label htmlFor={`exclude-query-${c.case_id}`} style={{ fontSize: 11 }}>
+                              Texto (asunto + cuerpo)
+                            </label>
+                            <input
+                              id={`exclude-query-${c.case_id}`}
+                              type="text"
+                              value={excludeQuery[c.case_id] ?? ''}
+                              onChange={(e) => setExcludeQuery((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
+                              onKeyDown={(e) => e.key === 'Enter' && handleSearchMessagesToExclude(c.case_id)}
+                            />
+                          </div>
+                          <ActionButton
+                            icon={Search}
+                            label={excludeSearching === c.case_id ? 'Buscando…' : 'Buscar'}
+                            loading={excludeSearching === c.case_id}
+                            disabled={!(excludeQuery[c.case_id] ?? '').trim()}
+                            onClick={() => handleSearchMessagesToExclude(c.case_id)}
+                          />
+                        </div>
+                        {excludeResults[c.case_id] && excludeResults[c.case_id].length === 0 && (
+                          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>
+                            Sin resultados entre los correos vinculados a este expediente.
+                          </p>
+                        )}
+                        {excludeResults[c.case_id] && excludeResults[c.case_id].length > 0 && (
+                          <>
+                            <div className="table-wrap mt-4">
+                              <table className="table-wide">
+                                <thead>
+                                  <tr>
+                                    <th scope="col" style={{ width: 32 }}></th>
+                                    <th scope="col">Buzón</th>
+                                    <th scope="col">Asunto</th>
+                                    <th scope="col">De</th>
+                                    <th scope="col">Enviado</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {excludeResults[c.case_id].map((m) => (
+                                    <tr key={m.message_id}>
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={excludeSelected[c.case_id]?.has(m.message_id) ?? false}
+                                          onChange={() => toggleExcludeSelected(c.case_id, m.message_id)}
+                                          aria-label={`Seleccionar "${m.subject || '(sin asunto)'}"`}
+                                        />
+                                      </td>
+                                      <td>{m.mailbox_label || <span className="text-muted">sin etiquetar</span>}</td>
+                                      <td>{m.subject || '(sin asunto)'}</td>
+                                      <td>{m.from_address || '—'}</td>
+                                      <td>{formatDateTime(m.sent_datetime)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-4">
+                              <ActionButton
+                                icon={Trash2}
+                                label={`Excluir seleccionados (${excludeSelected[c.case_id]?.size ?? 0})`}
+                                variant="danger"
+                                disabled={!excludeSelected[c.case_id]?.size}
+                                onClick={() =>
+                                  setExcludeConfirmTarget({
+                                    caseId: c.case_id,
+                                    messageIds: Array.from(excludeSelected[c.case_id] ?? []),
+                                    query: excludeQuery[c.case_id] ?? '',
+                                  })
+                                }
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        <div className="mt-6" style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+                          <h5 style={{ margin: '0 0 6px' }}>Reglas de exclusión de este expediente</h5>
+                          <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 8px' }}>
+                            A diferencia de excluir arriba (una vez), una regla evita que un correo que la matchee se
+                            vuelva a sugerir en futuras correlaciones de ESTE expediente puntual. Para reglas que
+                            apliquen a todos tus expedientes, usá el botón "🚫 Reglas de exclusión" en la parte
+                            superior de la página.
+                          </p>
+                          <ExclusionRuleManager
+                            rules={caseExclusionRules[c.case_id] ?? []}
+                            onCreate={(pattern, fields) => handleCreateCaseExclusionRule(c.case_id, pattern, fields)}
+                            onToggle={(rule) => handleToggleCaseExclusionRule(c.case_id, rule)}
+                            onDelete={(rule) => handleDeleteCaseExclusionRule(c.case_id, rule)}
+                            togglingId={togglingCaseRuleId}
+                            deletingId={deletingCaseRuleId}
+                            initialPattern={excludeQuery[c.case_id] ?? ''}
+                            initialFields={{ match_subject: true, match_body: true }}
+                            idPrefix={`case-rule-${c.case_id}`}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {isClosed && (
                       <p style={{ color: 'var(--warning)', fontSize: 11, marginTop: 6 }}>
                         Este expediente está cerrado — no admite cambios (correos, notas, conclusión, reanálisis).
@@ -2048,6 +2796,16 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                             <option value="mas_antecedentes">Se solicitan más antecedentes</option>
                             <option value="sin_recepcion">Sin recepción del correo</option>
                           </select>
+                          <input
+                            id={`case-alert-type-${c.case_id}`}
+                            type="text"
+                            aria-label="Tipo de alerta"
+                            placeholder="Tipo de alerta (ej. Phishing, Exfiltración de datos)…"
+                            value={alertTypeDraft[c.case_id] ?? ''}
+                            onChange={(e) => setAlertTypeDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
+                            style={{ maxWidth: 260 }}
+                            disabled={isClosed}
+                          />
                           <ActionButton
                             icon={Save}
                             label={savingOutcomeId === c.case_id ? 'Guardando…' : 'Guardar conclusión'}
@@ -2134,7 +2892,64 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                           <label htmlFor={`case-pending-action-${c.case_id}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             Acciones pendientes
                             <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
+                            <ActionButton
+                              icon={Plus}
+                              label="Frases predefinidas"
+                              size="sm"
+                              disabled={isClosed}
+                              onClick={() => togglePresetsMenu(c.case_id)}
+                            />
                           </label>
+                          {presetsMenuOpenIds.has(c.case_id) && (
+                            <div className="panel" style={{ marginBottom: 8, padding: 10 }}>
+                              {pendingActionPresets.length === 0 && (
+                                <p style={{ margin: 0, fontSize: 12, color: 'var(--muted)' }}>
+                                  Todavía no hay frases guardadas.
+                                </p>
+                              )}
+                              {pendingActionPresets.map((preset) => (
+                                <div
+                                  key={preset.preset_id}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="btn small"
+                                    style={{ flex: 1, textAlign: 'left', whiteSpace: 'normal' }}
+                                    disabled={isClosed}
+                                    onClick={() => insertPendingActionPreset(c.case_id, preset.text)}
+                                  >
+                                    {preset.text}
+                                  </button>
+                                  <ActionButton
+                                    icon={X}
+                                    label="Borrar frase"
+                                    size="sm"
+                                    loading={deletingPresetId === preset.preset_id}
+                                    onClick={() => handleDeletePendingActionPreset(preset.preset_id)}
+                                  />
+                                </div>
+                              ))}
+                              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                                <input
+                                  type="text"
+                                  placeholder="Nueva frase para agregar a la lista…"
+                                  value={newPresetText}
+                                  onChange={(e) => setNewPresetText(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && handleAddPendingActionPreset()}
+                                  style={{ flex: 1 }}
+                                />
+                                <ActionButton
+                                  icon={Plus}
+                                  label={addingPreset ? 'Agregando…' : 'Agregar'}
+                                  variant="primary"
+                                  loading={addingPreset}
+                                  disabled={!newPresetText.trim()}
+                                  onClick={handleAddPendingActionPreset}
+                                />
+                              </div>
+                            </div>
+                          )}
                           <textarea
                             id={`case-pending-action-${c.case_id}`}
                             placeholder="Qué falta hacer sobre este expediente… (admite formato Markdown, se convierte a HTML en el PDF exportado)"
@@ -2155,6 +2970,62 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                             disabled={isClosed}
                           />
                         </div>
+                      </div>
+                      <div className="field" style={{ margin: '10px 0 0' }}>
+                        <label htmlFor={`case-closing-glosa-${c.case_id}`}>
+                          Glosa de cierre (obligatoria para cerrar el expediente)
+                        </label>
+                        <textarea
+                          id={`case-closing-glosa-${c.case_id}`}
+                          placeholder="Motivo del cierre: escalado, derivado, se solicita el cierre por falta de evidencia, ya se entregó, se solicita una acción puntual…"
+                          value={closingGlosaDraft[c.case_id] ?? ''}
+                          onChange={(e) => setClosingGlosaDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
+                          rows={3}
+                          style={{ width: '100%', resize: 'vertical' }}
+                          disabled={isClosed}
+                        />
+                        <div style={{ marginTop: 6 }}>
+                          <ActionButton
+                            icon={Bot}
+                            label={summarizingGlosaId === c.case_id ? 'Resumiendo…' : 'Resumir con IA'}
+                            size="sm"
+                            loading={summarizingGlosaId === c.case_id}
+                            disabled={isClosed || !(closingGlosaDraft[c.case_id] ?? '').trim()}
+                            onClick={() => handleSummarizeGlosa(c.case_id)}
+                          />
+                        </div>
+                        {glosaSuggestion[c.case_id] && (
+                          <div className="panel" style={{ marginTop: 8, padding: 10 }}>
+                            <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--muted)' }}>
+                              Sugerencia de IA — revisa antes de aceptar:
+                            </p>
+                            <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginBottom: 8 }}>
+                              {glosaSuggestion[c.case_id]}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <ActionButton
+                                icon={Check}
+                                label="Aceptar"
+                                size="sm"
+                                variant="primary"
+                                onClick={() => handleAcceptGlosaSuggestion(c.case_id)}
+                              />
+                              <ActionButton
+                                icon={X}
+                                label="Rechazar"
+                                size="sm"
+                                onClick={() => handleRejectGlosaSuggestion(c.case_id)}
+                              />
+                              <ActionButton
+                                icon={RefreshCw}
+                                label={summarizingGlosaId === c.case_id ? 'Reiterando…' : 'Reiterar'}
+                                size="sm"
+                                loading={summarizingGlosaId === c.case_id}
+                                onClick={() => handleSummarizeGlosa(c.case_id)}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div style={{ marginTop: 10 }}>
                         <ActionButton
@@ -2208,19 +3079,68 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                                 <tr>
                                   <th scope="col" style={{ width: 160 }}>Fecha</th>
                                   <th scope="col">Nota</th>
+                                  <th scope="col" style={{ width: 90 }}></th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {[...detail.notes]
-                                  .sort((a, b) => b.created_at.localeCompare(a.created_at))
-                                  .map((note) => (
-                                    <tr key={note.note_id}>
-                                      <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-                                        {formatDateTime(note.created_at)}
-                                      </td>
-                                      <td className="md-content" dangerouslySetInnerHTML={{ __html: note.body }} />
-                                    </tr>
-                                  ))}
+                                {(() => {
+                                  const latestNoteId = detail.notes[detail.notes.length - 1]?.note_id
+                                  return [...detail.notes]
+                                    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+                                    .map((note) => {
+                                      const canEdit =
+                                        !isClosed && note.note_id === latestNoteId && note.created_by_user_id === user?.user_id
+                                      const isEditing = editingNoteId === note.note_id
+                                      return (
+                                        <tr key={note.note_id}>
+                                          <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                                            {formatDateTime(note.created_at)}
+                                            {note.updated_at && (
+                                              <div style={{ fontSize: 11 }}>(editada)</div>
+                                            )}
+                                          </td>
+                                          {isEditing ? (
+                                            <td>
+                                              <textarea
+                                                value={editNoteDraft}
+                                                onChange={(e) => setEditNoteDraft(e.target.value)}
+                                                rows={3}
+                                                style={{ width: '100%', resize: 'vertical' }}
+                                                autoFocus
+                                              />
+                                            </td>
+                                          ) : (
+                                            <td className="md-content" dangerouslySetInnerHTML={{ __html: note.body }} />
+                                          )}
+                                          <td style={{ whiteSpace: 'nowrap' }}>
+                                            {isEditing ? (
+                                              <div style={{ display: 'flex', gap: 6 }}>
+                                                <ActionButton
+                                                  icon={Save}
+                                                  label={savingNoteEditId === note.note_id ? 'Guardando…' : 'Guardar'}
+                                                  size="sm"
+                                                  variant="primary"
+                                                  loading={savingNoteEditId === note.note_id}
+                                                  disabled={!editNoteDraft.trim()}
+                                                  onClick={() => handleSaveEditNote(c.case_id, note.note_id)}
+                                                />
+                                                <ActionButton icon={X} label="Cancelar" size="sm" onClick={handleCancelEditNote} />
+                                              </div>
+                                            ) : (
+                                              canEdit && (
+                                                <ActionButton
+                                                  icon={Pencil}
+                                                  label="Editar"
+                                                  size="sm"
+                                                  onClick={() => handleStartEditNote(note.note_id, note.body_markdown)}
+                                                />
+                                              )
+                                            )}
+                                          </td>
+                                        </tr>
+                                      )
+                                    })
+                                })()}
                               </tbody>
                             </table>
                             </div>
@@ -2293,18 +3213,76 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                                       </td>
                                       <td>{ev.glosa}</td>
                                       <td>
-                                        <a href={getCaseEvidenceUrl(c.case_id, ev.evidence_id)} target="_blank" rel="noreferrer">
+                                        <button
+                                          type="button"
+                                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                                          onClick={() => setViewingEvidence({ caseId: c.case_id, evidence: ev })}
+                                          aria-label={`Ver evidencia: ${ev.glosa}`}
+                                        >
                                           <img
                                             src={getCaseEvidenceUrl(c.case_id, ev.evidence_id)}
                                             alt={ev.glosa}
                                             style={{ maxWidth: 160, maxHeight: 120, borderRadius: 6, border: '1px solid var(--line)' }}
                                           />
-                                        </a>
+                                        </button>
                                       </td>
                                     </tr>
                                   ))}
                               </tbody>
                             </table>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    <div className="add-message-search">
+                      <button
+                        type="button"
+                        className="btn small btn-labeled"
+                        onClick={() => toggleSentEmails(c.case_id)}
+                      >
+                        {sentEmailsOpenIds.has(c.case_id)
+                          ? '📤 Ocultar correos enviados ▾'
+                          : `📤 Correos enviados (${detail?.sent_emails.length ?? 0}) ▸`}
+                      </button>
+                      {sentEmailsOpenIds.has(c.case_id) && (
+                        <>
+                          {detail && detail.sent_emails.length === 0 && (
+                            <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 10 }}>
+                              Todavía no se envió ningún correo desde este expediente.
+                            </p>
+                          )}
+                          {detail && detail.sent_emails.length > 0 && (
+                            <div className="panel table-wrap mt-5">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th scope="col" style={{ width: 160 }}>Fecha</th>
+                                    <th scope="col">Asunto</th>
+                                    <th scope="col">Para</th>
+                                    <th scope="col" style={{ width: 100 }}>Enviado por</th>
+                                    <th scope="col" style={{ width: 90 }}></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {[...detail.sent_emails]
+                                    .sort((a, b) => b.sent_at.localeCompare(a.sent_at))
+                                    .map((se) => (
+                                      <tr key={se.sent_email_id}>
+                                        <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                                          {formatDateTime(se.sent_at)}
+                                        </td>
+                                        <td>{se.subject}</td>
+                                        <td>{se.to_addresses.join(', ')}</td>
+                                        <td>{se.sent_by_label ?? '—'}</td>
+                                        <td>
+                                          <ActionButton icon={Eye} label="Ver correo" size="sm" onClick={() => setViewingSentEmail(se)} />
+                                        </td>
+                                      </tr>
+                                    ))}
+                                </tbody>
+                              </table>
                             </div>
                           )}
                         </>
@@ -2776,37 +3754,106 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         onConfirm={handleRemoveMessage}
       />
 
+      <ConfirmModal
+        open={reopenTarget !== null}
+        title="Reabrir expediente"
+        description={
+          reopenTarget
+            ? `Se detectaron ${reopenTarget.pending_reopen_message_count} correo(s) nuevo(s) relacionados con "${reopenTarget.title}". ¿Reabrir el expediente y vincularlos?`
+            : ''
+        }
+        confirmLabel="Reabrir y vincular"
+        confirmIcon="↻"
+        confirmDanger={false}
+        confirming={reopening}
+        onCancel={() => setReopenTarget(null)}
+        onConfirm={handleReopenCase}
+      />
+
+      <ConfirmModal
+        open={statusConfirmTarget !== null}
+        title={statusConfirmTarget?.nextStatus === 'closed' ? 'Cerrar expediente' : 'Reabrir expediente'}
+        description={
+          statusConfirmTarget
+            ? statusConfirmTarget.nextStatus === 'closed'
+              ? `Se van a guardar los cambios pendientes de Conclusión, Seguimiento y Glosa de cierre, y se cerrará "${statusConfirmTarget.title}". Un expediente cerrado no admite más cambios hasta reabrirlo.`
+              : `¿Reabrir "${statusConfirmTarget.title}"? Vas a poder volver a editarlo (correos, notas, conclusión, etc).`
+            : ''
+        }
+        confirmLabel={statusConfirmTarget?.nextStatus === 'closed' ? 'Guardar y cerrar' : 'Reabrir expediente'}
+        confirmingLabel={statusConfirmTarget?.nextStatus === 'closed' ? 'Guardando y cerrando…' : 'Reabriendo…'}
+        confirmIcon={statusConfirmTarget?.nextStatus === 'closed' ? '🔒' : '🔓'}
+        confirmDanger={false}
+        confirming={statusConfirmTarget !== null && togglingStatusId === statusConfirmTarget.caseId}
+        onCancel={() => setStatusConfirmTarget(null)}
+        onConfirm={() => {
+          if (!statusConfirmTarget) return
+          handleToggleStatus(statusConfirmTarget.caseId, statusConfirmTarget.nextStatus)
+        }}
+      />
+
+      <ConfirmModal
+        open={excludeConfirmTarget !== null}
+        title="Excluir correos del expediente"
+        description={
+          excludeConfirmTarget
+            ? `Se desvinculan ${excludeConfirmTarget.messageIds.length} correo(s) de este expediente (siguen disponibles en el índice general). Esta acción no impide que alguno vuelva a aparecer en una futura correlación.`
+            : ''
+        }
+        confirmLabel="Excluir correos"
+        confirming={excluding}
+        onCancel={() => setExcludeConfirmTarget(null)}
+        onConfirm={handleBulkExcludeMessages}
+      />
+
+      <ConfirmModal
+        open={reportSuggestCaseId !== null}
+        title="Expediente cerrado"
+        description="¿Querés generar el reporte de este expediente para enviarlo por correo?"
+        confirmLabel="Generar reporte"
+        confirmDanger={false}
+        onCancel={() => setReportSuggestCaseId(null)}
+        onConfirm={() => {
+          if (reportSuggestCaseId) openReportModal(reportSuggestCaseId)
+          setReportSuggestCaseId(null)
+        }}
+      />
+
       <MessageBodyModal state={bodyModal} onClose={() => setBodyModal(null)} />
 
       <div
         className={`modal-backdrop${sendEmailTarget !== null ? ' open' : ''}`}
       >
-        <div className="modal medium">
-          <div className="modal-body">
-            <h3>Enviar correo</h3>
-            <p>
+        {/* overflow:hidden + flex-column inline (solo esta instancia, no toca
+            la clase .modal compartida) -- header (Para/CC/Asunto) y botonera
+            quedan fijos, solo el cuerpo (Cuerpo + IA + adjuntos) scrollea. */}
+        <div className="modal xwide" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div
+            className="modal-body"
+            style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}
+          >
+            <h3 style={{ flexShrink: 0 }}>Enviar correo</h3>
+            <p style={{ flexShrink: 0 }}>
               Se prellena con los involucrados del último correo del expediente. El PDF del expediente se adjunta
               automáticamente si se deja marcada la casilla.
             </p>
-            <div className="form-grid mt-6">
-              <div className="field full">
+            <div className="form-grid mt-6" style={{ flexShrink: 0 }}>
+              <div className="field">
                 <label htmlFor="sendEmailTo">Para</label>
-                <input
+                <RecipientInput
                   id="sendEmailTo"
-                  type="text"
                   value={sendEmailForm.to}
-                  onChange={(e) => setSendEmailForm((prev) => ({ ...prev, to: e.target.value }))}
-                  placeholder="correo1@dominio.cl; correo2@dominio.cl"
+                  onChange={(to) => setSendEmailForm((prev) => ({ ...prev, to }))}
+                  placeholder="Escribí un nombre o correo…"
                 />
               </div>
-              <div className="field full">
+              <div className="field">
                 <label htmlFor="sendEmailCc">Con copia (CC)</label>
-                <input
+                <RecipientInput
                   id="sendEmailCc"
-                  type="text"
                   value={sendEmailForm.cc}
-                  onChange={(e) => setSendEmailForm((prev) => ({ ...prev, cc: e.target.value }))}
-                  placeholder="correo1@dominio.cl; correo2@dominio.cl"
+                  onChange={(cc) => setSendEmailForm((prev) => ({ ...prev, cc }))}
+                  placeholder="Escribí un nombre o correo…"
                 />
               </div>
               <div className="field full">
@@ -2818,10 +3865,32 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                   onChange={(e) => setSendEmailForm((prev) => ({ ...prev, subject: e.target.value }))}
                 />
               </div>
+            </div>
+            <div
+              className="form-grid mt-6"
+              style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', paddingTop: 4, paddingRight: 4 }}
+            >
               <div className="field full">
                 <label htmlFor="sendEmailBody" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  Cuerpo (Markdown — se precarga con la última nota del auditor, se convierte a HTML al enviar)
-                  <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
+                  <span>Cuerpo (Markdown — se precarga con la última nota del auditor, se convierte a HTML al enviar)</span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <ActionButton
+                      icon={HelpCircle}
+                      label="Ayuda de formato Markdown"
+                      size="sm"
+                      className="tooltip-below"
+                      onClick={() => setMdHelpOpen(true)}
+                    />
+                    <ActionButton
+                      icon={Bot}
+                      label={summarizingBody ? 'Resumiendo…' : 'Resumir con IA'}
+                      size="sm"
+                      className="tooltip-below"
+                      loading={summarizingBody}
+                      disabled={!sendEmailForm.body.trim()}
+                      onClick={handleSummarizeBody}
+                    />
+                  </span>
                 </label>
                 <textarea
                   id="sendEmailBody"
@@ -2830,6 +3899,25 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                   onChange={(e) => setSendEmailForm((prev) => ({ ...prev, body: e.target.value }))}
                   style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                 />
+                {bodySuggestion !== null && (
+                  <div className="panel" style={{ marginTop: 8, padding: 10 }}>
+                    <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--muted)' }}>
+                      Sugerencia de IA — revisa antes de aceptar:
+                    </p>
+                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginBottom: 8 }}>{bodySuggestion}</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <ActionButton icon={Check} label="Aceptar" size="sm" variant="primary" onClick={handleAcceptBodySuggestion} />
+                      <ActionButton icon={X} label="Rechazar" size="sm" onClick={handleRejectBodySuggestion} />
+                      <ActionButton
+                        icon={RefreshCw}
+                        label={summarizingBody ? 'Reiterando…' : 'Reiterar'}
+                        size="sm"
+                        loading={summarizingBody}
+                        onClick={handleSummarizeBody}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="field">
                 <label htmlFor="sendEmailMailbox">Enviar desde</label>
@@ -2892,6 +3980,122 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         </div>
       </div>
 
+      <div className={`modal-backdrop${reportCaseId !== null ? ' open' : ''}`}>
+        {/* overflow:hidden + flex-column inline (solo esta instancia, no toca
+            la clase .modal compartida) -- asi el modal en si nunca scrollea:
+            el unico que puede crecer/scrollear es el cuerpo de campos de
+            abajo, acotado ademas a un 70% del alto de ventana. */}
+        <div className="modal medium" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div
+            className="modal-body"
+            style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}
+          >
+            <h3 style={{ flexShrink: 0 }}>Generar reporte</h3>
+            <p style={{ flexShrink: 0 }}>
+              Elegí una plantilla activa, completá los campos que pida, y el asunto/cuerpo del correo va a quedar
+              precargado en "Enviar correo" para revisar antes de enviar.
+            </p>
+            <div className="form-grid mt-6" style={{ flexShrink: 0 }}>
+              <div className="field full">
+                <label htmlFor="report-template">Plantilla</label>
+                <select
+                  id="report-template"
+                  value={reportTemplateId ?? ''}
+                  onChange={(e) => e.target.value && selectReportTemplate(Number(e.target.value))}
+                >
+                  <option value="">Elegí una plantilla…</option>
+                  {reportTemplates.map((t) => (
+                    <option key={t.template_id} value={t.template_id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                {reportTemplates.length === 0 && (
+                  <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 6 }}>
+                    No hay plantillas activas — crea una en "Mail Template".
+                  </p>
+                )}
+              </div>
+            </div>
+            {/* Antes de elegir plantilla: alto fijo bajo, asi el modal no
+                "salta" de tamaño al elegir una. Ya elegida: se deja crecer
+                con el contenido hasta un 70% del alto de la ventana -- pasado
+                eso, el scroll queda contenido aca, sin arrastrar el selector
+                de arriba ni la botonera de abajo. */}
+            <div
+              className="mt-6"
+              style={
+                reportTemplateId
+                  ? {
+                      flex: '1 1 auto',
+                      minHeight: 0,
+                      maxHeight: '70vh',
+                      overflowY: 'auto',
+                      overflowX: 'hidden',
+                      border: '1px solid var(--line)',
+                      borderRadius: 8,
+                      padding: 14,
+                    }
+                  : {
+                      height: 260,
+                      flexShrink: 0,
+                      overflowY: 'auto',
+                      overflowX: 'hidden',
+                      border: '1px solid var(--line)',
+                      borderRadius: 8,
+                      padding: 14,
+                    }
+              }
+            >
+              {!reportTemplateId && (
+                <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
+                  Elegí una plantilla arriba para ver y completar sus campos.
+                </p>
+              )}
+              {reportTemplateId && Object.keys(reportManualValues).length === 0 && (
+                <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
+                  Esta plantilla no tiene campos manuales — ya está lista para generar.
+                </p>
+              )}
+              {reportTemplateId && Object.keys(reportManualValues).length > 0 && (
+                <>
+                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 10px' }}>
+                    Los campos que ya calzan con datos del expediente (acciones pendientes, conclusión, última nota)
+                    vienen prellenados — revisalos y ajustalos antes de generar.
+                  </p>
+                  <div className="form-grid">
+                    {Object.keys(reportManualValues).map((field) => (
+                      <div className="field full" key={field}>
+                        <label htmlFor={`report-field-${field}`}>{field}</label>
+                        <textarea
+                          id={`report-field-${field}`}
+                          rows={2}
+                          value={reportManualValues[field]}
+                          onChange={(e) => setReportManualValues((prev) => ({ ...prev, [field]: e.target.value }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" onClick={() => setReportCaseId(null)}>
+              ✕ Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn small primary btn-labeled"
+              disabled={!reportTemplateId || reportRendering}
+              onClick={handleGenerateReport}
+            >
+              {reportRendering ? 'Generando…' : '📧 Generar y continuar a enviar'}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <MarkdownHelpModal open={mdHelpOpen} onClose={() => setMdHelpOpen(false)} />
 
       <div className={`modal-backdrop${emailPreviewOpen ? ' open' : ''}`}>
@@ -2910,10 +4114,114 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
               <strong>Asunto</strong>
               <span>{sendEmailForm.subject || '—'}</span>
             </div>
+            {(sendEmailForm.attachPdf || sendEmailForm.files.length > 0) && (
+              <div className="attachment-tags" style={{ marginBottom: 12 }}>
+                {sendEmailForm.attachPdf && sendEmailTarget && (
+                  <span className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
+                    <b>PDF</b>
+                    📄 {casePdfFileName(sendEmailTarget, details[sendEmailTarget]?.title ?? '')}
+                    {casePdfInfo && ` (${formatFileSize(casePdfInfo.sizeBytes)})`}
+                    <ActionButton
+                      icon={Eye}
+                      label={openingCasePdfPreview ? 'Abriendo…' : casePdfInfo ? 'Abrir' : 'Generar y abrir'}
+                      loading={openingCasePdfPreview}
+                      onClick={handleOpenCasePdfFromPreview}
+                    />
+                  </span>
+                )}
+                {sendEmailForm.files.map((file, idx) => (
+                  <span key={`${file.name}-${idx}`} className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
+                    <b>{(file.name.split('.').pop() || 'archivo').toUpperCase()}</b>
+                    📎 {file.name} ({formatFileSize(file.size)})
+                    <ActionButton icon={Eye} label="Abrir" onClick={() => handleOpenAttachmentFile(file)} />
+                  </span>
+                ))}
+              </div>
+            )}
             <MessageBodyView content={emailPreviewHtml} contentType="html" />
           </div>
           <div className="modal-actions">
             <button type="button" className="btn small btn-labeled" onClick={() => setEmailPreviewOpen(false)}>
+              ✕ Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`modal-backdrop${viewingSentEmail !== null ? ' open' : ''}`}>
+        <div className="modal wide">
+          <div className="modal-body">
+            <h3>Correo enviado</h3>
+            {viewingSentEmail && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '4px 10px', marginBottom: 10, fontSize: 13 }}>
+                  <strong>Fecha</strong>
+                  <span>{formatDateTime(viewingSentEmail.sent_at)}</span>
+                  <strong>Enviado por</strong>
+                  <span>{viewingSentEmail.sent_by_label ?? '—'}</span>
+                  <strong>Para</strong>
+                  <span>{viewingSentEmail.to_addresses.join(', ')}</span>
+                  {viewingSentEmail.cc_addresses.length > 0 && (
+                    <>
+                      <strong>CC</strong>
+                      <span>{viewingSentEmail.cc_addresses.join(', ')}</span>
+                    </>
+                  )}
+                  <strong>Asunto</strong>
+                  <span>{viewingSentEmail.subject}</span>
+                </div>
+                {(viewingSentEmail.attached_case_pdf || viewingSentEmail.attachment_names.length > 0) && (
+                  <div className="attachment-tags" style={{ marginBottom: 12 }}>
+                    {viewingSentEmail.attached_case_pdf && (
+                      <span className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
+                        <b>PDF</b>📄 Expediente adjunto
+                      </span>
+                    )}
+                    {viewingSentEmail.attachment_names.map((name, idx) => (
+                      <span key={`${name}-${idx}`} className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
+                        <b>{(name.split('.').pop() || 'archivo').toUpperCase()}</b>📎 {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <MessageBodyView content={viewingSentEmail.body_html} contentType="html" />
+              </>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" onClick={() => setViewingSentEmail(null)}>
+              ✕ Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`modal-backdrop${viewingEvidence !== null ? ' open' : ''}`}>
+        {/* xwide (ancho maximo, sin alto forzado) en vez de wide (80vw x 80vh
+            fijo) -- para una sola imagen + una linea de glosa, un alto fijo
+            de 80vh dejaba mucho espacio vacio o forzaba scroll segun el
+            tamaño de la captura. Aca el modal se ajusta al contenido. */}
+        <div className="modal xwide">
+          <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <h3 style={{ alignSelf: 'flex-start', margin: 0 }}>Evidencia</h3>
+            {viewingEvidence && (
+              <>
+                <img
+                  src={getCaseEvidenceUrl(viewingEvidence.caseId, viewingEvidence.evidence.evidence_id)}
+                  alt={viewingEvidence.evidence.glosa}
+                  style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8, border: '1px solid var(--line)' }}
+                />
+                <div style={{ alignSelf: 'stretch', textAlign: 'center' }}>
+                  {viewingEvidence.evidence.glosa && <p style={{ margin: '0 0 4px' }}>{viewingEvidence.evidence.glosa}</p>}
+                  <p style={{ color: 'var(--muted)', fontSize: 12, margin: 0 }}>
+                    {formatDateTime(viewingEvidence.evidence.created_at)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn small btn-labeled" onClick={() => setViewingEvidence(null)}>
               ✕ Cerrar
             </button>
           </div>
@@ -2935,7 +4243,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                 <input
                   id="merge-title"
                   type="text"
-                  placeholder="ej. GFCH-260702220"
+                  placeholder="ej. TCK-2026-000123"
                   value={mergeTitle}
                   onChange={(e) => setMergeTitle(e.target.value)}
                 />

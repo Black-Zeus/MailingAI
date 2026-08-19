@@ -102,6 +102,17 @@
   box-shadow: var(--shadow);
 }
 
+/* Variante para botones que quedan pegados al borde superior de un
+   contenedor con scroll propio (ej. el label de "Cuerpo" en el modal de
+   enviar correo) -- el tooltip default abre hacia arriba y ahi no hay
+   espacio, queda cortado por el overflow del contenedor y parece que nunca
+   aparece. Esta variante lo abre hacia abajo en su lugar. */
+[data-tooltip].tooltip-below::after {
+  bottom: auto;
+  top: 100%;
+  transform: translateX(-50%) translateY(10px);
+}
+
 [data-tooltip]:hover::after,
 [data-tooltip]:focus-visible::after {
   display: block;

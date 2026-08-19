@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import asyncpg
@@ -5,7 +6,8 @@ import asyncpg
 _SUMMARY_FIELDS = """
     case_id, case_type, external_code, title, status, confidence,
     message_count, first_message_at, last_message_at, outcome, has_successful_ai_run, ai_stale,
-    has_own_reply, owner_user_id, created_at, pending_action, next_review_at, previous_owner_label, updated_at
+    has_own_reply, owner_user_id, created_at, pending_action, next_review_at, previous_owner_label, updated_at,
+    pending_reopen_message_count, closing_glosa, alert_type
 """
 
 # Un usuario ve un expediente si es admin, si es el dueño, o si tiene una
@@ -81,7 +83,8 @@ async def get_case_core(
     )"""
     query = f"""
         SELECT c.case_id, c.case_type, c.external_code, c.primary_message_id, c.status, c.outcome, c.title,
-               c.owner_user_id, c.pending_action, c.next_review_at, {edit_access} AS can_edit
+               c.owner_user_id, c.pending_action, c.next_review_at, c.closing_glosa, c.alert_type,
+               {edit_access} AS can_edit
         FROM mailing.cases c
         WHERE c.case_id = $1 AND {access};
     """
@@ -125,13 +128,28 @@ async def find_messages_by_conversation(
 async def find_messages_by_cr_keyword(
     pool: asyncpg.Pool, keyword: str, *, accessible_mailbox_ids: list[int] | None
 ) -> list[asyncpg.Record]:
+    """Busca el keyword en subject/body_content (idx_messages_subject_trgm,
+    idx_messages_body_content_trgm) o en el nombre de un adjunto -- separado
+    en dos SELECT con UNION (en vez de un solo WHERE con OR sobre un LEFT
+    JOIN) a proposito: Postgres no puede empujar un filtro ILIKE sobre
+    messages hacia un indice cuando el WHERE combina, con OR, condiciones de
+    ambos lados de un LEFT JOIN (necesita el resultado del join para saber
+    si a.file_name es NULL o no) -- terminaba forzando un Seq Scan completo
+    de mailing.messages sin importar que indices existieran. Cada rama del
+    UNION es una consulta simple sobre una sola tabla, asi que el planner si
+    puede usar los indices trigram. UNION (no UNION ALL) da la misma
+    deduplicacion que el DISTINCT original."""
     access_clause = "AND m.mailbox_account_id = ANY($2::bigint[])" if accessible_mailbox_ids is not None else ""
     query = f"""
-        SELECT DISTINCT m.message_id, m.subject, m.from_address, m.sent_datetime
+        SELECT m.message_id, m.subject, m.from_address, m.sent_datetime
         FROM mailing.messages m
-        LEFT JOIN mailing.message_attachments a ON a.message_id = m.message_id
-        WHERE (m.subject ILIKE $1 OR m.body_content ILIKE $1 OR a.file_name ILIKE $1) {access_clause}
-        ORDER BY m.sent_datetime ASC NULLS LAST;
+        WHERE (m.subject ILIKE $1 OR m.body_content ILIKE $1) {access_clause}
+        UNION
+        SELECT m.message_id, m.subject, m.from_address, m.sent_datetime
+        FROM mailing.messages m
+        JOIN mailing.message_attachments a ON a.message_id = m.message_id
+        WHERE a.file_name ILIKE $1 {access_clause}
+        ORDER BY sent_datetime ASC NULLS LAST;
     """
     params = [f"%{keyword}%"] if accessible_mailbox_ids is None else [f"%{keyword}%", accessible_mailbox_ids]
     async with pool.acquire() as conn:
@@ -349,6 +367,18 @@ async def list_open_case_ids(pool: asyncpg.Pool, *, user_id: int, is_admin: bool
     return [r["case_id"] for r in rows]
 
 
+async def list_closed_case_ids(pool: asyncpg.Pool, *, user_id: int, is_admin: bool) -> list[int]:
+    access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$2", user_id_param="$1")
+    query = f"""
+        SELECT c.case_id FROM mailing.cases c
+        WHERE c.status = 'closed' AND {access}
+        ORDER BY c.case_id ASC;
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, user_id, is_admin)
+    return [r["case_id"] for r in rows]
+
+
 async def delete_cases(pool: asyncpg.Pool, scope: str, *, user_id: int, is_admin: bool) -> int:
     scope_clause = _DELETE_SCOPE_CLAUSES[scope]
     access = _access_clause(table_alias="c", case_id_param="c.case_id", is_admin_param="$2", user_id_param="$1")
@@ -358,7 +388,17 @@ async def delete_cases(pool: asyncpg.Pool, scope: str, *, user_id: int, is_admin
     return len(rows)
 
 
-_UPDATE_CASE_ALLOWED_COLUMNS = {"outcome", "status", "ai_stale", "ai_summary_override", "pending_action", "next_review_at"}
+_UPDATE_CASE_ALLOWED_COLUMNS = {
+    "outcome",
+    "status",
+    "ai_stale",
+    "ai_summary_override",
+    "pending_action",
+    "next_review_at",
+    "pending_reopen_message_count",
+    "closing_glosa",
+    "alert_type",
+}
 
 
 async def update_case(
@@ -412,23 +452,38 @@ async def update_case(
 
 async def list_case_notes(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
     query = """
-        SELECT note_id, body, created_at
-        FROM mailing.case_notes
-        WHERE case_id = $1
-        ORDER BY created_at ASC, note_id ASC;
+        SELECT cn.note_id, cn.body, cn.created_at, cn.created_by_user_id, cn.updated_at,
+               u.display_name AS creator_display_name, u.email_address AS creator_email_address
+        FROM mailing.case_notes cn
+        LEFT JOIN identity.users u ON u.user_id = cn.created_by_user_id
+        WHERE cn.case_id = $1
+        ORDER BY cn.created_at ASC, cn.note_id ASC;
     """
     async with pool.acquire() as conn:
         return await conn.fetch(query, case_id)
 
 
-async def insert_case_note(pool: asyncpg.Pool, case_id: int, body: str) -> asyncpg.Record:
+async def insert_case_note(
+    pool: asyncpg.Pool, case_id: int, body: str, *, created_by_user_id: int | None
+) -> asyncpg.Record:
     query = """
-        INSERT INTO mailing.case_notes (case_id, body)
-        VALUES ($1, $2)
-        RETURNING note_id, body, created_at;
+        INSERT INTO mailing.case_notes (case_id, body, created_by_user_id)
+        VALUES ($1, $2, $3)
+        RETURNING note_id, body, created_at, created_by_user_id, updated_at;
     """
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, case_id, body)
+        return await conn.fetchrow(query, case_id, body, created_by_user_id)
+
+
+async def update_case_note(pool: asyncpg.Pool, case_id: int, note_id: int, body: str) -> asyncpg.Record | None:
+    query = """
+        UPDATE mailing.case_notes
+        SET body = $3, updated_at = now()
+        WHERE case_id = $1 AND note_id = $2
+        RETURNING note_id, body, created_at, created_by_user_id, updated_at;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(query, case_id, note_id, body)
 
 
 async def insert_case_evidence(
@@ -451,6 +506,54 @@ async def insert_case_evidence(
         return await conn.fetchrow(
             query, case_id, glosa, file_name, content_type, size_bytes, content, created_by_user_id
         )
+
+
+async def insert_case_sent_email(
+    pool: asyncpg.Pool,
+    *,
+    case_id: int,
+    sent_by_user_id: int,
+    mailbox_account_id: int,
+    to_addresses: list[str],
+    cc_addresses: list[str],
+    subject: str,
+    body_html: str,
+    attached_case_pdf: bool,
+    attachment_names: list[str],
+) -> asyncpg.Record:
+    query = """
+        INSERT INTO mailing.case_sent_emails
+          (case_id, sent_by_user_id, mailbox_account_id, to_addresses, cc_addresses, subject, body_html, attached_case_pdf, attachment_names)
+        VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb)
+        RETURNING sent_email_id, to_addresses, cc_addresses, subject, body_html, attached_case_pdf, attachment_names, sent_at, sent_by_user_id;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            query,
+            case_id,
+            sent_by_user_id,
+            mailbox_account_id,
+            json.dumps(to_addresses),
+            json.dumps(cc_addresses),
+            subject,
+            body_html,
+            attached_case_pdf,
+            json.dumps(attachment_names),
+        )
+
+
+async def list_case_sent_emails(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
+    query = """
+        SELECT cse.sent_email_id, cse.to_addresses, cse.cc_addresses, cse.subject, cse.body_html,
+               cse.attached_case_pdf, cse.attachment_names, cse.sent_at, cse.sent_by_user_id,
+               u.display_name AS sent_by_display_name, u.email_address AS sent_by_email_address
+        FROM mailing.case_sent_emails cse
+        LEFT JOIN identity.users u ON u.user_id = cse.sent_by_user_id
+        WHERE cse.case_id = $1
+        ORDER BY cse.sent_at DESC, cse.sent_email_id DESC;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(query, case_id)
 
 
 async def list_case_evidence(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
@@ -529,8 +632,15 @@ async def get_case_summary(pool: asyncpg.Pool, case_id: int, *, user_id: int, is
         return await conn.fetchrow(query, case_id, user_id, is_admin)
 
 
-async def list_case_messages(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
-    query = """
+async def list_case_messages(
+    pool: asyncpg.Pool, case_id: int, *, search_query: str | None = None
+) -> list[asyncpg.Record]:
+    """search_query, si se pasa, filtra a los mensajes cuyo asunto o cuerpo
+    contengan ese texto (ILIKE) -- usado por search_case_messages para
+    encontrar correos "ruidosos" a excluir en lote, buscando solo entre los
+    que ya estan vinculados a este expediente (nunca contra todo el indice)."""
+    search_clause = "AND (m.subject ILIKE $2 OR m.body_content ILIKE $2)" if search_query else ""
+    query = f"""
         SELECT m.message_id, m.subject, m.from_address, m.to_addresses, m.cc_addresses,
                m.sent_datetime, m.has_attachments,
                m.body_preview, m.body_content, m.body_content_type, m.web_link,
@@ -539,11 +649,14 @@ async def list_case_messages(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.R
         FROM mailing.case_messages cm
         JOIN mailing.messages m ON m.message_id = cm.message_id
         LEFT JOIN identity.mailbox_accounts ma ON ma.mailbox_account_id = m.mailbox_account_id
-        WHERE cm.case_id = $1
+        WHERE cm.case_id = $1 {search_clause}
         ORDER BY m.sent_datetime ASC NULLS LAST;
     """
+    params: list[object] = [case_id]
+    if search_query:
+        params.append(f"%{search_query}%")
     async with pool.acquire() as conn:
-        return await conn.fetch(query, case_id)
+        return await conn.fetch(query, *params)
 
 
 async def list_timeline_events(pool: asyncpg.Pool, case_id: int) -> list[asyncpg.Record]:
@@ -1031,3 +1144,144 @@ async def list_audit_log(pool: asyncpg.Pool, case_id: int, *, limit: int = 200) 
     """
     async with pool.acquire() as conn:
         return await conn.fetch(query, case_id, limit)
+
+
+async def get_case_owner(pool: asyncpg.Pool, case_id: int) -> int | None:
+    """Dueño real de un expediente (puede no ser quien dispara la accion, si
+    es un colaborador compartido) -- lo usa create_case para saber contra
+    que owner_user_id evaluar reglas de exclusion globales al reutilizar un
+    expediente existente."""
+    query = "SELECT owner_user_id FROM mailing.cases WHERE case_id = $1;"
+    async with pool.acquire() as conn:
+        return await conn.fetchval(query, case_id)
+
+
+_EXCLUSION_RULE_FIELDS = """
+    rule_id, owner_user_id, case_id, pattern, match_subject, match_body, match_from,
+    match_to, match_cc, match_attachment, enabled, created_at, updated_at
+"""
+
+
+async def create_exclusion_rule(
+    pool: asyncpg.Pool,
+    *,
+    owner_user_id: int,
+    case_id: int | None,
+    pattern: str,
+    match_subject: bool,
+    match_body: bool,
+    match_from: bool,
+    match_to: bool,
+    match_cc: bool,
+    match_attachment: bool,
+) -> asyncpg.Record:
+    query = f"""
+        INSERT INTO mailing.case_exclusion_rules
+          (owner_user_id, case_id, pattern, match_subject, match_body, match_from, match_to, match_cc, match_attachment)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING {_EXCLUSION_RULE_FIELDS};
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            query, owner_user_id, case_id, pattern, match_subject, match_body, match_from, match_to, match_cc, match_attachment
+        )
+
+
+async def list_exclusion_rules(
+    pool: asyncpg.Pool, *, case_id: int | None, owner_user_id: int | None
+) -> list[asyncpg.Record]:
+    """Con case_id: reglas locales de ese expediente. Con owner_user_id (y
+    case_id=None): reglas globales de ese usuario. Nunca se pasan los dos a
+    la vez -- cada listado es de un alcance a la vez."""
+    if case_id is not None:
+        query = f"SELECT {_EXCLUSION_RULE_FIELDS} FROM mailing.case_exclusion_rules WHERE case_id = $1 ORDER BY created_at DESC;"
+        async with pool.acquire() as conn:
+            return await conn.fetch(query, case_id)
+    query = f"""
+        SELECT {_EXCLUSION_RULE_FIELDS} FROM mailing.case_exclusion_rules
+        WHERE case_id IS NULL AND owner_user_id = $1
+        ORDER BY created_at DESC;
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(query, owner_user_id)
+
+
+async def get_exclusion_rule(pool: asyncpg.Pool, rule_id: int) -> asyncpg.Record | None:
+    query = f"SELECT {_EXCLUSION_RULE_FIELDS} FROM mailing.case_exclusion_rules WHERE rule_id = $1;"
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(query, rule_id)
+
+
+_UPDATE_EXCLUSION_RULE_ALLOWED_COLUMNS = {
+    "pattern",
+    "match_subject",
+    "match_body",
+    "match_from",
+    "match_to",
+    "match_cc",
+    "match_attachment",
+    "enabled",
+}
+
+
+async def update_exclusion_rule(pool: asyncpg.Pool, rule_id: int, *, fields: dict[str, object]) -> asyncpg.Record | None:
+    unknown = set(fields) - _UPDATE_EXCLUSION_RULE_ALLOWED_COLUMNS
+    if unknown:
+        raise ValueError(f"Columnas no permitidas en update_exclusion_rule: {unknown}")
+    if not fields:
+        return await get_exclusion_rule(pool, rule_id)
+
+    params: list[object] = [rule_id]
+    set_clauses = []
+    for key, value in fields.items():
+        params.append(value)
+        set_clauses.append(f"{key} = ${len(params)}")
+
+    query = f"""
+        UPDATE mailing.case_exclusion_rules
+        SET {', '.join(set_clauses)}, updated_at = now()
+        WHERE rule_id = $1
+        RETURNING {_EXCLUSION_RULE_FIELDS};
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(query, *params)
+
+
+async def delete_exclusion_rule(pool: asyncpg.Pool, rule_id: int) -> bool:
+    query = "DELETE FROM mailing.case_exclusion_rules WHERE rule_id = $1 RETURNING rule_id;"
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(query, rule_id)
+    return row is not None
+
+
+async def find_excluded_message_ids(
+    pool: asyncpg.Pool, message_ids: list[str], *, case_id: int | None, owner_user_id: int | None
+) -> set[str]:
+    """De `message_ids`, cuales matchean alguna regla de exclusion ACTIVA
+    aplicable -- local a case_id, o global de owner_user_id. El patron de
+    cada regla se concatena en el ILIKE (no bind param) porque cada fila de
+    case_exclusion_rules puede traer un patron distinto -- aceptable porque
+    la tabla de reglas es chica y message_ids ya viene acotado por el
+    matching normal (nunca se llama con toda mailing.messages)."""
+    if not message_ids or (case_id is None and owner_user_id is None):
+        return set()
+    query = """
+        SELECT DISTINCT m.message_id
+        FROM mailing.messages m
+        LEFT JOIN mailing.message_attachments att ON att.message_id = m.message_id
+        JOIN mailing.case_exclusion_rules r
+          ON r.enabled
+         AND (r.case_id = $2 OR (r.case_id IS NULL AND r.owner_user_id = $3))
+         AND (
+               (r.match_subject    AND m.subject ILIKE '%' || r.pattern || '%')
+            OR (r.match_body       AND m.body_content ILIKE '%' || r.pattern || '%')
+            OR (r.match_from       AND m.from_address ILIKE '%' || r.pattern || '%')
+            OR (r.match_to         AND m.to_addresses::text ILIKE '%' || r.pattern || '%')
+            OR (r.match_cc         AND m.cc_addresses::text ILIKE '%' || r.pattern || '%')
+            OR (r.match_attachment AND att.file_name ILIKE '%' || r.pattern || '%')
+             )
+        WHERE m.message_id = ANY($1::text[]);
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, message_ids, case_id, owner_user_id)
+    return {r["message_id"] for r in rows}
