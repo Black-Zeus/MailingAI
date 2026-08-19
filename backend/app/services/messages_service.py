@@ -7,6 +7,7 @@ from app.repositories import messages_repository
 from app.schemas.messages import (
     AttachmentListItem,
     AttachmentRead,
+    ContactRead,
     ConversationRead,
     MailFolderNode,
     MessageDetail,
@@ -310,3 +311,18 @@ async def list_mail_folders_tree(
         else:
             roots.append(node)
     return roots
+
+
+async def search_contacts(
+    pool: asyncpg.Pool, query: str, *, accessible_mailbox_ids: list[int] | None, limit: int = 8
+) -> list[ContactRead]:
+    # Menos de 2 caracteres matchea casi cualquier cosa (ILIKE '%a%') --
+    # espera a que el usuario escriba algo minimamente especifico antes de
+    # salir a golpear la base en cada tecla.
+    trimmed = query.strip()
+    if len(trimmed) < 2:
+        return []
+    records = await messages_repository.search_contacts(
+        pool, pattern=trimmed, accessible_mailbox_ids=accessible_mailbox_ids, limit=limit
+    )
+    return [ContactRead(email=r["address"], name=r["display_name"]) for r in records]

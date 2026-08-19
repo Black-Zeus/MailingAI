@@ -93,6 +93,11 @@ export interface MailFolderNode {
   children: MailFolderNode[]
 }
 
+export interface ContactRead {
+  email: string
+  name: string | null
+}
+
 export interface MessageFilters {
   folder_id?: string
   date_from?: string

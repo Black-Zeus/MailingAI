@@ -91,6 +91,11 @@ class RetraceAttachmentsResponse(BaseModel):
     traced_count: int
 
 
+class ContactRead(BaseModel):
+    email: str
+    name: str | None
+
+
 class MailFolderRead(BaseModel):
     folder_id: str
     parent_folder_id: str | None

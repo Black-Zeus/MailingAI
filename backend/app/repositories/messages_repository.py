@@ -435,3 +435,57 @@ async def list_mail_folders(pool: asyncpg.Pool, *, accessible_mailbox_ids: list[
     params = [] if accessible_mailbox_ids is None else [accessible_mailbox_ids]
     async with pool.acquire() as conn:
         return await conn.fetch(query, *params)
+
+
+async def search_contacts(
+    pool: asyncpg.Pool, *, pattern: str, accessible_mailbox_ids: list[int] | None, limit: int
+) -> list[asyncpg.Record]:
+    """Libreta de direcciones derivada de los correos ya indexados -- sin
+    tabla propia ni paso de indexacion aparte: cualquier direccion que
+    aparece como remitente (con nombre, via from_address/from_name -- indice
+    trigram idx_messages_from_address_trgm/idx_messages_from_name_trgm) o
+    como destinatario/copia (sin nombre, salvo que esa misma direccion
+    tambien haya escrito alguna vez) de un mensaje visible para el usuario es
+    candidata. to_addresses/cc_addresses son jsonb sin indice, pero son
+    arrays chicos (pocos elementos por mensaje) -- el unnest es barato
+    comparado con escanear subject/body_content."""
+    from_where = "WHERE m.from_address IS NOT NULL AND m.from_address <> ''"
+    unnest_where = ""
+    params: list[object] = []
+    if accessible_mailbox_ids is not None:
+        params.append(accessible_mailbox_ids)
+        from_where += " AND m.mailbox_account_id = ANY($1::bigint[])"
+        unnest_where = "WHERE m.mailbox_account_id = ANY($1::bigint[])"
+    params.append(f"%{pattern}%")
+    pattern_idx = len(params)
+    params.append(limit)
+    limit_idx = len(params)
+
+    query = f"""
+        WITH contacts AS (
+            SELECT lower(m.from_address) AS address, m.from_name AS display_name
+            FROM mailing.messages m
+            {from_where}
+            UNION ALL
+            SELECT lower(addr) AS address, NULL::text AS display_name
+            FROM mailing.messages m, jsonb_array_elements_text(m.to_addresses) AS addr
+            {unnest_where}
+            UNION ALL
+            SELECT lower(addr) AS address, NULL::text AS display_name
+            FROM mailing.messages m, jsonb_array_elements_text(m.cc_addresses) AS addr
+            {unnest_where}
+        ),
+        aggregated AS (
+            SELECT address, max(display_name) AS display_name, count(*) AS occurrences
+            FROM contacts
+            WHERE address <> ''
+            GROUP BY address
+        )
+        SELECT address, display_name, occurrences
+        FROM aggregated
+        WHERE address ILIKE ${pattern_idx} OR display_name ILIKE ${pattern_idx}
+        ORDER BY occurrences DESC, address ASC
+        LIMIT ${limit_idx};
+    """
+    async with pool.acquire() as conn:
+        return await conn.fetch(query, *params)

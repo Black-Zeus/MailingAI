@@ -15,6 +15,7 @@ from app.repositories import access_repository, cases_repository
 from app.repositories.messages_repository import InvalidAttachmentPatternError
 from app.schemas.messages import (
     AttachmentListItem,
+    ContactRead,
     ConversationRead,
     MailFolderNode,
     MessageDetail,
@@ -222,3 +223,14 @@ async def list_attachments(
 async def list_mail_folders(pool: PoolDep, user: CurrentUserDep) -> list[MailFolderNode]:
     accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
     return await messages_service.list_mail_folders_tree(pool, accessible_mailbox_ids=accessible_mailbox_ids)
+
+
+@router.get("/contacts/search", response_model=list[ContactRead])
+async def search_contacts(
+    pool: PoolDep, user: CurrentUserDep, q: str = Query(min_length=1), limit: int = Query(default=8, ge=1, le=20)
+) -> list[ContactRead]:
+    """Libreta de direcciones para autocompletar Para/CC al enviar un correo
+    -- derivada en vivo de los correos ya indexados (remitentes, destinatarios
+    y copias), sin tabla ni indexacion propia. Ver messages_service.search_contacts."""
+    accessible_mailbox_ids = await access_repository.resolve_accessible_mailbox_ids(pool, user)
+    return await messages_service.search_contacts(pool, q, accessible_mailbox_ids=accessible_mailbox_ids, limit=limit)
