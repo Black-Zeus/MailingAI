@@ -354,7 +354,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
               placeholder={
                 filters.text_search_mode === 'fulltext'
                   ? 'Ej. "plan de despliegue" -borrador'
-                  : 'Ej. GFCH-I-069926 (coincidencia exacta de subcadena)'
+                  : 'Ej. TCK-2026-000123 (coincidencia exacta de subcadena)'
               }
               value={filters.text_search}
               onChange={(e) => setFilters((f) => ({ ...f, text_search: e.target.value }))}
@@ -446,7 +446,7 @@ export function MessagesView({ onCreateCase }: MessagesViewProps) {
             <input
               id="from_address"
               type="text"
-              placeholder="ej. vsoto@tecnocomp.cl"
+              placeholder="ej. usuario@dominio.cl"
               value={filters.from_address}
               onChange={(e) => setFilters((f) => ({ ...f, from_address: e.target.value }))}
             />

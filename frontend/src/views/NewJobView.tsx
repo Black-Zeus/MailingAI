@@ -387,14 +387,14 @@ export function NewJobView({ onJobCreated }: NewJobViewProps) {
                 <input
                   id="subjectContains"
                   type="text"
-                  placeholder="ej. GFCH-I-069926  o  GoldFields -Ciberseguridad"
+                  placeholder="ej. TCK-2026-000123  o  Proyecto -Newsletter"
                   value={form.subjectContains}
                   onChange={(e) => setForm({ ...form, subjectContains: e.target.value })}
                 />
                 <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
                   Términos separados por espacio, coincidencia parcial (se pueden escribir como <code>%texto%</code>{' '}
                   o directo). Agrega <code>-</code> antes de un término para excluir los correos que lo contengan —
-                  ej. <code>GoldFields -Ciberseguridad</code>. Busca en el asunto y en el cuerpo completo del correo,
+                  ej. <code>Proyecto -Newsletter</code>. Busca en el asunto y en el cuerpo completo del correo,
                   igual que la coincidencia parcial ya disponible en "Mensajes".
                 </p>
               </div>
@@ -461,7 +461,7 @@ export function NewJobView({ onJobCreated }: NewJobViewProps) {
                     <FolderTree nodes={folders} selected={selectedFolderIds} onChange={setSelectedFolderIds} />
                     {jobType === 'fetch_message_series' && (
                       <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 6 }}>
-                        Elige cualquier carpeta o subcarpeta (ej. Clientes/GoldFields). Si eliges varias, se crea un
+                        Elige cualquier carpeta o subcarpeta (ej. Clientes/Acme). Si eliges varias, se crea un
                         trabajo por carpeta. Deja "Buscar en asunto y cuerpo" vacío para traer todos los correos de
                         la carpeta, sin filtrar por texto.
                       </p>
