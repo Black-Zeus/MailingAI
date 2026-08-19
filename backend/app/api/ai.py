@@ -7,7 +7,15 @@ from fastapi import status as http_status
 
 from app.auth.dependencies import AdminUserDep, CurrentUserDep
 from app.db import get_pool
-from app.schemas.ai import AIAnalyzeResponse, AIBatchRunRead, AIHealthResponse, AskCaseQuestionRequest, AskCaseQuestionResponse
+from app.schemas.ai import (
+    AIAnalyzeResponse,
+    AIBatchRunRead,
+    AIHealthResponse,
+    AskCaseQuestionRequest,
+    AskCaseQuestionResponse,
+    SummarizeTextRequest,
+    SummarizeTextResponse,
+)
 from app.schemas.ai_providers import (
     AIPolicyRead,
     AIPolicyUpdate,
@@ -69,6 +77,19 @@ async def ask_case_question(
     if result is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Caso no encontrado")
     return result
+
+
+@router.post("/summarize-text", response_model=SummarizeTextResponse)
+async def summarize_text(payload: SummarizeTextRequest, pool: PoolDep, _user: CurrentUserDep) -> SummarizeTextResponse:
+    """Condensa texto libre (ej. una glosa de cierre larga) al formato fijo
+    de gateway._SUMMARIZE_SYSTEM_PROMPT -- de solo texto, no depende de
+    ningun caso puntual, el frontend decide si acepta/descarta/reintenta."""
+    try:
+        return await gateway.summarize_text(pool, payload.text)
+    except gateway.AIQuestionBlockedError as exc:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ProviderUnavailableError as exc:
+        raise HTTPException(status_code=http_status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
 @router.post("/batch-analyze", response_model=AIBatchRunRead, status_code=http_status.HTTP_201_CREATED)

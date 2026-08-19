@@ -72,6 +72,16 @@ class AskCaseQuestionResponse(BaseModel):
     used_retrieval: bool = False
 
 
+class SummarizeTextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+
+
+class SummarizeTextResponse(BaseModel):
+    summary: str
+    provider: str
+    model: str
+
+
 class AIHealthResponse(BaseModel):
     policy: str
     active_provider: AIProviderRead | None
