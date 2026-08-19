@@ -34,6 +34,7 @@ def _to_item(record: asyncpg.Record) -> CaseBatchItemRead:
         status=record["status"],
         detail=record["detail"],
         case_id=record["case_id"],
+        reused=record["reused"],
     )
 
 
@@ -241,11 +242,12 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
 
     # Fase 1: crear todos los expedientes, vacios (sin correlacionar todavia).
     created_by_item: dict[int, CaseDetail] = {}
+    reused_by_item: dict[int, bool] = {}
     created = 0
     for item in items:
         await case_batch_repository.update_item_status(pool, item["item_id"], status="creando", detail="Creando expediente…")
         try:
-            case_detail = await cases_service.create_empty_case(
+            case_detail, reused = await cases_service.create_empty_case(
                 pool,
                 title=item["keyword"],
                 seed_value=item["keyword"],
@@ -253,12 +255,16 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 user=user,
             )
             created_by_item[item["item_id"]] = case_detail
+            reused_by_item[item["item_id"]] = reused
             await case_batch_repository.update_item_status(
                 pool,
                 item["item_id"],
                 status="creando",
-                detail="Expediente creado — en cola para asociar correos indexados",
+                detail="Expediente ya existía — en cola para asociar correos indexados"
+                if reused
+                else "Expediente creado — en cola para asociar correos indexados",
                 case_id=case_detail.case_id,
+                reused=reused,
             )
         except Exception as exc:
             logger.exception(
@@ -292,6 +298,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
             status="listo" if not search_mailbox else "creando",
             detail=detail_text,
             case_id=case_detail.case_id,
+            reused=reused_by_item.get(item["item_id"], False),
         )
         correlated += 1
         await case_batch_repository.update_batch_correlated_count(pool, batch_run_id, count=correlated)
@@ -313,6 +320,8 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 item["item_id"],
                 status="creando",
                 detail=f"{case_detail.message_count} correo(s) (local) — buscando en el buzón…",
+                case_id=case_detail.case_id,
+                reused=reused_by_item.get(item["item_id"], False),
             )
             search_note = await _search_mailbox_for_keyword(
                 pool,
@@ -322,7 +331,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 mailbox_account_id=mailbox_account_id,
             )
             try:
-                refreshed = await cases_service.refresh_case_correlation(pool, case_detail.case_id)
+                refreshed = await cases_service.refresh_case_correlation(pool, case_detail.case_id, user=user)
             except cases_service.CaseClosedError:
                 refreshed = None
             if refreshed is not None:
@@ -336,6 +345,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 status="listo",
                 detail=detail_text,
                 case_id=case_detail.case_id,
+                reused=reused_by_item.get(item["item_id"], False),
             )
             searched += 1
             await case_batch_repository.update_batch_searched_count(pool, batch_run_id, count=searched)

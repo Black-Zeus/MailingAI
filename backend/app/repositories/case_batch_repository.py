@@ -10,7 +10,7 @@ _RUN_FIELDS = """
     created_count, correlated_count, searched_count, requested_by_user_id
 """
 
-_ITEM_FIELDS = "item_id, position, keyword, status, detail, case_id"
+_ITEM_FIELDS = "item_id, position, keyword, status, detail, case_id, reused"
 
 
 async def create_batch_run(
@@ -110,14 +110,15 @@ async def update_item_status(
     status: str,
     detail: str | None = None,
     case_id: int | None = None,
+    reused: bool = False,
 ) -> None:
     query = """
         UPDATE mailing.case_batch_run_items
-        SET status = $2, detail = $3, case_id = $4
+        SET status = $2, detail = $3, case_id = $4, reused = $5
         WHERE item_id = $1;
     """
     async with pool.acquire() as conn:
-        await conn.execute(query, item_id, status, detail, case_id)
+        await conn.execute(query, item_id, status, detail, case_id, reused)
 
 
 async def update_batch_progress(pool: asyncpg.Pool, batch_run_id: UUID, *, processed_keywords: int) -> None:
