@@ -6,6 +6,14 @@ services:
     image: pgvector/pgvector:pg16
     container_name: mailingai_postgres
     restart: unless-stopped
+    # shared_buffers en el default de fabrica (128MB) se quedaba corto contra
+    # el volumen real de mailing.messages.body_content (mas de 1GB) -- las
+    # busquedas ILIKE indexadas (idx_messages_*_trgm) igual tenian que traer
+    # de disco casi todas las filas candidatas en cada consulta distinta,
+    # porque casi nada quedaba cacheado entre una y otra. effective_cache_size
+    # es solo una pista para el planner (no reserva memoria), se sube en
+    # proporcion para que siga favoreciendo los indices en vez de Seq Scan.
+    command: postgres -c shared_buffers=1GB -c effective_cache_size=3GB
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mailingai}
       POSTGRES_USER: ${POSTGRES_USER:-mailingai}
