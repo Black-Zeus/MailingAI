@@ -11,6 +11,7 @@ import { DashboardView } from './views/DashboardView'
 import { MessagesView } from './views/MessagesView'
 import { AttachmentsView } from './views/AttachmentsView'
 import { SettingsView } from './views/SettingsView'
+import { MailTemplatesView } from './views/MailTemplatesView'
 import { getAIHealth } from './api/client'
 import type { CaseSeedPrefill } from './types/cases'
 import type { AIHealthResponse } from './types/ai'
@@ -23,6 +24,7 @@ const TITLES: Record<ViewName, { title: string; subtitle: string }> = {
   dashboard: { title: 'Dashboard', subtitle: 'Resumen ejecutivo de expedientes.' },
   messages: { title: 'Mensajes', subtitle: 'Buscar mensajes y carpetas ya indexados.' },
   attachments: { title: 'Adjuntos', subtitle: 'Evidencia real del buzón: archivos, hash e historial de vínculos.' },
+  mailTemplates: { title: 'Mail Template', subtitle: 'Plantillas de correo para reportar expedientes cerrados.' },
   settings: { title: 'Configuración', subtitle: 'Estado real de la política e integraciones de IA.' },
 }
 
@@ -104,6 +106,7 @@ function AppShell() {
           {view === 'dashboard' && <DashboardView onOpenCase={goToCaseId} />}
           {view === 'messages' && <MessagesView onCreateCase={goToCasesWithSeed} />}
           {view === 'attachments' && <AttachmentsView />}
+          {view === 'mailTemplates' && <MailTemplatesView />}
           {view === 'settings' && isAdmin && <SettingsView />}
         </div>
       </main>

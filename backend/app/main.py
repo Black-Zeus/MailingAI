@@ -16,6 +16,8 @@ from app.api.cases import router as cases_router
 from app.api.jobs import router as jobs_router
 from app.api.mailboxes import router as mailboxes_router
 from app.api.internal import router as internal_router
+from app.api.mail_templates import router as mail_templates_router
+from app.api.pending_action_presets import router as pending_action_presets_router
 from app.api.messages import router as messages_router
 from app.api.notifications import router as notifications_router
 from app.api.system import router as system_router
@@ -99,6 +101,8 @@ app.include_router(jobs_router, dependencies=_require_session)
 app.include_router(messages_router, dependencies=_require_session)
 app.include_router(cases_router, dependencies=_require_session)
 app.include_router(case_export_router, dependencies=_require_session)
+app.include_router(mail_templates_router, dependencies=_require_session)
+app.include_router(pending_action_presets_router, dependencies=_require_session)
 app.include_router(ai_router, dependencies=_require_session)
 app.include_router(system_router, dependencies=_require_session)
 app.include_router(mailboxes_router, dependencies=_require_session)

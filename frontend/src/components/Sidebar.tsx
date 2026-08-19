@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { NotificationBell } from './NotificationBell'
 import type { SystemStatus } from '../types/system'
 
-export type ViewName = 'new' | 'jobs' | 'cases' | 'dashboard' | 'messages' | 'attachments' | 'settings'
+export type ViewName = 'new' | 'jobs' | 'cases' | 'dashboard' | 'messages' | 'attachments' | 'mailTemplates' | 'settings'
 
 const NAV_ITEMS: Array<{ view: ViewName; icon: string; label: string }> = [
   { view: 'dashboard', icon: '📊', label: 'Dashboard' },
@@ -13,6 +13,7 @@ const NAV_ITEMS: Array<{ view: ViewName; icon: string; label: string }> = [
   { view: 'cases', icon: '▤', label: 'Expedientes' },
   { view: 'messages', icon: '✉', label: 'Mensajes' },
   { view: 'attachments', icon: '📎', label: 'Adjuntos' },
+  { view: 'mailTemplates', icon: '📧', label: 'Mail Template' },
   { view: 'settings', icon: '⚙', label: 'Configuración' },
 ]
 
