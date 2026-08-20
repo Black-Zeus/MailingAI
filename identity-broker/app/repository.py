@@ -2,6 +2,8 @@ from datetime import datetime
 
 import asyncpg
 
+from app.crypto import decrypt_token, encrypt_token
+
 _PUBLIC_FIELDS = (
     "mailbox_account_id, label, email_address, provider, enabled, "
     "token_expires_at, created_at, updated_at, owner_user_id, is_notification_sender, tenant_config_id"
@@ -10,6 +12,25 @@ _TOKEN_FIELDS = (
     "mailbox_account_id, label, provider, tenant_id, client_id, client_secret, "
     "access_token, refresh_token, token_expires_at, enabled"
 )
+
+
+async def get_session_role(pool: asyncpg.Pool, session_token_hash: str) -> str | None:
+    """Misma tabla que usa el backend (identity.user_sessions) -- el broker
+    comparte la misma base Postgres, asi que puede validar la sesion admin
+    del navegador sin ida y vuelta al backend. Devuelve el rol si la sesion
+    esta activa y no vencida, o None."""
+    query = """
+        SELECT u.role
+        FROM identity.user_sessions s
+        JOIN identity.users u ON u.user_id = s.user_id
+        WHERE s.session_token_hash = $1
+          AND s.revoked_at IS NULL
+          AND s.expires_at > now()
+          AND u.enabled;
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(query, session_token_hash)
+        return row["role"] if row else None
 
 
 async def list_mailboxes(pool: asyncpg.Pool) -> list[asyncpg.Record]:
@@ -27,7 +48,14 @@ async def get_mailbox_public(pool: asyncpg.Pool, mailbox_account_id: int) -> asy
 async def get_mailbox_for_token(pool: asyncpg.Pool, mailbox_account_id: int) -> asyncpg.Record | None:
     query = f"SELECT {_TOKEN_FIELDS} FROM identity.mailbox_accounts WHERE mailbox_account_id = $1;"
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, mailbox_account_id)
+        row = await conn.fetchrow(query, mailbox_account_id)
+    if row is None:
+        return row
+    return {
+        **row,
+        "access_token": decrypt_token(row["access_token"]),
+        "refresh_token": decrypt_token(row["refresh_token"]) if row["refresh_token"] else "",
+    }
 
 
 async def upsert_from_oauth(
@@ -73,8 +101,8 @@ async def upsert_from_oauth(
             client_id,
             client_secret,
             tenant_config_id,
-            access_token,
-            refresh_token,
+            encrypt_token(access_token),
+            encrypt_token(refresh_token),
             token_expires_at,
         )
 
@@ -93,7 +121,9 @@ async def update_tokens(
         WHERE mailbox_account_id = $1;
     """
     async with pool.acquire() as conn:
-        await conn.execute(query, mailbox_account_id, access_token, refresh_token, token_expires_at)
+        await conn.execute(
+            query, mailbox_account_id, encrypt_token(access_token), encrypt_token(refresh_token), token_expires_at
+        )
 
 
 async def update_mailbox(

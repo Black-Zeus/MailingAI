@@ -1,4 +1,6 @@
+import hashlib
 import hmac
+import html
 import json
 import logging
 import secrets
@@ -6,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi import status as http_status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -90,6 +92,23 @@ async def verify_internal_secret(request: Request) -> None:
         raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Secreto interno invalido o ausente")
 
 
+async def require_admin_session(request: Request) -> None:
+    """Antes /oauth/microsoft/start no exigia nada -- confiaba en que el
+    boton de 'Conectar buzon' este escondido en Configuracion. Como el
+    endpoint termina registrando un buzon nuevo (y con el label crudo del
+    hallazgo C1 podia encadenarse con un secuestro de sesion), ahora exige
+    la misma cookie de sesion que usa el backend, validada contra
+    identity.user_sessions (misma base, ver repository.get_session_role)."""
+    settings = get_settings()
+    raw_token = request.cookies.get(settings.session_cookie_name)
+    role = None
+    if raw_token:
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        role = await repository.get_session_role(get_pool(), token_hash)
+    if role != "admin":
+        raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Requiere sesion de administrador")
+
+
 internal_router = APIRouter(prefix="/internal", dependencies=[Depends(verify_internal_secret)])
 
 app = FastAPI(title="mailingai-identity-broker", lifespan=lifespan)
@@ -100,7 +119,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "mailingai-identity-broker"}
 
 
-@app.get("/oauth/microsoft/start")
+@app.get("/oauth/microsoft/start", dependencies=[Depends(require_admin_session)])
 async def oauth_start(
     label: str = Query(min_length=1), tenant_config_id: int = Query(...)
 ) -> RedirectResponse:
@@ -132,7 +151,7 @@ async def oauth_callback(
 ) -> HTMLResponse:
     if error:
         return HTMLResponse(
-            f"<h1>Microsoft rechazó el login</h1><p>{error}: {error_description or ''}</p>"
+            f"<h1>Microsoft rechazó el login</h1><p>{html.escape(error)}: {html.escape(error_description or '')}</p>"
             "<p>Volvé a Configuración e intentá de nuevo.</p>",
             status_code=400,
         )
@@ -153,7 +172,7 @@ async def oauth_callback(
         me = await ms_oauth.get_me(tokens["access_token"])
     except MicrosoftOAuthError as exc:
         logger.exception("Fallo el intercambio de codigo OAuth2 con Microsoft")
-        return HTMLResponse(f"<h1>No se pudo completar la conexión</h1><p>{exc}</p>", status_code=502)
+        return HTMLResponse(f"<h1>No se pudo completar la conexión</h1><p>{html.escape(str(exc))}</p>", status_code=502)
 
     email_address = me.get("mail") or me.get("userPrincipalName")
     pool = get_pool()
@@ -170,18 +189,48 @@ async def oauth_callback(
         refresh_token=tokens.get("refresh_token", ""),
         token_expires_at=ms_oauth.expires_at_from(tokens),
     )
+    # El payload va en un bloque application/json (no ejecutable) en vez de
+    # interpolado dentro de un <script> JS -- permite una CSP script-src
+    # 'self' sin 'unsafe-inline' en proxy/nginx.conf. .replace("</", "<\\/")
+    # evita que un email_address con "</script>" corte el bloque JSON (el
+    # parser HTML busca esa secuencia literal sin importar el type="").
+    result_json = json.dumps(
+        {"mailbox_account_id": account["mailbox_account_id"], "email_address": account["email_address"]}
+    ).replace("</", "<\\/")
     return HTMLResponse(
         "<html><body style=\"font-family: sans-serif; padding: 2rem;\">"
-        f"<h1>Cuenta conectada</h1><p><strong>{account['email_address']}</strong> quedó registrada "
-        f"como «{account['label']}».</p><p>Esta ventana se cierra sola.</p>"
-        "<script>"
-        f"try {{ window.opener && window.opener.postMessage("
-        f"{{type: 'mailingai-mailbox-connected', mailbox_account_id: {account['mailbox_account_id']}, "
-        f"email_address: {json.dumps(account['email_address'])}}}, '*'); }} catch (e) {{}}"
-        "window.close();"
-        "</script>"
+        f"<h1>Cuenta conectada</h1><p><strong>{html.escape(account['email_address'])}</strong> quedó registrada "
+        f"como «{html.escape(account['label'])}».</p><p>Esta ventana se cierra sola.</p>"
+        f'<script type="application/json" id="oauth-result">{result_json}</script>'
+        # Ruta externa (a traves de proxy/nginx.conf, que mapea
+        # /identity/oauth/ -> identity-broker:8000/oauth/), no la ruta
+        # interna del servicio -- esta pagina la sirve el navegador, no un
+        # llamado server-to-server.
+        '<script src="/identity/oauth/callback.js"></script>'
         "</body></html>"
     )
+
+
+@app.get("/oauth/callback.js")
+def oauth_callback_script() -> Response:
+    # Estatico (nunca interpola datos del usuario) -- lee el payload real del
+    # bloque application/json de arriba en runtime.
+    script = (
+        "(function () {"
+        "  var el = document.getElementById('oauth-result');"
+        "  if (!el) return;"
+        "  var data = JSON.parse(el.textContent);"
+        "  try {"
+        "    window.opener && window.opener.postMessage("
+        "      { type: 'mailingai-mailbox-connected', mailbox_account_id: data.mailbox_account_id, "
+        "        email_address: data.email_address },"
+        "      window.location.origin"
+        "    );"
+        "  } catch (e) {}"
+        "  window.close();"
+        "})();"
+    )
+    return Response(content=script, media_type="application/javascript")
 
 
 @internal_router.get("/mailboxes", response_model=list[MailboxAccountRead])

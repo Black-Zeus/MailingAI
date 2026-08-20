@@ -17,7 +17,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mailingai}
       POSTGRES_USER: ${POSTGRES_USER:-mailingai}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?la variable POSTGRES_PASSWORD es obligatoria, ver .env}
       PGDATA: /var/lib/postgresql/data/pgdata
       TZ: ${TZ:-America/Santiago}
     volumes:
@@ -46,7 +46,7 @@ services:
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-mailingai}
       DB_USER: ${POSTGRES_USER:-mailingai}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?la variable POSTGRES_PASSWORD es obligatoria, ver .env}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost}
       N8N_WEBHOOK_INTERNAL_URL: ${N8N_WEBHOOK_INTERNAL_URL:-http://n8n:5678/webhook/execute-analysis-job}
       N8N_WEBHOOK_DOWNLOAD_URL: ${N8N_WEBHOOK_DOWNLOAD_URL:-http://n8n:5678/webhook/download-attachment}
@@ -91,7 +91,7 @@ services:
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-mailingai}
       DB_USER: ${POSTGRES_USER:-mailingai}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?la variable POSTGRES_PASSWORD es obligatoria, ver .env}
       MS_TENANT_ID: ${MS_TENANT_ID:?la variable MS_TENANT_ID es obligatoria, ver .env}
       MS_CLIENT_ID: ${MS_CLIENT_ID:?la variable MS_CLIENT_ID es obligatoria, ver .env}
       MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:?la variable MS_CLIENT_SECRET es obligatoria, ver .env}
@@ -99,6 +99,7 @@ services:
       PUBLIC_BASE_URL: ${IDENTITY_BROKER_PUBLIC_URL:-http://localhost/identity}
       WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET:?la variable WEBHOOK_SHARED_SECRET es obligatoria, ver .env}
       WEBHOOK_SHARED_SECRET_HEADER: ${WEBHOOK_SHARED_SECRET_HEADER:-X-MailingAI-Secret}
+      MAILBOX_TOKEN_ENCRYPTION_KEY: ${MAILBOX_TOKEN_ENCRYPTION_KEY:?la variable MAILBOX_TOKEN_ENCRYPTION_KEY es obligatoria, ver .env}
     networks:
       - mailingai_internal
     depends_on:
@@ -144,7 +145,7 @@ services:
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-mailingai}
       DB_POSTGRESDB_USER: ${POSTGRES_USER:-mailingai}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-mailingai_password_change_me}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?la variable POSTGRES_PASSWORD es obligatoria, ver .env}
 
       TZ: ${TZ:-America/Santiago}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-America/Santiago}

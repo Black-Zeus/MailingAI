@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     webhook_shared_secret: str = ""
     webhook_shared_secret_header: str = "X-MailingAI-Secret"
 
+    # Mismo nombre de cookie que setea backend/app/config.py -- el broker
+    # comparte origen (todo detras de proxy/nginx.conf) y misma base Postgres,
+    # asi que puede leer y validar la sesion sin llamar de vuelta al backend.
+    session_cookie_name: str = "mailingai_session"
+
+    # Clave Fernet (32 bytes url-safe base64, generar con
+    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
+    # para cifrar access_token/refresh_token de Graph en reposo -- antes se
+    # guardaban en texto plano en identity.mailbox_accounts. Sin esto el
+    # servicio no arranca (ver app/crypto.py) porque esos tokens dan lectura
+    # y ENVIO de correo real (scope Mail.Send) para cualquier buzon conectado.
+    mailbox_token_encryption_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

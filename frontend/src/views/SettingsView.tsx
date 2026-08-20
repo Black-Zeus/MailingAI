@@ -528,6 +528,7 @@ export function SettingsView() {
       loadMailboxes()
     }
     function onMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return
       if (event.data?.type !== 'mailingai-mailbox-connected') return
       setConnectModalOpen(false)
       setNewMailboxLabel('')
