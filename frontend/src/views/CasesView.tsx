@@ -7,7 +7,6 @@ import {
   analyzeCaseWithAI,
   createCase,
   createJob,
-  createPendingActionPreset,
   deleteCases,
   deleteCase,
   exportCasePdfBlob,
@@ -36,9 +35,7 @@ import {
   createCaseExclusionRule,
   createGlobalExclusionRule,
   deleteExclusionRule,
-  deletePendingActionPreset,
   listCaseExclusionRules,
-  listPendingActionPresets,
   listGlobalExclusionRules,
   listMailTemplates,
   renderMailTemplate,
@@ -56,12 +53,10 @@ import {
 } from '../api/client'
 import type { CaseAuditLogRead, CaseBatchRunRead, CaseDetail, CaseEvidenceRead, CaseMessageRead, CaseOutcome, CaseSeedPrefill, CaseSentEmailRead, CaseShareRead, CaseSummary, CaseType, ExclusionRuleFields, ExclusionRuleRead, SeedType } from '../types/cases'
 import { ExclusionRuleManager } from '../components/ExclusionRuleManager'
-import { RecipientInput } from '../components/RecipientInput'
 import type { MailTemplateRead } from '../types/mailTemplates'
 import { AUTO_VARIABLE_NAMES } from '../types/mailTemplates'
 import type { JobRead } from '../types/jobs'
 import type { MessageListItem } from '../types/messages'
-import type { PendingActionPresetRead } from '../types/pendingActionPresets'
 import { CASE_OUTCOME_LABELS, DETERMINATION_LABELS } from '../types/cases'
 import type { AIBatchRunRead } from '../types/ai'
 import type { MailboxAccountRead } from '../types/mailboxes'
@@ -75,6 +70,11 @@ import { MessageBodyModal, MessageBodyView, type MessageBodyModalState } from '.
 import { ActionButton } from '../components/ActionButton'
 import { MarkdownHelpModal } from '../components/MarkdownHelpModal'
 import { ReassignOwnerModal } from '../components/ReassignOwnerModal'
+import { SentEmailsSection } from '../components/SentEmailsSection'
+import { SentEmailPreviewModal } from '../components/SentEmailPreviewModal'
+import { SendEmailModal, type SendEmailFormState } from '../components/SendEmailModal'
+import { FollowUpPanel } from '../components/FollowUpPanel'
+import { usePendingActionPresets } from '../utils/usePendingActionPresets'
 import {
   ArrowDown,
   ArrowUp,
@@ -94,7 +94,6 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
   Search,
   Share2,
@@ -254,12 +253,9 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const mailboxPollRefs = useRef<Record<number, number>>({})
   const aiAnalysisPollRefs = useRef<Record<number, number>>({})
   const [mailboxAccounts, setMailboxAccounts] = useState<MailboxAccountRead[]>([])
-  const [pendingActionPresets, setPendingActionPresets] = useState<PendingActionPresetRead[]>([])
-  const [presetsMenuOpenIds, setPresetsMenuOpenIds] = useState<Set<number>>(new Set())
-  const [newPresetText, setNewPresetText] = useState('')
-  const [addingPreset, setAddingPreset] = useState(false)
-  const [deletingPresetId, setDeletingPresetId] = useState<number | null>(null)
+  const pendingActionPresets = usePendingActionPresets()
   const [mailboxSearchAccountId, setMailboxSearchAccountId] = useState<Record<number, number>>({})
+  const [presetsMenuOpenIds, setPresetsMenuOpenIds] = useState<Set<number>>(new Set())
   const [deleteTarget, setDeleteTarget] = useState<CaseSummary | null>(null)
   const [deletingCase, setDeletingCase] = useState(false)
   const [addMessageQuery, setAddMessageQuery] = useState<Record<number, string>>({})
@@ -297,7 +293,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [addingEvidenceId, setAddingEvidenceId] = useState<number | null>(null)
   const [notesOpenIds, setNotesOpenIds] = useState<Set<number>>(new Set())
   const [evidenceOpenIds, setEvidenceOpenIds] = useState<Set<number>>(new Set())
-  const [sentEmailsOpenIds, setSentEmailsOpenIds] = useState<Set<number>>(new Set())
   const [viewingSentEmail, setViewingSentEmail] = useState<CaseSentEmailRead | null>(null)
   const [viewingEvidence, setViewingEvidence] = useState<{ caseId: number; evidence: CaseEvidenceRead } | null>(null)
   const [auditLogOpenIds, setAuditLogOpenIds] = useState<Set<number>>(new Set())
@@ -318,15 +313,15 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
   const [editNoteDraft, setEditNoteDraft] = useState('')
   const [savingNoteEditId, setSavingNoteEditId] = useState<number | null>(null)
   const [sendEmailTarget, setSendEmailTarget] = useState<number | null>(null)
-  const [sendEmailForm, setSendEmailForm] = useState<{
-    to: string
-    cc: string
-    subject: string
-    body: string
-    mailboxAccountId: number | null
-    attachPdf: boolean
-    files: File[]
-  }>({ to: '', cc: '', subject: '', body: '', mailboxAccountId: null, attachPdf: true, files: [] })
+  const [sendEmailForm, setSendEmailForm] = useState<SendEmailFormState>({
+    to: '',
+    cc: '',
+    subject: '',
+    body: '',
+    mailboxAccountId: null,
+    attachPdf: true,
+    files: [],
+  })
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailPreviewOpen, setEmailPreviewOpen] = useState(false)
   const [mdHelpOpen, setMdHelpOpen] = useState(false)
@@ -412,18 +407,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     })
   }
 
-  function toggleSentEmails(caseId: number) {
-    setSentEmailsOpenIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(caseId)) {
-        next.delete(caseId)
-      } else {
-        next.add(caseId)
-      }
-      return next
-    })
-  }
-
   function togglePresetsMenu(caseId: number) {
     setPresetsMenuOpenIds((prev) => {
       const next = new Set(prev)
@@ -441,34 +424,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
       const current = (prev[caseId] ?? '').trim()
       return { ...prev, [caseId]: current ? `${current}\n${text}` : text }
     })
-  }
-
-  async function handleAddPendingActionPreset() {
-    const text = newPresetText.trim()
-    if (!text) return
-    setAddingPreset(true)
-    try {
-      const preset = await createPendingActionPreset(text)
-      setPendingActionPresets((prev) => [...prev, preset])
-      setNewPresetText('')
-      showToast('Frase agregada')
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo agregar la frase.', true)
-    } finally {
-      setAddingPreset(false)
-    }
-  }
-
-  async function handleDeletePendingActionPreset(presetId: number) {
-    setDeletingPresetId(presetId)
-    try {
-      await deletePendingActionPreset(presetId)
-      setPendingActionPresets((prev) => prev.filter((p) => p.preset_id !== presetId))
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'No se pudo borrar la frase.', true)
-    } finally {
-      setDeletingPresetId(null)
-    }
   }
 
   async function toggleAuditLog(caseId: number) {
@@ -708,12 +663,6 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
     listMailboxes()
       .then(setMailboxAccounts)
       .catch(() => setMailboxAccounts([]))
-  }, [])
-
-  useEffect(() => {
-    listPendingActionPresets()
-      .then(setPendingActionPresets)
-      .catch(() => setPendingActionPresets([]))
   }, [])
 
   useEffect(() => {
@@ -2885,159 +2834,28 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                       </div>
                     </div>
 
-                    <div className="ai-result">
-                      <h5 style={{ margin: '0 0 8px' }}>📋 Seguimiento del expediente</h5>
-                      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label htmlFor={`case-pending-action-${c.case_id}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            Acciones pendientes
-                            <ActionButton icon={HelpCircle} label="Ayuda de formato Markdown" size="sm" onClick={() => setMdHelpOpen(true)} />
-                            <ActionButton
-                              icon={Plus}
-                              label="Frases predefinidas"
-                              size="sm"
-                              disabled={isClosed}
-                              onClick={() => togglePresetsMenu(c.case_id)}
-                            />
-                          </label>
-                          {presetsMenuOpenIds.has(c.case_id) && (
-                            <div className="panel" style={{ marginBottom: 8, padding: 10 }}>
-                              {pendingActionPresets.length === 0 && (
-                                <p style={{ margin: 0, fontSize: 12, color: 'var(--muted)' }}>
-                                  Todavía no hay frases guardadas.
-                                </p>
-                              )}
-                              {pendingActionPresets.map((preset) => (
-                                <div
-                                  key={preset.preset_id}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}
-                                >
-                                  <button
-                                    type="button"
-                                    className="btn small"
-                                    style={{ flex: 1, textAlign: 'left', whiteSpace: 'normal' }}
-                                    disabled={isClosed}
-                                    onClick={() => insertPendingActionPreset(c.case_id, preset.text)}
-                                  >
-                                    {preset.text}
-                                  </button>
-                                  <ActionButton
-                                    icon={X}
-                                    label="Borrar frase"
-                                    size="sm"
-                                    loading={deletingPresetId === preset.preset_id}
-                                    onClick={() => handleDeletePendingActionPreset(preset.preset_id)}
-                                  />
-                                </div>
-                              ))}
-                              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                                <input
-                                  type="text"
-                                  placeholder="Nueva frase para agregar a la lista…"
-                                  value={newPresetText}
-                                  onChange={(e) => setNewPresetText(e.target.value)}
-                                  onKeyDown={(e) => e.key === 'Enter' && handleAddPendingActionPreset()}
-                                  style={{ flex: 1 }}
-                                />
-                                <ActionButton
-                                  icon={Plus}
-                                  label={addingPreset ? 'Agregando…' : 'Agregar'}
-                                  variant="primary"
-                                  loading={addingPreset}
-                                  disabled={!newPresetText.trim()}
-                                  onClick={handleAddPendingActionPreset}
-                                />
-                              </div>
-                            </div>
-                          )}
-                          <textarea
-                            id={`case-pending-action-${c.case_id}`}
-                            placeholder="Qué falta hacer sobre este expediente… (admite formato Markdown, se convierte a HTML en el PDF exportado)"
-                            value={pendingActionDraft[c.case_id] ?? ''}
-                            onChange={(e) => setPendingActionDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
-                            rows={4}
-                            style={{ width: '100%', resize: 'vertical' }}
-                            disabled={isClosed}
-                          />
-                        </div>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label htmlFor={`case-next-review-${c.case_id}`}>Próxima revisión</label>
-                          <input
-                            id={`case-next-review-${c.case_id}`}
-                            type="date"
-                            value={nextReviewDraft[c.case_id] ?? ''}
-                            onChange={(e) => setNextReviewDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
-                            disabled={isClosed}
-                          />
-                        </div>
-                      </div>
-                      <div className="field" style={{ margin: '10px 0 0' }}>
-                        <label htmlFor={`case-closing-glosa-${c.case_id}`}>
-                          Glosa de cierre (obligatoria para cerrar el expediente)
-                        </label>
-                        <textarea
-                          id={`case-closing-glosa-${c.case_id}`}
-                          placeholder="Motivo del cierre: escalado, derivado, se solicita el cierre por falta de evidencia, ya se entregó, se solicita una acción puntual…"
-                          value={closingGlosaDraft[c.case_id] ?? ''}
-                          onChange={(e) => setClosingGlosaDraft((prev) => ({ ...prev, [c.case_id]: e.target.value }))}
-                          rows={3}
-                          style={{ width: '100%', resize: 'vertical' }}
-                          disabled={isClosed}
-                        />
-                        <div style={{ marginTop: 6 }}>
-                          <ActionButton
-                            icon={Bot}
-                            label={summarizingGlosaId === c.case_id ? 'Resumiendo…' : 'Resumir con IA'}
-                            size="sm"
-                            loading={summarizingGlosaId === c.case_id}
-                            disabled={isClosed || !(closingGlosaDraft[c.case_id] ?? '').trim()}
-                            onClick={() => handleSummarizeGlosa(c.case_id)}
-                          />
-                        </div>
-                        {glosaSuggestion[c.case_id] && (
-                          <div className="panel" style={{ marginTop: 8, padding: 10 }}>
-                            <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--muted)' }}>
-                              Sugerencia de IA — revisa antes de aceptar:
-                            </p>
-                            <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginBottom: 8 }}>
-                              {glosaSuggestion[c.case_id]}
-                            </div>
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <ActionButton
-                                icon={Check}
-                                label="Aceptar"
-                                size="sm"
-                                variant="primary"
-                                onClick={() => handleAcceptGlosaSuggestion(c.case_id)}
-                              />
-                              <ActionButton
-                                icon={X}
-                                label="Rechazar"
-                                size="sm"
-                                onClick={() => handleRejectGlosaSuggestion(c.case_id)}
-                              />
-                              <ActionButton
-                                icon={RefreshCw}
-                                label={summarizingGlosaId === c.case_id ? 'Reiterando…' : 'Reiterar'}
-                                size="sm"
-                                loading={summarizingGlosaId === c.case_id}
-                                onClick={() => handleSummarizeGlosa(c.case_id)}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ marginTop: 10 }}>
-                        <ActionButton
-                          icon={Save}
-                          label={savingFollowUpId === c.case_id ? 'Guardando…' : 'Guardar seguimiento'}
-                          variant="primary"
-                          loading={savingFollowUpId === c.case_id}
-                          disabled={isClosed}
-                          onClick={() => handleSaveFollowUp(c.case_id)}
-                        />
-                      </div>
-                    </div>
+                    <FollowUpPanel
+                      caseId={c.case_id}
+                      isClosed={isClosed}
+                      pendingAction={pendingActionDraft[c.case_id] ?? ''}
+                      onPendingActionChange={(value) => setPendingActionDraft((prev) => ({ ...prev, [c.case_id]: value }))}
+                      presetsMenuOpen={presetsMenuOpenIds.has(c.case_id)}
+                      onTogglePresetsMenu={() => togglePresetsMenu(c.case_id)}
+                      presets={pendingActionPresets}
+                      onInsertPreset={(text) => insertPendingActionPreset(c.case_id, text)}
+                      onOpenMarkdownHelp={() => setMdHelpOpen(true)}
+                      nextReview={nextReviewDraft[c.case_id] ?? ''}
+                      onNextReviewChange={(value) => setNextReviewDraft((prev) => ({ ...prev, [c.case_id]: value }))}
+                      closingGlosa={closingGlosaDraft[c.case_id] ?? ''}
+                      onClosingGlosaChange={(value) => setClosingGlosaDraft((prev) => ({ ...prev, [c.case_id]: value }))}
+                      summarizingGlosa={summarizingGlosaId === c.case_id}
+                      onSummarizeGlosa={() => handleSummarizeGlosa(c.case_id)}
+                      glosaSuggestion={glosaSuggestion[c.case_id]}
+                      onAcceptGlosaSuggestion={() => handleAcceptGlosaSuggestion(c.case_id)}
+                      onRejectGlosaSuggestion={() => handleRejectGlosaSuggestion(c.case_id)}
+                      savingFollowUp={savingFollowUpId === c.case_id}
+                      onSaveFollowUp={() => handleSaveFollowUp(c.case_id)}
+                    />
 
                     <div className="add-message-search">
                       <button
@@ -3236,58 +3054,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
                       )}
                     </div>
 
-                    <div className="add-message-search">
-                      <button
-                        type="button"
-                        className="btn small btn-labeled"
-                        onClick={() => toggleSentEmails(c.case_id)}
-                      >
-                        {sentEmailsOpenIds.has(c.case_id)
-                          ? '📤 Ocultar correos enviados ▾'
-                          : `📤 Correos enviados (${detail?.sent_emails.length ?? 0}) ▸`}
-                      </button>
-                      {sentEmailsOpenIds.has(c.case_id) && (
-                        <>
-                          {detail && detail.sent_emails.length === 0 && (
-                            <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 10 }}>
-                              Todavía no se envió ningún correo desde este expediente.
-                            </p>
-                          )}
-                          {detail && detail.sent_emails.length > 0 && (
-                            <div className="panel table-wrap mt-5">
-                              <table>
-                                <thead>
-                                  <tr>
-                                    <th scope="col" style={{ width: 160 }}>Fecha</th>
-                                    <th scope="col">Asunto</th>
-                                    <th scope="col">Para</th>
-                                    <th scope="col" style={{ width: 100 }}>Enviado por</th>
-                                    <th scope="col" style={{ width: 90 }}></th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {[...detail.sent_emails]
-                                    .sort((a, b) => b.sent_at.localeCompare(a.sent_at))
-                                    .map((se) => (
-                                      <tr key={se.sent_email_id}>
-                                        <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-                                          {formatDateTime(se.sent_at)}
-                                        </td>
-                                        <td>{se.subject}</td>
-                                        <td>{se.to_addresses.join(', ')}</td>
-                                        <td>{se.sent_by_label ?? '—'}</td>
-                                        <td>
-                                          <ActionButton icon={Eye} label="Ver correo" size="sm" onClick={() => setViewingSentEmail(se)} />
-                                        </td>
-                                      </tr>
-                                    ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
+                    <SentEmailsSection sentEmails={detail?.sent_emails} onViewEmail={setViewingSentEmail} />
 
                     <div className="add-message-search">
                       <button
@@ -3821,164 +3588,23 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
 
       <MessageBodyModal state={bodyModal} onClose={() => setBodyModal(null)} />
 
-      <div
-        className={`modal-backdrop${sendEmailTarget !== null ? ' open' : ''}`}
-      >
-        {/* overflow:hidden + flex-column inline (solo esta instancia, no toca
-            la clase .modal compartida) -- header (Para/CC/Asunto) y botonera
-            quedan fijos, solo el cuerpo (Cuerpo + IA + adjuntos) scrollea. */}
-        <div className="modal xwide" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div
-            className="modal-body"
-            style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}
-          >
-            <h3 style={{ flexShrink: 0 }}>Enviar correo</h3>
-            <p style={{ flexShrink: 0 }}>
-              Se prellena con los involucrados del último correo del expediente. El PDF del expediente se adjunta
-              automáticamente si se deja marcada la casilla.
-            </p>
-            <div className="form-grid mt-6" style={{ flexShrink: 0 }}>
-              <div className="field">
-                <label htmlFor="sendEmailTo">Para</label>
-                <RecipientInput
-                  id="sendEmailTo"
-                  value={sendEmailForm.to}
-                  onChange={(to) => setSendEmailForm((prev) => ({ ...prev, to }))}
-                  placeholder="Escribí un nombre o correo…"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="sendEmailCc">Con copia (CC)</label>
-                <RecipientInput
-                  id="sendEmailCc"
-                  value={sendEmailForm.cc}
-                  onChange={(cc) => setSendEmailForm((prev) => ({ ...prev, cc }))}
-                  placeholder="Escribí un nombre o correo…"
-                />
-              </div>
-              <div className="field full">
-                <label htmlFor="sendEmailSubject">Asunto</label>
-                <input
-                  id="sendEmailSubject"
-                  type="text"
-                  value={sendEmailForm.subject}
-                  onChange={(e) => setSendEmailForm((prev) => ({ ...prev, subject: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div
-              className="form-grid mt-6"
-              style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', paddingTop: 4, paddingRight: 4 }}
-            >
-              <div className="field full">
-                <label htmlFor="sendEmailBody" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span>Cuerpo (Markdown — se precarga con la última nota del auditor, se convierte a HTML al enviar)</span>
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
-                    <ActionButton
-                      icon={HelpCircle}
-                      label="Ayuda de formato Markdown"
-                      size="sm"
-                      className="tooltip-below"
-                      onClick={() => setMdHelpOpen(true)}
-                    />
-                    <ActionButton
-                      icon={Bot}
-                      label={summarizingBody ? 'Resumiendo…' : 'Resumir con IA'}
-                      size="sm"
-                      className="tooltip-below"
-                      loading={summarizingBody}
-                      disabled={!sendEmailForm.body.trim()}
-                      onClick={handleSummarizeBody}
-                    />
-                  </span>
-                </label>
-                <textarea
-                  id="sendEmailBody"
-                  rows={8}
-                  value={sendEmailForm.body}
-                  onChange={(e) => setSendEmailForm((prev) => ({ ...prev, body: e.target.value }))}
-                  style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
-                />
-                {bodySuggestion !== null && (
-                  <div className="panel" style={{ marginTop: 8, padding: 10 }}>
-                    <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--muted)' }}>
-                      Sugerencia de IA — revisa antes de aceptar:
-                    </p>
-                    <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginBottom: 8 }}>{bodySuggestion}</div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <ActionButton icon={Check} label="Aceptar" size="sm" variant="primary" onClick={handleAcceptBodySuggestion} />
-                      <ActionButton icon={X} label="Rechazar" size="sm" onClick={handleRejectBodySuggestion} />
-                      <ActionButton
-                        icon={RefreshCw}
-                        label={summarizingBody ? 'Reiterando…' : 'Reiterar'}
-                        size="sm"
-                        loading={summarizingBody}
-                        onClick={handleSummarizeBody}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="field">
-                <label htmlFor="sendEmailMailbox">Enviar desde</label>
-                <select
-                  id="sendEmailMailbox"
-                  value={sendEmailForm.mailboxAccountId ?? ''}
-                  onChange={(e) =>
-                    setSendEmailForm((prev) => ({ ...prev, mailboxAccountId: e.target.value ? Number(e.target.value) : null }))
-                  }
-                >
-                  <option value="">Selecciona un buzón</option>
-                  {mailboxAccounts
-                    .filter((m) => m.enabled)
-                    .map((m) => (
-                      <option key={m.mailbox_account_id} value={m.mailbox_account_id}>
-                        {m.label} ({m.email_address})
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="sendEmailAttachments">Adjuntos adicionales</label>
-                <input
-                  id="sendEmailAttachments"
-                  type="file"
-                  multiple
-                  onChange={(e) =>
-                    setSendEmailForm((prev) => ({ ...prev, files: e.target.files ? Array.from(e.target.files) : [] }))
-                  }
-                />
-              </div>
-              <div className="field full">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={sendEmailForm.attachPdf}
-                    onChange={(e) => setSendEmailForm((prev) => ({ ...prev, attachPdf: e.target.checked }))}
-                  />
-                  Adjuntar PDF del expediente
-                </label>
-              </div>
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn small btn-labeled" disabled={sendingEmail} onClick={closeSendEmailModal}>
-              ✕ Cancelar
-            </button>
-            <button
-              type="button"
-              className="btn small btn-labeled"
-              disabled={!sendEmailForm.body.trim() || loadingEmailPreview}
-              onClick={handlePreviewEmail}
-            >
-              {loadingEmailPreview ? 'Generando…' : '👁 Vista previa'}
-            </button>
-            <button type="button" className="btn small primary btn-labeled" disabled={sendingEmail} onClick={handleSendEmail}>
-              {sendingEmail ? 'Enviando…' : '✉ Enviar'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <SendEmailModal
+        open={sendEmailTarget !== null}
+        form={sendEmailForm}
+        onFormChange={setSendEmailForm}
+        mailboxAccounts={mailboxAccounts}
+        sendingEmail={sendingEmail}
+        loadingEmailPreview={loadingEmailPreview}
+        summarizingBody={summarizingBody}
+        bodySuggestion={bodySuggestion}
+        onClose={closeSendEmailModal}
+        onPreview={handlePreviewEmail}
+        onSend={handleSendEmail}
+        onSummarizeBody={handleSummarizeBody}
+        onAcceptBodySuggestion={handleAcceptBodySuggestion}
+        onRejectBodySuggestion={handleRejectBodySuggestion}
+        onOpenMarkdownHelp={() => setMdHelpOpen(true)}
+      />
 
       <div className={`modal-backdrop${reportCaseId !== null ? ' open' : ''}`}>
         {/* overflow:hidden + flex-column inline (solo esta instancia, no toca
@@ -4148,53 +3774,7 @@ export function CasesView({ prefill, onPrefillConsumed, openCaseId, onOpenCaseId
         </div>
       </div>
 
-      <div className={`modal-backdrop${viewingSentEmail !== null ? ' open' : ''}`}>
-        <div className="modal wide">
-          <div className="modal-body">
-            <h3>Correo enviado</h3>
-            {viewingSentEmail && (
-              <>
-                <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '4px 10px', marginBottom: 10, fontSize: 13 }}>
-                  <strong>Fecha</strong>
-                  <span>{formatDateTime(viewingSentEmail.sent_at)}</span>
-                  <strong>Enviado por</strong>
-                  <span>{viewingSentEmail.sent_by_label ?? '—'}</span>
-                  <strong>Para</strong>
-                  <span>{viewingSentEmail.to_addresses.join(', ')}</span>
-                  {viewingSentEmail.cc_addresses.length > 0 && (
-                    <>
-                      <strong>CC</strong>
-                      <span>{viewingSentEmail.cc_addresses.join(', ')}</span>
-                    </>
-                  )}
-                  <strong>Asunto</strong>
-                  <span>{viewingSentEmail.subject}</span>
-                </div>
-                {(viewingSentEmail.attached_case_pdf || viewingSentEmail.attachment_names.length > 0) && (
-                  <div className="attachment-tags" style={{ marginBottom: 12 }}>
-                    {viewingSentEmail.attached_case_pdf && (
-                      <span className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
-                        <b>PDF</b>📄 Expediente adjunto
-                      </span>
-                    )}
-                    {viewingSentEmail.attachment_names.map((name, idx) => (
-                      <span key={`${name}-${idx}`} className="attachment-tag" style={{ fontSize: 13, padding: '10px 12px' }}>
-                        <b>{(name.split('.').pop() || 'archivo').toUpperCase()}</b>📎 {name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <MessageBodyView content={viewingSentEmail.body_html} contentType="html" />
-              </>
-            )}
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn small btn-labeled" onClick={() => setViewingSentEmail(null)}>
-              ✕ Cerrar
-            </button>
-          </div>
-        </div>
-      </div>
+      <SentEmailPreviewModal email={viewingSentEmail} onClose={() => setViewingSentEmail(null)} />
 
       <div className={`modal-backdrop${viewingEvidence !== null ? ' open' : ''}`}>
         {/* xwide (ancho maximo, sin alto forzado) en vez de wide (80vw x 80vh
