@@ -29,6 +29,45 @@ PoolDep = Annotated[asyncpg.Pool, Depends(get_pool)]
 _PENDING_STATES: dict[str, float] = {}
 _STATE_TTL_SECONDS = 600
 
+# Rate limit del login local, en memoria -- mismo criterio que _PENDING_STATES
+# de arriba (alcanza para un backend de una sola instancia, sin Redis en el
+# stack). Antes no habia ningun limite propio: se dependia por completo de
+# que la infraestructura externa (Nginx Proxy Manager que termina el TLS)
+# tuviera rate-limiting configurado, algo que este servicio no puede
+# verificar ni garantizar.
+_LOGIN_FAILURES: dict[str, list[float]] = {}
+_LOGIN_ATTEMPT_WINDOW_SECONDS = 300
+_LOGIN_MAX_ATTEMPTS = 5
+
+
+def _client_ip(request: Request) -> str:
+    # X-Real-IP lo setea proxy/nginx.conf; request.client.host es el fallback
+    # si se llama directo al backend (ej. en desarrollo, sin el proxy).
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "desconocido")
+
+
+def _check_login_rate_limit(ip: str) -> None:
+    now = time.time()
+    for key, attempts in list(_LOGIN_FAILURES.items()):
+        fresh = [t for t in attempts if now - t < _LOGIN_ATTEMPT_WINDOW_SECONDS]
+        if fresh:
+            _LOGIN_FAILURES[key] = fresh
+        else:
+            _LOGIN_FAILURES.pop(key, None)
+    if len(_LOGIN_FAILURES.get(ip, [])) >= _LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos fallidos. Probá de nuevo en unos minutos.",
+        )
+
+
+def _register_login_failure(ip: str) -> None:
+    _LOGIN_FAILURES.setdefault(ip, []).append(time.time())
+
+
+def _clear_login_failures(ip: str) -> None:
+    _LOGIN_FAILURES.pop(ip, None)
+
 
 def _prune_expired_states() -> None:
     now = time.time()
@@ -97,19 +136,25 @@ async def microsoft_callback(
 
 
 @router.post("/local-login", response_model=CurrentUserRead)
-async def local_login(payload: LocalLoginRequest, pool: PoolDep, response: Response) -> CurrentUserRead:
+async def local_login(payload: LocalLoginRequest, pool: PoolDep, response: Response, request: Request) -> CurrentUserRead:
     """Login para cuentas locales (auth_method='local') -- alta exclusiva por
     un admin, sin auto-registro, mismo criterio que SSO. Mensaje de error
     generico para no revelar si fallo el usuario o la contraseña."""
+    ip = _client_ip(request)
+    _check_login_rate_limit(ip)
+
     record = await users_repository.get_password_hash_for_login(pool, payload.username)
     invalid = HTTPException(
         status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Usuario o contraseña incorrectos."
     )
     if record is None or not record["enabled"]:
+        _register_login_failure(ip)
         raise invalid
     if not passwords.verify_password(payload.password, record["password_hash"]):
+        _register_login_failure(ip)
         raise invalid
 
+    _clear_login_failures(ip)
     await users_repository.touch_last_login(pool, record["user_id"])
     raw_token = await sessions.create_session(pool, user_id=record["user_id"], user_agent=None, ip_address=None)
     _set_session_cookie(response, raw_token)
