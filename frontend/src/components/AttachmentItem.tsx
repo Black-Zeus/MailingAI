@@ -165,7 +165,12 @@ export function AttachmentItem({
             aria-label={fileName}
           >
             <div className="modal-body" style={{ padding: 0 }}>
-              <iframe src={blobUrl} title={fileName} style={{ width: '100%', height: '80vh', border: 0 }} />
+              <iframe
+                src={blobUrl}
+                title={fileName}
+                sandbox="allow-same-origin"
+                style={{ width: '100%', height: '80vh', border: 0 }}
+              />
             </div>
             <div className="modal-actions">
               <LabeledButton onClick={() => setModalOpen(false)}>✕ Cerrar</LabeledButton>
