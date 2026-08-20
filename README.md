@@ -42,4 +42,6 @@ Guía completa de instalación (Docker Compose, `.env`, primer administrador): [
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Runbook operacional del día a día. |
 | [`docs/STATUS.md`](docs/STATUS.md) | Qué está implementado, qué es parcial y qué falta todavía. |
 | [`docs/HELP.md`](docs/HELP.md) | Qué es MailingAI y cómo se usa día a día, para el usuario final. |
+| [`docs/AUDIT_2026-08-19.md`](docs/AUDIT_2026-08-19.md) · [`docs/AUDIT_2026-08-20.md`](docs/AUDIT_2026-08-20.md) | Hallazgos de las dos rondas de auditoría (seguridad, arquitectura, calidad, rendimiento). |
+| [`docs/TASKLIST.md`](docs/TASKLIST.md) | Seguimiento de la resolución de esos hallazgos — qué está corregido y qué queda pendiente. |
 | [`n8n/WorkFlows/README.md`](n8n/WorkFlows/README.md) | Detalle nodo por nodo de cada workflow de n8n. |
