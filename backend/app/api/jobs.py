@@ -23,9 +23,11 @@ DeleteJobsScope = Literal["failed", "finished", "all-inactive"]
 
 @router.post("", response_model=JobCreatedResponse, status_code=http_status.HTTP_202_ACCEPTED)
 async def create_job(
-    payload: JobCreate, pool: PoolDep, background_tasks: BackgroundTasks
+    payload: JobCreate, pool: PoolDep, background_tasks: BackgroundTasks, user: CurrentUserDep
 ) -> JobCreatedResponse:
-    result = await jobs_service.create_job(pool, payload.job_type, payload.parameters)
+    result = await jobs_service.create_job(
+        pool, payload.job_type, payload.parameters, created_by_user_id=user.user_id
+    )
     background_tasks.add_task(
         jobs_service.trigger_job,
         pool,
@@ -39,30 +41,33 @@ async def create_job(
 @router.get("", response_model=list[JobRead])
 async def list_jobs(
     pool: PoolDep,
+    user: CurrentUserDep,
     limit: int = Query(default=50, ge=1, le=200),
     job_status: str | None = Query(default=None, alias="status"),
 ) -> list[JobRead]:
-    return await jobs_service.list_jobs(pool, limit=limit, status=job_status)
+    return await jobs_service.list_jobs(
+        pool, limit=limit, status=job_status, user_id=user.user_id, is_admin=user.is_admin
+    )
 
 
 @router.delete("", status_code=http_status.HTTP_200_OK)
-async def delete_jobs(pool: PoolDep, scope: DeleteJobsScope = Query(...)) -> dict[str, int]:
-    deleted = await jobs_service.delete_jobs(pool, scope)
+async def delete_jobs(pool: PoolDep, user: CurrentUserDep, scope: DeleteJobsScope = Query(...)) -> dict[str, int]:
+    deleted = await jobs_service.delete_jobs(pool, scope, user_id=user.user_id, is_admin=user.is_admin)
     return {"deleted": deleted}
 
 
 @router.get("/{job_id}", response_model=JobRead)
-async def get_job(job_id: UUID, pool: PoolDep) -> JobRead:
-    job = await jobs_service.get_job(pool, job_id)
+async def get_job(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> JobRead:
+    job = await jobs_service.get_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     if job is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
     return job
 
 
 @router.delete("/{job_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-async def delete_job(job_id: UUID, pool: PoolDep) -> None:
+async def delete_job(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> None:
     try:
-        deleted = await jobs_service.delete_job(pool, job_id)
+        deleted = await jobs_service.delete_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     except jobs_service.JobNotDeletableError as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not deleted:
@@ -70,9 +75,9 @@ async def delete_job(job_id: UUID, pool: PoolDep) -> None:
 
 
 @router.post("/{job_id}/cancel", response_model=JobRead)
-async def cancel_job(job_id: UUID, pool: PoolDep) -> JobRead:
+async def cancel_job(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> JobRead:
     try:
-        job = await jobs_service.cancel_job(pool, job_id)
+        job = await jobs_service.cancel_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     except jobs_service.JobNotCancellableError as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if job is None:
@@ -82,7 +87,7 @@ async def cancel_job(job_id: UUID, pool: PoolDep) -> JobRead:
 
 @router.get("/{job_id}/messages", response_model=list[MessageListItem])
 async def get_job_messages(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> list[MessageListItem]:
-    job = await jobs_service.get_job(pool, job_id)
+    job = await jobs_service.get_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     if job is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
     if job.fetch_run_id is None:
@@ -94,8 +99,8 @@ async def get_job_messages(job_id: UUID, pool: PoolDep, user: CurrentUserDep) ->
 
 
 @router.get("/{job_id}/chart")
-async def get_job_chart(job_id: UUID, pool: PoolDep) -> Response:
-    job = await jobs_service.get_job(pool, job_id)
+async def get_job_chart(job_id: UUID, pool: PoolDep, user: CurrentUserDep) -> Response:
+    job = await jobs_service.get_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     if job is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
     if job.chart_id is None:
@@ -116,16 +121,16 @@ async def get_job_chart(job_id: UUID, pool: PoolDep) -> Response:
     "/{job_id}/retry", response_model=JobCreatedResponse, status_code=http_status.HTTP_202_ACCEPTED
 )
 async def retry_job(
-    job_id: UUID, pool: PoolDep, background_tasks: BackgroundTasks
+    job_id: UUID, pool: PoolDep, background_tasks: BackgroundTasks, user: CurrentUserDep
 ) -> JobCreatedResponse:
     try:
-        result = await jobs_service.retry_job(pool, job_id)
+        result = await jobs_service.retry_job(pool, job_id, user_id=user.user_id, is_admin=user.is_admin)
     except jobs_service.JobNotRetryableError as exc:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
 
-    new_job = await jobs_service.get_job(pool, result.job_id)
+    new_job = await jobs_service.get_job(pool, result.job_id, user_id=user.user_id, is_admin=user.is_admin)
     background_tasks.add_task(
         jobs_service.trigger_job,
         pool,

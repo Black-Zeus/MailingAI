@@ -69,13 +69,14 @@ def _to_job_read(record: asyncpg.Record) -> JobRead:
         retry_of_job_id=record["retry_of_job_id"],
         fetch_run_id=record["fetch_run_id"],
         chart_id=record["chart_id"],
+        created_by_user_id=record["created_by_user_id"],
     )
 
 
 async def create_job(
-    pool: asyncpg.Pool, job_type: str, parameters: dict[str, Any]
+    pool: asyncpg.Pool, job_type: str, parameters: dict[str, Any], *, created_by_user_id: int
 ) -> JobCreatedResponse:
-    record = await jobs_repository.insert_job(pool, job_type, parameters)
+    record = await jobs_repository.insert_job(pool, job_type, parameters, created_by_user_id=created_by_user_id)
     return JobCreatedResponse(
         job_id=record["job_id"],
         status=record["status"],
@@ -83,26 +84,26 @@ async def create_job(
     )
 
 
-async def get_job(pool: asyncpg.Pool, job_id: UUID) -> JobRead | None:
-    record = await jobs_repository.get_job(pool, job_id)
+async def get_job(pool: asyncpg.Pool, job_id: UUID, *, user_id: int, is_admin: bool) -> JobRead | None:
+    record = await jobs_repository.get_job(pool, job_id, user_id=user_id, is_admin=is_admin)
     if record is None:
         return None
     return _to_job_read(record)
 
 
 async def list_jobs(
-    pool: asyncpg.Pool, limit: int, status: str | None
+    pool: asyncpg.Pool, limit: int, status: str | None, *, user_id: int, is_admin: bool
 ) -> list[JobRead]:
-    records = await jobs_repository.list_jobs(pool, limit=limit, status=status)
+    records = await jobs_repository.list_jobs(pool, limit=limit, status=status, user_id=user_id, is_admin=is_admin)
     return [_to_job_read(record) for record in records]
 
 
-async def delete_jobs(pool: asyncpg.Pool, scope: str) -> int:
-    return await jobs_repository.delete_jobs(pool, scope)
+async def delete_jobs(pool: asyncpg.Pool, scope: str, *, user_id: int, is_admin: bool) -> int:
+    return await jobs_repository.delete_jobs(pool, scope, user_id=user_id, is_admin=is_admin)
 
 
-async def delete_job(pool: asyncpg.Pool, job_id: UUID) -> bool:
-    job = await get_job(pool, job_id)
+async def delete_job(pool: asyncpg.Pool, job_id: UUID, *, user_id: int, is_admin: bool) -> bool:
+    job = await get_job(pool, job_id, user_id=user_id, is_admin=is_admin)
     if job is None:
         return False
     if job.status in ("queued", "running"):
@@ -110,22 +111,22 @@ async def delete_job(pool: asyncpg.Pool, job_id: UUID) -> bool:
             f"El job {job_id} esta '{job.status}' -- solo se pueden eliminar trabajos finalizados "
             "(success, failed o cancelled)."
         )
-    return await jobs_repository.delete_job(pool, job_id)
+    return await jobs_repository.delete_job(pool, job_id, user_id=user_id, is_admin=is_admin)
 
 
-async def cancel_job(pool: asyncpg.Pool, job_id: UUID) -> JobRead | None:
+async def cancel_job(pool: asyncpg.Pool, job_id: UUID, *, user_id: int, is_admin: bool) -> JobRead | None:
     """Cancela un job en queued/running. Ver docstring de jobs_repository.cancel_job
     para el detalle de por que es una cancelacion 'suave' (no mata la ejecucion
     de n8n que ya este en curso, solo evita que su resultado final pise el
     estado cancelled una vez que termine). Devuelve None si el job no existe."""
-    current = await get_job(pool, job_id)
+    current = await get_job(pool, job_id, user_id=user_id, is_admin=is_admin)
     if current is None:
         return None
     if current.status not in ("queued", "running"):
         raise JobNotCancellableError(
             f"El job {job_id} esta en estado '{current.status}', ya no se puede cancelar."
         )
-    record = await jobs_repository.cancel_job(pool, job_id)
+    record = await jobs_repository.cancel_job(pool, job_id, user_id=user_id, is_admin=is_admin)
     if record is None:
         raise JobNotCancellableError(
             f"El job {job_id} cambio de estado justo antes de poder cancelarlo."
@@ -150,14 +151,16 @@ async def trigger_job(
         await jobs_repository.mark_job_failed_to_dispatch(pool, job_id, str(exc))
 
 
-async def retry_job(pool: asyncpg.Pool, job_id: UUID) -> JobCreatedResponse | None:
+async def retry_job(pool: asyncpg.Pool, job_id: UUID, *, user_id: int, is_admin: bool) -> JobCreatedResponse | None:
     """Crea un job NUEVO con los mismos job_type/parameters que uno fallido.
 
     El job original no se modifica (los jobs son registros historicos
     inmutables) -- el nuevo queda enlazado via retry_of_job_id, con
     retry_count incrementado. Solo se puede reintentar un job en 'failed'.
+    Quien reintenta (no necesariamente quien creo el original) queda como
+    dueño del job nuevo.
     """
-    original = await jobs_repository.get_job(pool, job_id)
+    original = await jobs_repository.get_job(pool, job_id, user_id=user_id, is_admin=is_admin)
     if original is None:
         return None
     if original["status"] != "failed":
@@ -173,6 +176,7 @@ async def retry_job(pool: asyncpg.Pool, job_id: UUID) -> JobCreatedResponse | No
         parameters=parameters,
         retry_count=original["retry_count"] + 1,
         retry_of_job_id=job_id,
+        created_by_user_id=user_id,
     )
     return JobCreatedResponse(
         job_id=record["job_id"],

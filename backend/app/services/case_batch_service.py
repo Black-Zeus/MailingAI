@@ -138,6 +138,7 @@ async def _run_and_wait_fetch_job(
     date_to: date,
     mailbox_account_id: int,
     folder: str,
+    user_id: int,
 ) -> str | None:
     """Dispara un fetch_message_series (workflow 02) contra Graph, acotado a
     una carpeta puntual, y espera a que termine. Devuelve None si la busqueda
@@ -150,14 +151,14 @@ async def _run_and_wait_fetch_job(
         "mailbox_account_id": mailbox_account_id,
         "folder": folder,
     }
-    created = await jobs_service.create_job(pool, "fetch_message_series", parameters)
+    created = await jobs_service.create_job(pool, "fetch_message_series", parameters, created_by_user_id=user_id)
     await jobs_service.trigger_job(pool, created.job_id, "fetch_message_series", parameters)
 
     elapsed = 0
     while elapsed < _SEARCH_TIMEOUT_S:
         await asyncio.sleep(_SEARCH_POLL_INTERVAL_S)
         elapsed += _SEARCH_POLL_INTERVAL_S
-        job = await jobs_service.get_job(pool, created.job_id)
+        job = await jobs_service.get_job(pool, created.job_id, user_id=user_id, is_admin=False)
         if job is None:
             return f"[{folder}] El trabajo de búsqueda en el buzón desapareció inesperadamente."
         if job.status == "success":
@@ -174,6 +175,7 @@ async def _search_mailbox_for_keyword(
     date_from: date,
     date_to: date,
     mailbox_account_id: int,
+    user_id: int,
 ) -> str | None:
     """Busca este keyword en el buzon real (Elementos Enviados + Bandeja de
     entrada, en paralelo -- Graph no admite pedir ambas carpetas en una sola
@@ -193,6 +195,7 @@ async def _search_mailbox_for_keyword(
                 date_to=date_to,
                 mailbox_account_id=mailbox_account_id,
                 folder=folder,
+                user_id=user_id,
             )
             for folder in _SEARCH_FOLDERS
         )
@@ -329,6 +332,7 @@ async def run_batch(pool: asyncpg.Pool, batch_run_id: UUID) -> None:
                 date_from=date_from,
                 date_to=date_to,
                 mailbox_account_id=mailbox_account_id,
+                user_id=user.user_id,
             )
             try:
                 refreshed = await cases_service.refresh_case_correlation(pool, case_detail.case_id, user=user)

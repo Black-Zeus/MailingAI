@@ -47,3 +47,4 @@ class JobRead(BaseModel):
     retry_of_job_id: UUID | None
     fetch_run_id: int | None
     chart_id: int | None
+    created_by_user_id: int | None

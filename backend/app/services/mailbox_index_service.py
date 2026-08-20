@@ -132,21 +132,29 @@ async def request_cancel(pool: asyncpg.Pool, index_run_id: UUID) -> MailboxIndex
         )
     if record["current_job_id"] is not None:
         try:
-            await jobs_service.cancel_job(pool, record["current_job_id"])
+            # is_admin=True: esta corrida entera es exclusiva de admin (ver
+            # admin_mailbox_index.py, todas las rutas exigen AdminUserDep).
+            await jobs_service.cancel_job(
+                pool, record["current_job_id"], user_id=record["requested_by_user_id"], is_admin=True
+            )
         except jobs_service.JobNotCancellableError:
             pass  # el job en vuelo ya termino solo justo antes -- run_index lo va a notar en el proximo poll
     return await _to_run_read(pool, record, include_folders=False)
 
 
 async def _run_and_wait_job(
-    pool: asyncpg.Pool, *, index_run_id: UUID, job_type: str, parameters: dict
+    pool: asyncpg.Pool, *, index_run_id: UUID, job_type: str, parameters: dict, requested_by_user_id: int
 ) -> tuple[object | None, str | None, bool]:
     """Dispara un job (discover_mail_folders o fetch_message_series, ya
     existentes) y espera con poll a que termine, revisando cancel_requested
     en cada vuelta para poder cortar antes del timeout si el admin cancela a
     mitad de camino. Devuelve (job, nota_de_error, fue_cancelado).
+
+    is_admin=True en las llamadas a jobs_service: esta corrida entera es
+    exclusiva de admin (ver admin_mailbox_index.py, todas las rutas exigen
+    AdminUserDep), asi que el admin que la disparo siempre tiene acceso.
     """
-    created = await jobs_service.create_job(pool, job_type, parameters)
+    created = await jobs_service.create_job(pool, job_type, parameters, created_by_user_id=requested_by_user_id)
     await mailbox_index_repository.set_current_job_id(pool, index_run_id, created.job_id)
     await jobs_service.trigger_job(pool, created.job_id, job_type, parameters)
 
@@ -158,12 +166,12 @@ async def _run_and_wait_job(
         run = await mailbox_index_repository.get_index_run(pool, index_run_id)
         if run is not None and run["cancel_requested"]:
             try:
-                await jobs_service.cancel_job(pool, created.job_id)
+                await jobs_service.cancel_job(pool, created.job_id, user_id=requested_by_user_id, is_admin=True)
             except jobs_service.JobNotCancellableError:
                 pass
             return None, None, True
 
-        job = await jobs_service.get_job(pool, created.job_id)
+        job = await jobs_service.get_job(pool, created.job_id, user_id=requested_by_user_id, is_admin=True)
         if job is None:
             return None, "El trabajo desapareció inesperadamente.", False
         if job.status == "success":
@@ -174,7 +182,7 @@ async def _run_and_wait_job(
 
 
 async def _discover_folders(
-    pool: asyncpg.Pool, index_run_id: UUID, mailbox_account_id: int
+    pool: asyncpg.Pool, index_run_id: UUID, mailbox_account_id: int, requested_by_user_id: int
 ) -> tuple[bool, bool, str | None]:
     """Devuelve (ok, fue_cancelado, nota_de_error)."""
     watermark = await mailbox_index_repository.get_folders_watermark(pool)
@@ -183,6 +191,7 @@ async def _discover_folders(
         index_run_id=index_run_id,
         job_type="discover_mail_folders",
         parameters={"mailbox_account_id": mailbox_account_id},
+        requested_by_user_id=requested_by_user_id,
     )
     await mailbox_index_repository.set_current_job_id(pool, index_run_id, None)
     if cancelled:
@@ -194,7 +203,11 @@ async def _discover_folders(
 
 
 async def _index_folder(
-    pool: asyncpg.Pool, index_run_id: UUID, mailbox_account_id: int, folder_row: asyncpg.Record
+    pool: asyncpg.Pool,
+    index_run_id: UUID,
+    mailbox_account_id: int,
+    folder_row: asyncpg.Record,
+    requested_by_user_id: int,
 ) -> tuple[int, bool]:
     """Indexa una carpeta completa por bisección de rango de fechas (ver
     docstring de módulo/plan: no se puede confiar en el orden de retorno de
@@ -232,7 +245,11 @@ async def _index_folder(
             "top": _TOP_PAGE_SIZE,
         }
         job, error, was_cancelled = await _run_and_wait_job(
-            pool, index_run_id=index_run_id, job_type="fetch_message_series", parameters=parameters
+            pool,
+            index_run_id=index_run_id,
+            job_type="fetch_message_series",
+            parameters=parameters,
+            requested_by_user_id=requested_by_user_id,
         )
         if was_cancelled:
             cancelled = True
@@ -303,11 +320,12 @@ async def run_index(pool: asyncpg.Pool, index_run_id: UUID) -> None:
     if run is None:
         return
     mailbox_account_id = run["mailbox_account_id"]
+    requested_by_user_id = run["requested_by_user_id"]
 
     await mailbox_index_repository.mark_run_running(pool, index_run_id)
 
     discovered, discover_cancelled, discover_error = await _discover_folders(
-        pool, index_run_id, mailbox_account_id
+        pool, index_run_id, mailbox_account_id, requested_by_user_id
     )
     if discover_cancelled:
         await mailbox_index_repository.mark_run_finished(pool, index_run_id, status="cancelled", error_message=None)
@@ -343,7 +361,9 @@ async def run_index(pool: asyncpg.Pool, index_run_id: UUID) -> None:
             was_cancelled = True
             break
 
-        messages_indexed, cancelled = await _index_folder(pool, index_run_id, mailbox_account_id, folder_row)
+        messages_indexed, cancelled = await _index_folder(
+            pool, index_run_id, mailbox_account_id, folder_row, requested_by_user_id
+        )
         total_messages += messages_indexed
         processed += 1
         await mailbox_index_repository.update_run_progress(
